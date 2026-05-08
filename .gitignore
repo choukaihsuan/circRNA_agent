@@ -1,0 +1,41 @@
+# Data (large files, not for version control)
+data/
+results/
+
+# Reference genome
+/ref/
+
+# Snakemake internals
+.snakemake/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Logs (optional: comment out if you want to track logs)
+logs/
+
+# Conda env (recreatable from envs/circrna.yaml)
+.conda/
+
+# Accidentally created directories
+CUsersUser/
+C*/
+
+# Claude Code memory (local session data)
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

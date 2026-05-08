@@ -1,0 +1,7 @@
+srr_id,sample_name,condition
+SRR7012366,GSM3100606: Cancer 1; Homo sapiens; RNA-Seq,tumor
+SRR7012367,GSM3100607: Cancer 2; Homo sapiens; RNA-Seq,tumor
+SRR7012368,GSM3100608: Cancer 3; Homo sapiens; RNA-Seq,tumor
+SRR7012369,GSM3100609: Normal 1; Homo sapiens; RNA-Seq,normal
+SRR7012370,GSM3100610: Normal 2; Homo sapiens; RNA-Seq,normal
+SRR7012371,GSM3100611: Normal 3; Homo sapiens; RNA-Seq,normal

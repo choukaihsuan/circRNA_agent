@@ -1,0 +1,46 @@
+name: circrna
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # ── Python runtime ────────────────────────────────
+  - python=3.11
+  - pip
+
+  # ── Workflow ──────────────────────────────────────
+  - snakemake-minimal>=7.32
+
+  # ── Data acquisition ─────────────────────────────
+  - sra-tools>=3.0          # prefetch, fasterq-dump
+  - pigz                    # parallel gzip
+
+  # ── QC ───────────────────────────────────────────
+  - fastqc>=0.12
+  - fastp>=0.23
+  - multiqc>=1.18
+
+  # ── Alignment / circRNA ───────────────────────────
+  - star>=2.7.10
+  - bwa>=0.7.17
+  - hisat2>=2.2
+  - samtools>=1.17
+  - stringtie>=2.2
+  # CIRIquant is installed separately (see below)
+
+  # ── Python packages ───────────────────────────────
+  - pandas>=2.0
+  - pyyaml>=6.0
+  - pip:
+    - pysradb>=1.4
+    - streamlit>=1.32
+
+  # ── R & Bioconductor ─────────────────────────────
+  - r-base>=4.3
+  - bioconductor-deseq2>=1.40
+  - r-ggplot2>=3.4
+  - r-pheatmap>=1.0
+  - r-rcolorbrewer
+  - r-dplyr
+  - r-tibble
+  - r-ggrepel

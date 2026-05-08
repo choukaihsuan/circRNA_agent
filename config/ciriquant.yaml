@@ -1,0 +1,11 @@
+database:
+  genome: /mnt/d/ref/hg19/hg19.fa
+  gtf: /mnt/d/ref/hg19/Homo_sapiens.GRCh37.87.gtf
+  hisat2_genome: /mnt/d/ref/hg19/hisat2_index/hg19
+  star_genome: /mnt/d/ref/hg19/star_index
+name: hg19
+tools:
+  bwa: bwa
+  hisat2: hisat2
+  samtools: samtools
+  stringtie: stringtie

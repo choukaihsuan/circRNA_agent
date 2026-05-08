@@ -1,0 +1,7 @@
+srr_id,sample_name,gsm_id,layout,organism,tissue,disease_state,source_name
+SRR7012366,GSM3100606: Cancer 1; Homo sapiens; RNA-Seq,GSM3100606,PAIRED,Homo sapiens,breast cancer,triple-negative breast cancer,breast
+SRR7012367,GSM3100607: Cancer 2; Homo sapiens; RNA-Seq,GSM3100607,PAIRED,Homo sapiens,breast cancer,triple-negative breast cancer,breast
+SRR7012368,GSM3100608: Cancer 3; Homo sapiens; RNA-Seq,GSM3100608,PAIRED,Homo sapiens,breast cancer,triple-negative breast cancer,breast
+SRR7012369,GSM3100609: Normal 1; Homo sapiens; RNA-Seq,GSM3100609,PAIRED,Homo sapiens,adjacent normal tissue,triple-negative breast cancer,breast
+SRR7012370,GSM3100610: Normal 2; Homo sapiens; RNA-Seq,GSM3100610,PAIRED,Homo sapiens,adjacent normal tissue,triple-negative breast cancer,breast
+SRR7012371,GSM3100611: Normal 3; Homo sapiens; RNA-Seq,GSM3100611,PAIRED,Homo sapiens,adjacent normal tissue,triple-negative breast cancer,breast

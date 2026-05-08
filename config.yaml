@@ -1,0 +1,24 @@
+ciriquant_config: config/ciriquant.yaml
+de:
+  fdr_cutoff: 0.05
+  log2fc_cutoff: 1.0
+  normal_label: normal
+  tumor_label: tumor
+download:
+  max_concurrent: 2
+  retry: 3
+genome:
+  fasta: /mnt/d/ref/hg19/hg19.fa
+  gtf: /mnt/d/ref/hg19/Homo_sapiens.GRCh37.87.gtf
+  bwa_index: /mnt/d/ref/hg19/bwa_index/hg19
+  hisat2_index: /mnt/d/ref/hg19/hisat2_index/hg19
+  star_index: /mnt/d/ref/hg19/star_index
+  species: hg19
+groups: metadata/sample_groups.csv
+log_dir: logs
+metadata: metadata/library_info.csv
+project_id: GSE113230
+raw_dir: data/raw_fastq
+results_dir: results/GSE113230
+threads: 16
+trimmed_dir: data/trimmed

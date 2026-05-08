@@ -1,0 +1,75 @@
+"""
+circRNA Agent – Master Snakefile
+Pipeline: download → QC+trim → circRNA detection → DE → HTML report
+"""
+
+import os
+import platform
+import sys
+
+import pandas as pd
+
+# ─── Config ──────────────────────────────────────────────
+configfile: "config.yaml"
+
+# Use bash for shell rules on Linux/HPC; leave default (cmd) on Windows
+if platform.system() != "Windows":
+    shell.executable("bash")
+
+# ─── Load sample metadata ────────────────────────────────
+metadata_file = config["metadata"]
+if not os.path.exists(metadata_file):
+    sys.exit(
+        f"ERROR: metadata file not found: {metadata_file}\n"
+        "Run:  python scripts/agent.py --gse GSE_ID\n"
+        "  or  python scripts/agent.py --runinfo RunInfo.csv"
+    )
+
+metadata = pd.read_csv(metadata_file)
+if "srr_id" not in metadata.columns:
+    sys.exit("ERROR: metadata CSV must contain a 'srr_id' column")
+
+SAMPLES = metadata["srr_id"].unique().tolist()
+if not SAMPLES:
+    sys.exit("ERROR: no SRR IDs found in metadata")
+
+# ─── Load group labels (optional) ────────────────────────
+TUMOR_SAMPLES  = []
+NORMAL_SAMPLES = []
+HAS_GROUPS     = False
+
+groups_file = config.get("groups", "metadata/sample_groups.csv")
+if os.path.exists(groups_file):
+    groups       = pd.read_csv(groups_file)
+    tumor_label  = config["de"]["tumor_label"]
+    normal_label = config["de"]["normal_label"]
+    TUMOR_SAMPLES  = groups[groups["condition"] == tumor_label]["srr_id"].tolist()
+    NORMAL_SAMPLES = groups[groups["condition"] == normal_label]["srr_id"].tolist()
+    HAS_GROUPS = bool(TUMOR_SAMPLES) and bool(NORMAL_SAMPLES)
+
+# ─── Include rule modules ─────────────────────────────────
+include: "rules/download.smk"
+include: "rules/qc.smk"
+include: "rules/circrna.smk"
+include: "rules/de.smk"
+
+# ─── Target rule ─────────────────────────────────────────
+rule all:
+    input:
+        # Quality control
+        "results/qc/multiqc_report.html",
+        # circRNA per-sample detection
+        expand("results/circRNA/{srr}/{srr}.gtf", srr=SAMPLES),
+        # Merged count matrix
+        "results/circRNA/count_matrix.tsv",
+        # DE + report (only when group metadata is present)
+        *(
+            [
+                "results/de/de_results.tsv",
+                "results/plots/volcano.pdf",
+                "results/plots/heatmap.pdf",
+                "results/plots/pca.pdf",
+                "results/report.html",
+            ]
+            if HAS_GROUPS else []
+        ),
