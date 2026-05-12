@@ -47,6 +47,10 @@ if os.path.exists(groups_file):
     NORMAL_SAMPLES = groups[groups["condition"] == normal_label]["srr_id"].tolist()
     HAS_GROUPS = bool(TUMOR_SAMPLES) and bool(NORMAL_SAMPLES)
 
+# ─── Path variables (read from config for portability) ───
+RAW_DIR     = config["raw_dir"]
+TRIMMED_DIR = config["trimmed_dir"]
+
 # ─── Include rule modules ─────────────────────────────────
 include: "rules/download.smk"
 include: "rules/qc.smk"

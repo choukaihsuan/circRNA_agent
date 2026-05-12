@@ -42,7 +42,6 @@ def generate_ciriquant_config(cfg: dict, output: str = "config/ciriquant.yaml") 
         "database": {
             "gtf":           genome["gtf"],
             "genome":        genome["fasta"],
-            "star_genome":   genome["star_index"],
             "hisat2_genome": genome["hisat2_index"],
         },
     }

@@ -22,8 +22,8 @@ rule check_ciriquant_config:
 rule ciriquant:
     """Run CIRIquant on one sample; outputs per-sample GTF and BSJ table."""
     input:
-        r1  = "data/trimmed/{srr}_1.fastq.gz",
-        r2  = "data/trimmed/{srr}_2.fastq.gz",
+        r1  = TRIMMED_DIR + "/{srr}_1.fastq.gz",
+        r2  = TRIMMED_DIR + "/{srr}_2.fastq.gz",
         cfg = config["ciriquant_config"],
         _   = "config/.ciriquant_ready",
     output:

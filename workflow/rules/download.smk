@@ -12,12 +12,12 @@ from pathlib import Path
 rule download_fastq:
     """Fetch SRA accession and convert to gzipped FASTQ pair."""
     output:
-        r1 = protected("data/raw_fastq/{srr}_1.fastq.gz"),
-        r2 = protected("data/raw_fastq/{srr}_2.fastq.gz"),
+        r1 = protected(RAW_DIR + "/{srr}_1.fastq.gz"),
+        r2 = protected(RAW_DIR + "/{srr}_2.fastq.gz"),
     params:
-        sra_cache = "data/sra",
-        tmp_dir   = "data/tmp/{srr}",
-        out_dir   = "data/raw_fastq",
+        sra_cache = "/mnt/d/circRNA_data/sra",
+        tmp_dir   = "/mnt/d/circRNA_data/tmp/{srr}",
+        out_dir   = RAW_DIR,
         retry     = config["download"]["retry"],
     threads: min(config["threads"], 8)
     log: "logs/download/{srr}.log"

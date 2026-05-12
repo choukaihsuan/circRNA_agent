@@ -5,8 +5,8 @@ QC rules: FastQC on raw reads → fastp adapter trimming → MultiQC summary.
 
 rule fastqc_raw:
     input:
-        r1 = "data/raw_fastq/{srr}_1.fastq.gz",
-        r2 = "data/raw_fastq/{srr}_2.fastq.gz",
+        r1 = RAW_DIR + "/{srr}_1.fastq.gz",
+        r2 = RAW_DIR + "/{srr}_2.fastq.gz",
     output:
         html1 = "results/qc/raw/{srr}_1_fastqc.html",
         zip1  = "results/qc/raw/{srr}_1_fastqc.zip",
@@ -21,11 +21,11 @@ rule fastqc_raw:
 rule fastp_trim:
     """Adapter trimming, quality filtering, and poly-G tail correction."""
     input:
-        r1 = "data/raw_fastq/{srr}_1.fastq.gz",
-        r2 = "data/raw_fastq/{srr}_2.fastq.gz",
+        r1 = RAW_DIR + "/{srr}_1.fastq.gz",
+        r2 = RAW_DIR + "/{srr}_2.fastq.gz",
     output:
-        r1   = "data/trimmed/{srr}_1.fastq.gz",
-        r2   = "data/trimmed/{srr}_2.fastq.gz",
+        r1   = TRIMMED_DIR + "/{srr}_1.fastq.gz",
+        r2   = TRIMMED_DIR + "/{srr}_2.fastq.gz",
         json = "results/qc/fastp/{srr}.json",
         html = "results/qc/fastp/{srr}.html",
     threads: config["threads"]
