@@ -1,4 +1,11 @@
 ciriquant_config: config/ciriquant.yaml
+consensus:
+  min_bsj_reads: 2
+  min_tools: 2
+  slop: 10
+  tools:
+  - ciriquant
+  - dcc
 de:
   fdr_cutoff: 0.05
   log2fc_cutoff: 1.0
@@ -7,17 +14,21 @@ de:
 download:
   max_concurrent: 2
   retry: 3
+  sra_cache_dir: /home/choukaihsuan/sra_cache
+  tmp_dir: /home/choukaihsuan/sra_tmp
+  ascp_speed: 500m
 genome:
-  fasta: /mnt/d/ref/hg19/hg19.fa
-  gtf: /mnt/d/ref/hg19/Homo_sapiens.GRCh37.87.gtf
   bwa_index: /mnt/d/ref/hg19/bwa_index/hg19
+  fasta: /mnt/d/ref/hg19/hg19.fa
+  gtf: /mnt/d/ref/hg19/hg19.gtf
   hisat2_index: /mnt/d/ref/hg19/hisat2_index/hg19
   species: hg19
+  star_index: /mnt/d/ref/hg19/star_index
 groups: metadata/sample_groups.csv
 log_dir: logs
 metadata: metadata/library_info.csv
 project_id: GSE113230
 raw_dir: /mnt/d/circRNA_data/raw_fastq
-results_dir: /mnt/d/circRNA_data/results/GSE113230
-threads: 16
+results_dir: results/GSE113230
+threads: 8
 trimmed_dir: /mnt/d/circRNA_data/trimmed

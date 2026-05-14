@@ -69,14 +69,15 @@ def build_report(
     de     = pd.read_csv(de_file, sep="\t")
     matrix = pd.read_csv(matrix_file, sep="\t", index_col=0)
 
-    sig = de[(de["padj"] < fdr) & (de["log2FoldChange"].abs() > lfc)] if "padj" in de.columns else de.head(0)
+    bool_mask = (de["padj"] < fdr) & (de["log2FoldChange"].abs() > lfc)
+    sig: pd.DataFrame = de.loc[bool_mask] if "padj" in de.columns else de.head(0)
     n_total  = len(matrix)
     n_sig    = len(sig)
     n_up     = int((sig["log2FoldChange"] > 0).sum()) if len(sig) else 0
     n_dn     = int((sig["log2FoldChange"] < 0).sum()) if len(sig) else 0
     n_sample = matrix.shape[1]
 
-    top_table = (
+    top_table: pd.DataFrame = (
         sig.sort_values("padj")
            [["circ_id", "log2FoldChange", "pvalue", "padj"]]
            .rename(columns={"log2FoldChange": "log2FC"})
@@ -127,12 +128,15 @@ def build_report(
 
 # ── Snakemake entry point ────────────────────────────────────────────────────
 
-build_report(
-    de_file     = snakemake.input.de,        # type: ignore[name-defined]
-    matrix_file = snakemake.input.matrix,    # type: ignore[name-defined]
-    volcano_pdf = snakemake.input.volcano,   # type: ignore[name-defined]
-    heatmap_pdf = snakemake.input.heatmap,   # type: ignore[name-defined]
-    pca_pdf     = snakemake.input.pca,       # type: ignore[name-defined]
-    output_file = snakemake.output[0],       # type: ignore[name-defined]
-    project_id  = snakemake.params.project_id,  # type: ignore[name-defined]
-)
+if "snakemake" in dir():
+    build_report(
+        de_file     = snakemake.input.de,           # type: ignore[name-defined]
+        matrix_file = snakemake.input.matrix,       # type: ignore[name-defined]
+        volcano_pdf = snakemake.input.volcano,      # type: ignore[name-defined]
+        heatmap_pdf = snakemake.input.heatmap,      # type: ignore[name-defined]
+        pca_pdf     = snakemake.input.pca,          # type: ignore[name-defined]
+        output_file = snakemake.output[0],          # type: ignore[name-defined]
+        project_id  = snakemake.params.project_id,  # type: ignore[name-defined]
+        fdr         = float(snakemake.params.fdr),  # type: ignore[name-defined]
+        lfc         = float(snakemake.params.lfc),  # type: ignore[name-defined]
+    )

@@ -1,10 +1,13 @@
-database:
-  genome: /mnt/d/ref/hg19/hg19.fa
-  gtf: /mnt/d/ref/hg19/Homo_sapiens.GRCh37.87.gtf
-  hisat2_genome: /mnt/d/ref/hg19/hisat2_index/hg19
 name: hg19
 tools:
-  bwa: bwa
-  hisat2: hisat2
-  samtools: samtools
-  stringtie: stringtie
+  bwa: /home/choukaihsuan/miniforge3/envs/circrna/bin/bwa
+  hisat2: /home/choukaihsuan/miniforge3/envs/circrna/bin/hisat2
+  samtools: /home/choukaihsuan/miniforge3/envs/circrna/bin/samtools
+  stringtie: /home/choukaihsuan/miniforge3/envs/circrna/bin/stringtie
+  java: /home/choukaihsuan/miniforge3/envs/circrna/bin/java
+  perl: /usr/bin/perl
+reference:
+  fasta: /mnt/d/ref/hg19/hg19.fa
+  gtf: /mnt/d/ref/hg19/hg19.gtf
+  bwa_index: /mnt/d/ref/hg19/bwa_index/hg19
+  hisat_index: /mnt/d/ref/hg19/hisat2_index/hg19

@@ -58,22 +58,20 @@ include: "rules/circrna.smk"
 include: "rules/de.smk"
 
 # ─── Target rule ─────────────────────────────────────────
+_ALL_TARGETS = [
+    "results/qc/multiqc_report.html",
+    *expand("results/circRNA/{srr}/{srr}.gtf", srr=SAMPLES),
+    *expand("results/circRNA/{srr}/high_confidence.bed", srr=SAMPLES),
+    "results/circRNA/count_matrix.tsv",
+]
+if HAS_GROUPS:
+    _ALL_TARGETS += [
+        "results/de/de_results.tsv",
+        "results/plots/volcano.pdf",
+        "results/plots/heatmap.pdf",
+        "results/plots/pca.pdf",
+        "results/report.html",
+    ]
+
 rule all:
-    input:
-        # Quality control
-        "results/qc/multiqc_report.html",
-        # circRNA per-sample detection
-        expand("results/circRNA/{srr}/{srr}.gtf", srr=SAMPLES),
-        # Merged count matrix
-        "results/circRNA/count_matrix.tsv",
-        # DE + report (only when group metadata is present)
-        *(
-            [
-                "results/de/de_results.tsv",
-                "results/plots/volcano.pdf",
-                "results/plots/heatmap.pdf",
-                "results/plots/pca.pdf",
-                "results/report.html",
-            ]
-            if HAS_GROUPS else []
-        ),
+    input: _ALL_TARGETS

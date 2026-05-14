@@ -31,13 +31,13 @@ def cmd_run(args: argparse.Namespace) -> None:
     cfg = load_config("config.yaml")
 
     # 1. Resolve metadata
-    print("\n── Step 1: Metadata ─────────────────────────────────")
+    print("\n── Step 1: Metadata ─────────────────────────────────", flush=True)
     metadata_df = prepare_metadata(
         gse_id      = args.gse,
         runinfo_csv = args.runinfo,
         output_file = cfg["metadata"],
     )
-    print(f"   {len(metadata_df)} samples found")
+    print(f"   {len(metadata_df)} samples found", flush=True)
 
     # 2. Update project_id in config
     if args.gse:
@@ -47,7 +47,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     save_config(cfg)
 
     # 3. Assign tumor/normal groups
-    print("\n── Step 2: Sample grouping ──────────────────────────")
+    print("\n── Step 2: Sample grouping ──────────────────────────", flush=True)
     load_or_create(
         metadata_file = cfg["metadata"],
         groups_file   = cfg["groups"],
@@ -55,11 +55,11 @@ def cmd_run(args: argparse.Namespace) -> None:
     )
 
     # 4. Generate CIRIquant config
-    print("\n── Step 3: CIRIquant config ─────────────────────────")
+    print("\n── Step 3: CIRIquant config ─────────────────────────", flush=True)
     generate_ciriquant_config(cfg, output=cfg["ciriquant_config"])
 
     # 5. Launch Snakemake
-    print("\n── Step 4: Snakemake pipeline ───────────────────────")
+    print("\n── Step 4: Snakemake pipeline ───────────────────────", flush=True)
     extra = []
     if args.cluster:
         extra += ["--cluster", args.cluster, "--jobs", str(args.jobs)]
@@ -106,7 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     # ── run ──
-    run_p = sub.add_parser("run", help="Run the full pipeline", aliases=[""])
+    run_p = sub.add_parser("run", help="Run the full pipeline")
     src = run_p.add_mutually_exclusive_group(required=True)
     src.add_argument("--gse",     metavar="GSE_ID", help="GEO accession (e.g. GSE113230)")
     src.add_argument("--runinfo", metavar="CSV",    help="Path to NCBI SRA RunInfo.csv")
@@ -136,7 +136,7 @@ def main() -> None:
     # Allow legacy positional-style: `python agent.py --gse GSE123`
     # by routing bare --gse/--runinfo flags to the 'run' subcommand
     argv = sys.argv[1:]
-    if argv and argv[0] not in ("run", "setup-ciriquant", "grouping"):
+    if argv and argv[0] not in ("run", "setup-ciriquant", "grouping", "--help", "-h", "--version"):
         argv = ["run"] + argv
 
     args = parser.parse_args(argv)

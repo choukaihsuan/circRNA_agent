@@ -1,0 +1,15 @@
+{
+    "pythonPath": "/home/choukaihsuan/miniforge3/envs/circrna/bin/python",
+    "extraPaths": ["scripts"],
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "**/.*",
+        "**/Snakefile",
+        "**/*.smk"
+    ],
+    "ignore": [
+        "**/Snakefile",
+        "**/*.smk"
+    ]
+}

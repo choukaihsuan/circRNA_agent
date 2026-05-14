@@ -37,5 +37,8 @@ rule generate_report:
         "results/report.html",
     params:
         project_id = config["project_id"],
+        fdr        = config["de"]["fdr_cutoff"],
+        lfc        = config["de"]["log2fc_cutoff"],
+    log: "logs/generate_report.log"
     script:
         "../../scripts/generate_report.py"

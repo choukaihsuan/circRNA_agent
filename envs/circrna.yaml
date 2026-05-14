@@ -34,6 +34,7 @@ dependencies:
   - pip:
     - pysradb>=1.4
     - streamlit>=1.32
+    - DCC
 
   # ── R & Bioconductor ─────────────────────────────
   - r-base>=4.3

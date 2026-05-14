@@ -110,7 +110,6 @@ def run_snakemake(
 
 def ensure_dirs() -> None:
     for d in [
-        "data/raw_fastq", "data/trimmed", "data/sra", "data/tmp",
         "metadata", "config", "logs",
         "results/qc/raw", "results/qc/fastp",
         "results/circRNA",
