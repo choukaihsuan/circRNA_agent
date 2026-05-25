@@ -196,22 +196,24 @@ rule consensus_filter:
         bed     = RESULTS_DIR + "/circRNA/{srr}/high_confidence.bed",
         summary = RESULTS_DIR + "/circRNA/{srr}/consensus_summary.tsv",
     params:
-        cirique_arg = lambda w, input: f"--cirique {input.cirique}" if USE_CIRIQUANT else "",
-        dcc_arg     = lambda w, input: f"--dcc {input.dcc}"         if USE_DCC       else "",
-        min_tools   = config["consensus"]["min_tools"],
-        slop        = config["consensus"]["slop"],
-        min_bsj     = config["consensus"]["min_bsj_reads"],
+        cirique_arg       = lambda w, input: f"--cirique {input.cirique}" if USE_CIRIQUANT else "",
+        dcc_arg           = lambda w, input: f"--dcc {input.dcc}"         if USE_DCC       else "",
+        min_tools         = config["consensus"]["min_tools"],
+        slop              = config["consensus"]["slop"],
+        min_bsj           = config["consensus"]["min_bsj_reads"],
+        max_junction_ratio = config["consensus"].get("max_junction_ratio", 1.0),
     log: "logs/consensus/{srr}.log"
     shell:
         """
         python scripts/consensus_filter.py \
             {params.cirique_arg} \
             {params.dcc_arg} \
-            --output    {output.bed} \
-            --summary   {output.summary} \
-            --min-tools {params.min_tools} \
-            --slop      {params.slop} \
-            --min-bsj   {params.min_bsj} \
+            --output              {output.bed} \
+            --summary             {output.summary} \
+            --min-tools           {params.min_tools} \
+            --slop                {params.slop} \
+            --min-bsj             {params.min_bsj} \
+            --max-junction-ratio  {params.max_junction_ratio} \
             2>&1 | tee {log}
         """
 

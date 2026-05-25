@@ -119,6 +119,16 @@
     #min-tools-row label { font-size: 13px; font-weight: 600; }
     #min-tools-row input { width: 60px; padding: 5px 8px; border: 1px solid var(--border);
                             border-radius: 6px; font-size: 14px; text-align: center; }
+
+    /* ── GEO launch ── */
+    .geo-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+    .geo-input { flex: 1; min-width: 160px; max-width: 260px; padding: 10px 12px;
+                 border: 1px solid var(--border); border-radius: 8px; font-size: 15px;
+                 font-family: monospace; letter-spacing: 0.04em; }
+    .geo-input:focus { outline: none; border-color: var(--primary); }
+    .btn-geo { background: #0f766e; color: white; white-space: nowrap; }
+    .btn-geo:hover { background: #0d6460; }
+    .geo-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -136,6 +146,31 @@
     {% else %}
     <span class="status-pill pill-idle">● 閒置</span>
     {% endif %}
+  </div>
+
+  <!-- ── GEO 一鍵啟動 ── -->
+  <div class="section" style="border-color:#99f6e4; background:linear-gradient(135deg,#f0fdfa,#fff);">
+    <div class="section-title">快速入口</div>
+    <h2>GEO 一鍵啟動</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+      輸入 GEO accession，系統自動下載 metadata、分配 tumor/normal 標籤，並執行完整 pipeline 至 HTML 報告。
+    </p>
+    <form method="POST" action="/run_gse" style="margin:0">
+      <div class="geo-row">
+        <input class="geo-input" type="text" name="gse_id" placeholder="GSE113230"
+               value="{{ config.get('project_id', '') }}" required>
+        <input type="number" name="cores" value="{{ config.get('threads', 8) }}"
+               min="1" max="96" style="width:70px;padding:10px 8px;border:1px solid var(--border);
+               border-radius:8px;font-size:14px;text-align:center;" title="CPU cores">
+        <span style="font-size:12px;color:var(--muted)">cores</span>
+        <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %}>
+          🚀 一鍵啟動
+        </button>
+      </div>
+      <div class="geo-hint">
+        ⚙️ 使用目前 Step 1–3 的參數設定執行；啟動後可至「查看執行狀態」追蹤進度。
+      </div>
+    </form>
   </div>
 
   <form method="POST" action="/update">
@@ -272,6 +307,13 @@
             <input type="number" name="log2fc" step="0.1" min="0" max="5"
                    value="{{ config.get('de', {}).get('log2fc_cutoff', 1.0) }}">
             <div class="param-hint">差異表現最小折數（log₂）</div>
+          </div>
+
+          <div class="param-group">
+            <label>max BSJ/FSJ ratio</label>
+            <input type="number" name="max_junction_ratio" step="0.1" min="0.1" max="10"
+                   value="{{ config.get('consensus', {}).get('max_junction_ratio', 1.0) }}">
+            <div class="param-hint">Pseudo-circ QC：BSJ/FSJ 上限（1.0 = 排除 BSJ&gt;FSJ）</div>
           </div>
 
           <div class="param-group">

@@ -86,11 +86,12 @@ def update():
     cfg["de"]["method"] = request.form.get("de_method", "edgeR_ciriquant")
 
     # Numeric params
-    cfg["consensus"]["min_bsj_reads"] = int(request.form.get("min_bsj", 2))
-    cfg["consensus"]["slop"]          = int(request.form.get("slop", 10))
-    cfg["de"]["fdr_cutoff"]           = float(request.form.get("fdr", 0.05))
-    cfg["de"]["log2fc_cutoff"]        = float(request.form.get("log2fc", 1.0))
-    cfg["threads"]                    = int(request.form.get("threads", 8))
+    cfg["consensus"]["min_bsj_reads"]    = int(request.form.get("min_bsj", 2))
+    cfg["consensus"]["slop"]             = int(request.form.get("slop", 10))
+    cfg["consensus"]["max_junction_ratio"] = float(request.form.get("max_junction_ratio", 1.0))
+    cfg["de"]["fdr_cutoff"]              = float(request.form.get("fdr", 0.05))
+    cfg["de"]["log2fc_cutoff"]           = float(request.form.get("log2fc", 1.0))
+    cfg["threads"]                       = int(request.form.get("threads", 8))
 
     save_config(cfg)
 
@@ -115,6 +116,29 @@ def update():
         return redirect(url_for("status"))
 
     return redirect(url_for("index"))
+
+
+@app.route("/run_gse", methods=["POST"])
+def run_gse():
+    gse_id = request.form.get("gse_id", "").strip()
+    cores  = int(request.form.get("cores", 8))
+    if not gse_id:
+        return redirect(url_for("index"))
+
+    cfg = load_config()
+    cfg["project_id"] = gse_id
+    cfg["threads"]    = cores
+    save_config(cfg)
+
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG_PATH, "w") as log_f:
+        subprocess.Popen(
+            ["python", "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)],
+            cwd=str(BASE_DIR),
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+        )
+    return redirect(url_for("status"))
 
 
 @app.route("/status")

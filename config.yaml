@@ -3,6 +3,7 @@ consensus:
   min_bsj_reads: 2
   min_tools: 2
   slop: 10
+  max_junction_ratio: 1.0
   tools:
   - ciriquant
   - dcc
