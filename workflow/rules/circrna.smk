@@ -173,14 +173,14 @@ rule dcc:
     shell:
         """
         mkdir -p {params.outdir}
-        DCC {input.junc} \
+        ( cd {params.outdir} && DCC {input.junc} \
             -mt1 {input.junc1} \
             -mt2 {input.junc2} \
             -D -an {input.gtf} \
             -Pi -F -M -Nr 5 1 \
-            -fg -G -B {input.bam} \
+            -G -B {input.bam} \
             -O {params.outdir} \
-            -T {threads} \
+            -T {threads} ) \
             > {log} 2>&1
         """
 
