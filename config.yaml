@@ -7,6 +7,7 @@ consensus:
   - ciriquant
   - dcc
 de:
+  method: edgeR_ciriquant
   fdr_cutoff: 0.05
   log2fc_cutoff: 1.0
   normal_label: normal
@@ -29,6 +30,6 @@ log_dir: logs
 metadata: metadata/library_info.csv
 project_id: GSE113230
 raw_dir: /mnt/d/circRNA_data/raw_fastq
-results_dir: results/GSE113230
+results_dir: /mnt/d/circRNA_results/GSE113230
 threads: 8
 trimmed_dir: /mnt/d/circRNA_data/trimmed

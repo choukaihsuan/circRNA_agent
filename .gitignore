@@ -31,6 +31,9 @@ CUsersUser/
 # Claude Code memory (local session data)
 .claude/
 
+# Snakemake-generated sentinel files
+config/.ciriquant_ready
+
 # OS
 .DS_Store
 Thumbs.db

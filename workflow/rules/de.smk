@@ -5,16 +5,18 @@ Skipped automatically when HAS_GROUPS is False (see Snakefile).
 
 
 rule de_analysis:
-    """DESeq2-based DE analysis of circRNAs between tumor and normal groups."""
+    """circRNA DE analysis; method = edgeR_ciriquant / deseq2 / limma (config de.method)."""
     input:
-        matrix = "results/circRNA/count_matrix.tsv",
-        groups = config["groups"],
+        matrix     = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        fsj_matrix = RESULTS_DIR + "/circRNA/fsj_count_matrix.tsv",
+        groups     = config["groups"],
     output:
-        de      = "results/de/de_results.tsv",
-        volcano = "results/plots/volcano.pdf",
-        heatmap = "results/plots/heatmap.pdf",
-        pca     = "results/plots/pca.pdf",
+        de      = RESULTS_DIR + "/de/de_results.tsv",
+        volcano = RESULTS_DIR + "/plots/volcano.pdf",
+        heatmap = RESULTS_DIR + "/plots/heatmap.pdf",
+        pca     = RESULTS_DIR + "/plots/pca.pdf",
     params:
+        de_method    = DE_METHOD,
         fdr          = config["de"]["fdr_cutoff"],
         lfc          = config["de"]["log2fc_cutoff"],
         tumor_label  = config["de"]["tumor_label"],
@@ -27,14 +29,14 @@ rule de_analysis:
 rule generate_report:
     """Build a self-contained HTML summary report."""
     input:
-        de      = "results/de/de_results.tsv",
-        matrix  = "results/circRNA/count_matrix.tsv",
-        volcano = "results/plots/volcano.pdf",
-        heatmap = "results/plots/heatmap.pdf",
-        pca     = "results/plots/pca.pdf",
-        multiqc = "results/qc/multiqc_report.html",
+        de      = RESULTS_DIR + "/de/de_results.tsv",
+        matrix  = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        volcano = RESULTS_DIR + "/plots/volcano.pdf",
+        heatmap = RESULTS_DIR + "/plots/heatmap.pdf",
+        pca     = RESULTS_DIR + "/plots/pca.pdf",
+        multiqc = RESULTS_DIR + "/qc/multiqc_report.html",
     output:
-        "results/report.html",
+        RESULTS_DIR + "/report.html",
     params:
         project_id = config["project_id"],
         fdr        = config["de"]["fdr_cutoff"],

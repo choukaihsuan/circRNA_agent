@@ -6,6 +6,10 @@ circRNA detection rules:
 import os
 
 
+wildcard_constraints:
+    srr = r"[A-Z]+\d+"
+
+
 rule check_ciriquant_config:
     """Validate that the CIRIquant config YAML exists before any sample runs."""
     output:
@@ -20,17 +24,16 @@ rule check_ciriquant_config:
 
 
 rule ciriquant:
-    """Run CIRIquant on one sample; outputs per-sample GTF and BSJ table."""
+    """Run CIRIquant on one sample; outputs per-sample GTF."""
     input:
         r1  = TRIMMED_DIR + "/{srr}_1.fastq.gz",
         r2  = TRIMMED_DIR + "/{srr}_2.fastq.gz",
         cfg = config["ciriquant_config"],
         _   = "config/.ciriquant_ready",
     output:
-        gtf = "results/circRNA/{srr}/{srr}.gtf",
-        bsj = "results/circRNA/{srr}/{srr}.bsj",
+        gtf = RESULTS_DIR + "/circRNA/{srr}/{srr}.gtf",
     params:
-        outdir = "results/circRNA/{srr}",
+        outdir = RESULTS_DIR + "/circRNA/{srr}",
         sample = "{srr}",
     threads: config["threads"]
     resources:
@@ -46,21 +49,22 @@ rule ciriquant:
             -o {params.outdir} \
             -p {params.sample} \
             > {log} 2>&1
+        rm -rf {params.outdir}/circ {params.outdir}/align {params.outdir}/gene
         """
 
 
 rule star_align:
-    """STAR alignment for DCC chimeric junction detection."""
+    """STAR paired-end alignment for DCC chimeric junction detection."""
     input:
         r1 = TRIMMED_DIR + "/{srr}_1.fastq.gz",
         r2 = TRIMMED_DIR + "/{srr}_2.fastq.gz",
     output:
-        junc = "results/circRNA/{srr}/Chimeric.out.junction",
-        bam  = "results/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
+        junc = RESULTS_DIR + "/circRNA/{srr}/Chimeric.out.junction",
+        bam  = RESULTS_DIR + "/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
     params:
         index   = config["genome"]["star_index"],
-        prefix  = "results/circRNA/{srr}/",
-        tmp_dir = "/home/choukaihsuan/star_tmp/{srr}",
+        prefix  = RESULTS_DIR + "/circRNA/{srr}/",
+        tmp_dir = RESULTS_DIR + "/circRNA/{srr}/star_tmp",
     threads: config["threads"]
     resources:
         mem_gb = 26
@@ -86,27 +90,95 @@ rule star_align:
         """
 
 
-rule dcc:
-    """Detect circRNAs with DCC using STAR chimeric junctions."""
+rule star_align_mate1:
+    """STAR single-end alignment of mate 1 only (required by DCC -mt1)."""
     input:
-        junc = "results/circRNA/{srr}/Chimeric.out.junction",
-        bam  = "results/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
-        gtf  = config["genome"]["gtf"],
+        r1 = TRIMMED_DIR + "/{srr}_1.fastq.gz",
     output:
-        "results/circRNA/{srr}/DCC/CircCoordinates",
+        junc = RESULTS_DIR + "/circRNA/{srr}/mate1/Chimeric.out.junction",
     params:
-        outdir = "results/circRNA/{srr}/DCC",
+        index   = config["genome"]["star_index"],
+        prefix  = RESULTS_DIR + "/circRNA/{srr}/mate1/",
+        tmp_dir = RESULTS_DIR + "/circRNA/{srr}/mate1_tmp",
+    threads: config["threads"]
+    resources:
+        mem_gb = 26
+    log: "logs/star/{srr}_mate1.log"
+    shell:
+        """
+        mkdir -p {params.tmp_dir}
+        STAR \
+            --runThreadN {threads} \
+            --genomeDir {params.index} \
+            --readFilesIn {input.r1} \
+            --readFilesCommand zcat \
+            --outSAMtype BAM Unsorted \
+            --outFileNamePrefix {params.prefix} \
+            --outTmpDir {params.tmp_dir}/_STARtmp \
+            --chimSegmentMin 10 \
+            --chimOutType Junctions \
+            --alignSJDBoverhangMin 10 \
+            > {log} 2>&1
+        rm -rf {params.tmp_dir}
+        """
+
+
+rule star_align_mate2:
+    """STAR single-end alignment of mate 2 only (required by DCC -mt2)."""
+    input:
+        r2 = TRIMMED_DIR + "/{srr}_2.fastq.gz",
+    output:
+        junc = RESULTS_DIR + "/circRNA/{srr}/mate2/Chimeric.out.junction",
+    params:
+        index   = config["genome"]["star_index"],
+        prefix  = RESULTS_DIR + "/circRNA/{srr}/mate2/",
+        tmp_dir = RESULTS_DIR + "/circRNA/{srr}/mate2_tmp",
+    threads: config["threads"]
+    resources:
+        mem_gb = 26
+    log: "logs/star/{srr}_mate2.log"
+    shell:
+        """
+        mkdir -p {params.tmp_dir}
+        STAR \
+            --runThreadN {threads} \
+            --genomeDir {params.index} \
+            --readFilesIn {input.r2} \
+            --readFilesCommand zcat \
+            --outSAMtype BAM Unsorted \
+            --outFileNamePrefix {params.prefix} \
+            --outTmpDir {params.tmp_dir}/_STARtmp \
+            --chimSegmentMin 10 \
+            --chimOutType Junctions \
+            --alignSJDBoverhangMin 10 \
+            > {log} 2>&1
+        rm -rf {params.tmp_dir}
+        """
+
+
+rule dcc:
+    """Detect circRNAs with DCC using STAR chimeric junctions (paired + mate1 + mate2)."""
+    input:
+        junc  = RESULTS_DIR + "/circRNA/{srr}/Chimeric.out.junction",
+        junc1 = RESULTS_DIR + "/circRNA/{srr}/mate1/Chimeric.out.junction",
+        junc2 = RESULTS_DIR + "/circRNA/{srr}/mate2/Chimeric.out.junction",
+        bam   = RESULTS_DIR + "/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
+        gtf   = config["genome"]["gtf"],
+    output:
+        RESULTS_DIR + "/circRNA/{srr}/DCC/CircCoordinates",
+    params:
+        outdir = RESULTS_DIR + "/circRNA/{srr}/DCC",
     threads: 4
     log: "logs/dcc/{srr}.log"
     shell:
         """
         mkdir -p {params.outdir}
-        echo "{input.junc}" > {params.outdir}/junction.list
-        dcc @{params.outdir}/junction.list \
-            -mt1 @{params.outdir}/junction.list \
+        DCC {input.junc} \
+            -mt1 {input.junc1} \
+            -mt2 {input.junc2} \
             -D -an {input.gtf} \
             -Pi -F -M -Nr 5 1 \
-            -fg -G -A {input.bam} \
+            -fg -G -B {input.bam} \
             -O {params.outdir} \
             -T {threads} \
             > {log} 2>&1
@@ -114,23 +186,27 @@ rule dcc:
 
 
 rule consensus_filter:
-    """Vote across CIRIquant and DCC; keep circRNAs supported by both tools."""
+    """Filter circRNAs; supports CIRIquant-only, DCC-only, or consensus mode."""
     input:
-        cirique = "results/circRNA/{srr}/{srr}.gtf",
-        dcc     = "results/circRNA/{srr}/DCC/CircCoordinates",
+        cirique = (RESULTS_DIR + "/circRNA/{srr}/{srr}.gtf")
+                  if USE_CIRIQUANT else [],
+        dcc     = (RESULTS_DIR + "/circRNA/{srr}/DCC/CircCoordinates")
+                  if USE_DCC else [],
     output:
-        bed     = "results/circRNA/{srr}/high_confidence.bed",
-        summary = "results/circRNA/{srr}/consensus_summary.tsv",
+        bed     = RESULTS_DIR + "/circRNA/{srr}/high_confidence.bed",
+        summary = RESULTS_DIR + "/circRNA/{srr}/consensus_summary.tsv",
     params:
-        min_tools = config["consensus"]["min_tools"],
-        slop      = config["consensus"]["slop"],
-        min_bsj   = config["consensus"]["min_bsj_reads"],
+        cirique_arg = lambda w, input: f"--cirique {input.cirique}" if USE_CIRIQUANT else "",
+        dcc_arg     = lambda w, input: f"--dcc {input.dcc}"         if USE_DCC       else "",
+        min_tools   = config["consensus"]["min_tools"],
+        slop        = config["consensus"]["slop"],
+        min_bsj     = config["consensus"]["min_bsj_reads"],
     log: "logs/consensus/{srr}.log"
     shell:
         """
         python scripts/consensus_filter.py \
-            --cirique   {input.cirique} \
-            --dcc       {input.dcc} \
+            {params.cirique_arg} \
+            {params.dcc_arg} \
             --output    {output.bed} \
             --summary   {output.summary} \
             --min-tools {params.min_tools} \
@@ -141,16 +217,18 @@ rule consensus_filter:
 
 
 rule merge_counts:
-    """Filter by consensus BED and build circRNA × sample BSJ count matrix."""
+    """Filter by consensus BED and build circRNA × sample BSJ + FSJ count matrices."""
     input:
-        gtfs = expand("results/circRNA/{srr}/{srr}.gtf", srr=SAMPLES),
-        beds = expand("results/circRNA/{srr}/high_confidence.bed", srr=SAMPLES),
+        gtfs = expand(RESULTS_DIR + "/circRNA/{srr}/{srr}.gtf", srr=SAMPLES),
+        beds = expand(RESULTS_DIR + "/circRNA/{srr}/high_confidence.bed", srr=SAMPLES),
     output:
-        matrix = "results/circRNA/count_matrix.tsv",
+        matrix     = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        fsj_matrix = RESULTS_DIR + "/circRNA/fsj_count_matrix.tsv",
     shell:
         """
         python scripts/merge_counts.py \
             --gtfs       {input.gtfs} \
             --output     {output.matrix} \
+            --output-fsj {output.fsj_matrix} \
             --filter-bed {input.beds}
         """

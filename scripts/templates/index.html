@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>circRNA Analysis Pipeline</title>
+  <style>
+    :root {
+      --primary:   #2563eb;
+      --primary-h: #1d4ed8;
+      --success:   #16a34a;
+      --warn:      #d97706;
+      --border:    #e2e8f0;
+      --bg:        #f8fafc;
+      --card-bg:   #ffffff;
+      --text:      #1e293b;
+      --muted:     #64748b;
+      --radius:    12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── Layout ── */
+    .container { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+
+    /* ── Header ── */
+    .header { display: flex; align-items: center; gap: 14px; margin-bottom: 32px; }
+    .header-icon { font-size: 36px; line-height: 1; }
+    .header h1 { font-size: 22px; font-weight: 700; }
+    .header p  { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .status-pill { margin-left: auto; padding: 4px 12px; border-radius: 999px;
+                   font-size: 12px; font-weight: 600; }
+    .pill-running { background: #fef3c7; color: #b45309; }
+    .pill-idle    { background: #f0fdf4; color: var(--success); }
+
+    /* ── Section ── */
+    .section { background: var(--card-bg); border: 1px solid var(--border);
+               border-radius: var(--radius); padding: 24px; margin-bottom: 20px; }
+    .section-title { font-size: 14px; font-weight: 700; text-transform: uppercase;
+                     letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px; }
+    .section h2 { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
+
+    /* ── Tool Cards ── */
+    .tool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                 gap: 14px; }
+    .tool-card { position: relative; border: 2px solid var(--border); border-radius: 10px;
+                 padding: 20px 20px 16px; cursor: pointer; transition: all 0.15s ease;
+                 background: #fff; }
+    .tool-card:hover { border-color: var(--primary); box-shadow: 0 0 0 3px #dbeafe; }
+    .tool-card.selected { border-color: var(--primary); background: #eff6ff;
+                          box-shadow: 0 0 0 3px #bfdbfe; }
+    .tool-card input[type="checkbox"] { position: absolute; top: 16px; right: 16px;
+                                        width: 18px; height: 18px; accent-color: var(--primary);
+                                        cursor: pointer; }
+    .tool-card .tool-name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .tool-card .tool-algo { font-size: 12px; color: var(--muted); font-family: monospace; }
+    .tool-card .tool-desc { font-size: 13px; color: #475569; margin-top: 10px; line-height: 1.5; }
+    .tool-tag { display: inline-block; margin-top: 10px; padding: 2px 8px; border-radius: 4px;
+                font-size: 11px; font-weight: 600; }
+    .tag-blue { background: #dbeafe; color: #1d4ed8; }
+    .tag-green { background: #dcfce7; color: #15803d; }
+
+    /* ── Consensus Badge ── */
+    #consensus-badge {
+      display: none; margin-top: 14px; padding: 10px 14px;
+      background: linear-gradient(135deg, #eff6ff, #f0fdf4);
+      border: 1px solid #bfdbfe; border-radius: 8px;
+      font-size: 13px; color: #1e40af;
+    }
+    #consensus-badge.show { display: flex; align-items: center; gap: 8px; }
+    #consensus-badge .badge-icon { font-size: 18px; }
+
+    /* ── DE Method ── */
+    .method-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                   gap: 12px; }
+    .method-card { border: 2px solid var(--border); border-radius: 10px; padding: 16px;
+                   cursor: pointer; transition: all 0.15s ease; }
+    .method-card:hover { border-color: #a78bfa; }
+    .method-card.selected { border-color: #7c3aed; background: #faf5ff;
+                             box-shadow: 0 0 0 3px #ede9fe; }
+    .method-card input[type="radio"] { display: none; }
+    .method-card .method-name { font-size: 15px; font-weight: 700; }
+    .method-card .method-desc { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .rec-badge { font-size: 10px; font-weight: 700; background: #7c3aed; color: white;
+                 padding: 1px 6px; border-radius: 3px; margin-left: 6px; }
+
+    /* ── Advanced ── */
+    .advanced-toggle { font-size: 13px; color: var(--primary); cursor: pointer;
+                       user-select: none; display: flex; align-items: center; gap: 6px; }
+    .advanced-toggle:hover { text-decoration: underline; }
+    .advanced-body { display: none; margin-top: 16px; }
+    .advanced-body.open { display: block; }
+    .param-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                  gap: 14px; }
+    .param-group label { display: block; font-size: 12px; font-weight: 600;
+                         color: var(--muted); margin-bottom: 4px; }
+    .param-group input { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+                          border-radius: 6px; font-size: 14px; transition: border-color 0.1s; }
+    .param-group input:focus { outline: none; border-color: var(--primary); }
+    .param-hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+    /* ── Buttons ── */
+    .btn-row { display: flex; gap: 12px; margin-top: 24px; }
+    .btn { padding: 11px 24px; border: none; border-radius: 8px; font-size: 14px;
+           font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .btn-save  { background: #f1f5f9; color: var(--text); }
+    .btn-save:hover  { background: #e2e8f0; }
+    .btn-run   { background: var(--primary); color: white; }
+    .btn-run:hover   { background: var(--primary-h); }
+    .btn-run:disabled { background: #94a3b8; cursor: not-allowed; }
+    .btn-status { background: #f0fdf4; color: var(--success); border: 1px solid #bbf7d0; }
+    .btn-status:hover { background: #dcfce7; }
+
+    /* ── Min-tools row ── */
+    #min-tools-row { display: none; margin-top: 14px; padding: 12px 14px;
+                     background: #f8fafc; border-radius: 8px; border: 1px solid var(--border); }
+    #min-tools-row.show { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    #min-tools-row label { font-size: 13px; font-weight: 600; }
+    #min-tools-row input { width: 60px; padding: 5px 8px; border: 1px solid var(--border);
+                            border-radius: 6px; font-size: 14px; text-align: center; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">🧬</div>
+    <div>
+      <h1>circRNA Analysis Pipeline</h1>
+      <p>{{ config.get('project_id', 'circRNA Pipeline') }} ／ 設定分析方法並執行</p>
+    </div>
+    {% if running %}
+    <span class="status-pill pill-running">⏳ 執行中</span>
+    {% else %}
+    <span class="status-pill pill-idle">● 閒置</span>
+    {% endif %}
+  </div>
+
+  <form method="POST" action="/update">
+
+    <!-- ── Step 1: circRNA Detection Tools ── -->
+    <div class="section">
+      <div class="section-title">Step 1</div>
+      <h2>circRNA 偵測工具</h2>
+
+      <div class="tool-grid">
+
+        <!-- CIRIquant -->
+        <label class="tool-card {% if 'ciriquant' in selected_tools %}selected{% endif %}"
+               id="card-ciriquant" onclick="toggleCard('ciriquant')">
+          <input type="checkbox" name="tools" value="ciriquant" id="chk-ciriquant"
+                 {% if 'ciriquant' in selected_tools %}checked{% endif %}>
+          <div class="tool-name">CIRIquant</div>
+          <div class="tool-algo">HISAT2 + BWA-MEM</div>
+          <div class="tool-desc">
+            以 BWA 比對 BSJ reads，HISAT2 quantify expression；
+            提供每個 circRNA 的 BSJ count 與 GTF 輸出。
+          </div>
+          <span class="tool-tag tag-blue">GTF output</span>
+        </label>
+
+        <!-- DCC -->
+        <label class="tool-card {% if 'dcc' in selected_tools %}selected{% endif %}"
+               id="card-dcc" onclick="toggleCard('dcc')">
+          <input type="checkbox" name="tools" value="dcc" id="chk-dcc"
+                 {% if 'dcc' in selected_tools %}checked{% endif %}>
+          <div class="tool-name">DCC</div>
+          <div class="tool-algo">STAR chimeric junctions</div>
+          <div class="tool-desc">
+            利用 STAR 的 chimeric junction 偵測 back-splice；
+            需各別比對 mate1、mate2 及 paired-end reads。
+          </div>
+          <span class="tool-tag tag-green">CircCoordinates</span>
+        </label>
+
+      </div>
+
+      <!-- Consensus badge (shown when both selected) -->
+      <div id="consensus-badge">
+        <span class="badge-icon">🔀</span>
+        <span>
+          <strong>雙工具共識模式</strong>：兩個工具同時執行，取交集（consensus filter）後輸出高可信度 circRNA。
+        </span>
+      </div>
+
+      <!-- min_tools (shown when both selected) -->
+      <div id="min-tools-row">
+        <label for="min_tools">最少需要幾個工具支持：</label>
+        <input type="number" name="min_tools" id="min_tools"
+               value="{{ config.get('consensus', {}).get('min_tools', 2) }}" min="1" max="2">
+        <span style="font-size:12px; color:var(--muted)">（2 = 兩工具都支持才算，1 = 任一工具即可）</span>
+      </div>
+    </div>
+
+    <!-- ── Step 2: DE Method ── -->
+    <div class="section">
+      <div class="section-title">Step 2</div>
+      <h2>差異表現分析方法</h2>
+      <div class="method-grid">
+
+        <label class="method-card {% if de_method == 'edgeR_ciriquant' %}selected{% endif %}"
+               onclick="selectMethod('edgeR_ciriquant')">
+          <input type="radio" name="de_method" value="edgeR_ciriquant"
+                 {% if de_method == 'edgeR_ciriquant' %}checked{% endif %}>
+          <div class="method-name">edgeR + FSJ offset <span class="rec-badge">推薦</span></div>
+          <div class="method-desc">
+            同 <code>CIRI_DE_replicate</code>：以 FSJ（linear reads）為 offset，
+            測試 BSJ/FSJ 比值是否改變，並輸出 Type I / II 分類。
+          </div>
+        </label>
+
+        <label class="method-card {% if de_method == 'deseq2' %}selected{% endif %}"
+               onclick="selectMethod('deseq2')">
+          <input type="radio" name="de_method" value="deseq2"
+                 {% if de_method == 'deseq2' %}checked{% endif %}>
+          <div class="method-name">DESeq2</div>
+          <div class="method-desc">RLE normalisation + Wald test；適合小樣本</div>
+        </label>
+
+        <label class="method-card {% if de_method == 'limma' %}selected{% endif %}"
+               onclick="selectMethod('limma')">
+          <input type="radio" name="de_method" value="limma"
+                 {% if de_method == 'limma' %}checked{% endif %}>
+          <div class="method-name">limma-voom</div>
+          <div class="method-desc">voom 轉換後 linear model；計算速度快</div>
+        </label>
+
+      </div>
+
+      <div style="margin-top:12px; padding:10px 14px; background:#fefce8; border:1px solid #fde047;
+                  border-radius:8px; font-size:12px; color:#713f12;">
+        ⚠️ <strong>edgeR + FSJ offset</strong> 需要 CIRIquant GTF 中有 FSJ 欄位（CIRIquant ≥ 1.1）。
+        若使用 DCC-only 模式，請改選 DESeq2 或 limma。
+      </div>
+    </div>
+
+    <!-- ── Step 3: Advanced params ── -->
+    <div class="section">
+      <div class="section-title">Step 3（可選）</div>
+      <h2>進階參數</h2>
+      <div class="advanced-toggle" onclick="toggleAdvanced()">
+        <span id="adv-arrow">▶</span> 展開進階設定
+      </div>
+      <div class="advanced-body" id="advanced-body">
+        <div class="param-grid">
+
+          <div class="param-group">
+            <label>min BSJ reads</label>
+            <input type="number" name="min_bsj" min="1" max="20"
+                   value="{{ config.get('consensus', {}).get('min_bsj_reads', 2) }}">
+            <div class="param-hint">每個工具最低支持 read 數</div>
+          </div>
+
+          <div class="param-group">
+            <label>座標容忍度 (bp)</label>
+            <input type="number" name="slop" min="0" max="100"
+                   value="{{ config.get('consensus', {}).get('slop', 10) }}">
+            <div class="param-hint">兩工具座標差距容忍值</div>
+          </div>
+
+          <div class="param-group">
+            <label>FDR 閾值</label>
+            <input type="number" name="fdr" step="0.01" min="0.01" max="0.2"
+                   value="{{ config.get('de', {}).get('fdr_cutoff', 0.05) }}">
+            <div class="param-hint">差異表現 adjusted p-value 上限</div>
+          </div>
+
+          <div class="param-group">
+            <label>log₂FC 閾值</label>
+            <input type="number" name="log2fc" step="0.1" min="0" max="5"
+                   value="{{ config.get('de', {}).get('log2fc_cutoff', 1.0) }}">
+            <div class="param-hint">差異表現最小折數（log₂）</div>
+          </div>
+
+          <div class="param-group">
+            <label>Threads（每個 job）</label>
+            <input type="number" name="threads" min="1" max="64"
+                   value="{{ config.get('threads', 8) }}">
+            <div class="param-hint">CPU 核心數 / sample</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Buttons ── -->
+    <div class="btn-row">
+      <button type="submit" name="action" value="save" class="btn btn-save">
+        💾 儲存設定
+      </button>
+      <button type="submit" name="action" value="run" class="btn btn-run"
+              id="run-btn" {% if running %}disabled{% endif %}>
+        🚀 儲存並執行分析
+      </button>
+      <a href="/status" class="btn btn-status" style="text-decoration:none">
+        📊 查看執行狀態
+      </a>
+    </div>
+
+  </form>
+</div>
+
+<script>
+  // ── Tool card toggle ──────────────────────────────────────
+  function toggleCard(tool) {
+    const chk  = document.getElementById('chk-' + tool);
+    const card = document.getElementById('card-' + tool);
+    // The click event fires before checkbox state changes for label clicks,
+    // but since we handle it manually:
+    chk.checked = !chk.checked;
+    card.classList.toggle('selected', chk.checked);
+    updateConsensusUI();
+    return false;  // prevent double-toggle from label
+  }
+
+  function updateConsensusUI() {
+    const cq = document.getElementById('chk-ciriquant').checked;
+    const dc = document.getElementById('chk-dcc').checked;
+    const badge = document.getElementById('consensus-badge');
+    const mtRow = document.getElementById('min-tools-row');
+    const mtInput = document.getElementById('min_tools');
+
+    if (cq && dc) {
+      badge.classList.add('show');
+      mtRow.classList.add('show');
+      if (parseInt(mtInput.value) < 1) mtInput.value = 2;
+    } else {
+      badge.classList.remove('show');
+      mtRow.classList.remove('show');
+      mtInput.value = 1;
+    }
+  }
+
+  // ── DE method radio ───────────────────────────────────────
+  function selectMethod(method) {
+    document.querySelectorAll('.method-card').forEach(c => c.classList.remove('selected'));
+    document.querySelector(`.method-card input[value="${method}"]`).checked = true;
+    event.currentTarget.classList.add('selected');
+  }
+
+  // ── Advanced toggle ───────────────────────────────────────
+  function toggleAdvanced() {
+    const body  = document.getElementById('advanced-body');
+    const arrow = document.getElementById('adv-arrow');
+    const open  = body.classList.toggle('open');
+    arrow.textContent = open ? '▼' : '▶';
+  }
+
+  // ── Init ─────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    updateConsensusUI();
+
+    // Prevent double-toggle: label click changes checkbox, then our handler runs
+    document.querySelectorAll('.tool-card').forEach(card => {
+      card.addEventListener('click', e => {
+        // If the click came from the checkbox itself, don't re-toggle
+        if (e.target.type === 'checkbox') {
+          const id = e.target.id.replace('chk-', '');
+          document.getElementById('card-' + id)
+            .classList.toggle('selected', e.target.checked);
+          updateConsensusUI();
+        }
+      });
+    });
+  });
+</script>
+</body>
+</html>

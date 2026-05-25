@@ -1,6 +1,9 @@
 {
     "pythonPath": "/home/choukaihsuan/miniforge3/envs/circrna/bin/python",
-    "extraPaths": ["scripts"],
+    "extraPaths": [
+        "scripts",
+        "/home/choukaihsuan/miniforge3/envs/circrna/lib/python3.11/site-packages"
+    ],
     "exclude": [
         "**/node_modules",
         "**/__pycache__",

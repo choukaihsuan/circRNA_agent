@@ -144,9 +144,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Multi-tool circRNA consensus filter (CIRIquant + CIRI2 + DCC)"
     )
-    parser.add_argument("--cirique",   required=True,  help="CIRIquant GTF output")
-    parser.add_argument("--ciri2",     default=None,   help="CIRI2 output text file (optional)")
-    parser.add_argument("--dcc",       required=True,  help="DCC CircCoordinates file")
+    parser.add_argument("--cirique",   default=None, help="CIRIquant GTF output (optional)")
+    parser.add_argument("--ciri2",     default=None, help="CIRI2 output text file (optional)")
+    parser.add_argument("--dcc",       default=None, help="DCC CircCoordinates file (optional)")
     parser.add_argument("--output",    required=True, help="Output BED file")
     parser.add_argument("--summary",   required=True, help="Output summary TSV file")
     parser.add_argument("--min-tools", type=int, default=2, dest="min_tools",
@@ -157,22 +157,39 @@ def main() -> None:
                         help="Minimum BSJ reads per tool before voting (default: 2)")
     args = parser.parse_args()
 
-    cirique_set = parse_ciriquant(args.cirique, args.min_bsj)
-    ciri2_set   = parse_ciri2(args.ciri2, args.min_bsj) if args.ciri2 else set()
-    dcc_set     = parse_dcc(args.dcc, args.min_bsj)
+    if not args.cirique and not args.dcc:
+        parser.error("至少需要提供 --cirique 或 --dcc 其中一個")
 
-    tool_sets = [cirique_set, dcc_set]
-    if ciri2_set:
+    tool_sets: list[set[tuple[str, int, int]]] = []
+    cirique_set: set = set()
+    ciri2_set:   set = set()
+    dcc_set:     set = set()
+
+    if args.cirique:
+        cirique_set = parse_ciriquant(args.cirique, args.min_bsj)
+        tool_sets.append(cirique_set)
+        print(f"[consensus] CIRIquant: {len(cirique_set)} circRNAs", file=sys.stderr)
+
+    if args.ciri2:
+        ciri2_set = parse_ciri2(args.ciri2, args.min_bsj)
         tool_sets.append(ciri2_set)
-
-    all_count = len(set().union(*tool_sets))
-
-    print(f"[consensus] CIRIquant: {len(cirique_set)} circRNAs", file=sys.stderr)
-    if ciri2_set:
         print(f"[consensus] CIRI2:     {len(ciri2_set)} circRNAs", file=sys.stderr)
-    print(f"[consensus] DCC:       {len(dcc_set)} circRNAs",     file=sys.stderr)
 
-    results = vote(tool_sets, args.min_tools, args.slop)
+    if args.dcc:
+        dcc_set = parse_dcc(args.dcc, args.min_bsj)
+        tool_sets.append(dcc_set)
+        print(f"[consensus] DCC:       {len(dcc_set)} circRNAs", file=sys.stderr)
+
+    # Clamp min_tools to the number of tools actually provided
+    effective_min_tools = min(args.min_tools, len(tool_sets))
+    if effective_min_tools < args.min_tools:
+        print(
+            f"[consensus] min_tools 調整為 {effective_min_tools}（只有 {len(tool_sets)} 個工具）",
+            file=sys.stderr,
+        )
+
+    all_count = len(set().union(*tool_sets)) if tool_sets else 0
+    results = vote(tool_sets, effective_min_tools, args.slop)
 
     print(
         f"[consensus] ≥{args.min_tools} 工具共識: "

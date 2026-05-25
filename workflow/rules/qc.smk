@@ -8,14 +8,16 @@ rule fastqc_raw:
         r1 = RAW_DIR + "/{srr}_1.fastq.gz",
         r2 = RAW_DIR + "/{srr}_2.fastq.gz",
     output:
-        html1 = "results/qc/raw/{srr}_1_fastqc.html",
-        zip1  = "results/qc/raw/{srr}_1_fastqc.zip",
-        html2 = "results/qc/raw/{srr}_2_fastqc.html",
-        zip2  = "results/qc/raw/{srr}_2_fastqc.zip",
+        html1 = RESULTS_DIR + "/qc/raw/{srr}_1_fastqc.html",
+        zip1  = RESULTS_DIR + "/qc/raw/{srr}_1_fastqc.zip",
+        html2 = RESULTS_DIR + "/qc/raw/{srr}_2_fastqc.html",
+        zip2  = RESULTS_DIR + "/qc/raw/{srr}_2_fastqc.zip",
+    params:
+        outdir = RESULTS_DIR + "/qc/raw",
     threads: 2
     log: "logs/fastqc_raw/{srr}.log"
     shell:
-        "fastqc {input.r1} {input.r2} -o results/qc/raw/ -t {threads} > {log} 2>&1"
+        "fastqc {input.r1} {input.r2} -o {params.outdir} -t {threads} > {log} 2>&1"
 
 
 rule fastp_trim:
@@ -26,8 +28,8 @@ rule fastp_trim:
     output:
         r1   = TRIMMED_DIR + "/{srr}_1.fastq.gz",
         r2   = TRIMMED_DIR + "/{srr}_2.fastq.gz",
-        json = "results/qc/fastp/{srr}.json",
-        html = "results/qc/fastp/{srr}.html",
+        json = RESULTS_DIR + "/qc/fastp/{srr}.json",
+        html = RESULTS_DIR + "/qc/fastp/{srr}.html",
     threads: config["threads"]
     log: "logs/fastp/{srr}.log"
     shell:
@@ -49,10 +51,12 @@ rule fastp_trim:
 rule multiqc:
     """Aggregate FastQC and fastp reports into a single MultiQC report."""
     input:
-        fastqc = expand("results/qc/raw/{srr}_1_fastqc.zip", srr=SAMPLES),
-        fastp  = expand("results/qc/fastp/{srr}.json",        srr=SAMPLES),
+        fastqc = expand(RESULTS_DIR + "/qc/raw/{srr}_1_fastqc.zip", srr=SAMPLES),
+        fastp  = expand(RESULTS_DIR + "/qc/fastp/{srr}.json",        srr=SAMPLES),
     output:
-        "results/qc/multiqc_report.html",
+        RESULTS_DIR + "/qc/multiqc_report.html",
+    params:
+        qc_dir = RESULTS_DIR + "/qc",
     log: "logs/multiqc.log"
     shell:
-        "multiqc results/qc/ -o results/qc/ --filename multiqc_report.html -f > {log} 2>&1"
+        "multiqc {params.qc_dir} -o {params.qc_dir} --filename multiqc_report.html -f > {log} 2>&1"

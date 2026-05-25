@@ -50,6 +50,13 @@ if os.path.exists(groups_file):
 # ─── Path variables (read from config for portability) ───
 RAW_DIR     = config["raw_dir"]
 TRIMMED_DIR = config["trimmed_dir"]
+RESULTS_DIR = config["results_dir"]
+
+# ─── Tool selection ───────────────────────────────────────
+_TOOLS        = set(config.get("consensus", {}).get("tools", ["ciriquant", "dcc"]))
+USE_CIRIQUANT = "ciriquant" in _TOOLS
+USE_DCC       = "dcc"       in _TOOLS
+DE_METHOD     = config.get("de", {}).get("method", "deseq2")
 
 # ─── Include rule modules ─────────────────────────────────
 include: "rules/download.smk"
@@ -59,18 +66,19 @@ include: "rules/de.smk"
 
 # ─── Target rule ─────────────────────────────────────────
 _ALL_TARGETS = [
-    "results/qc/multiqc_report.html",
-    *expand("results/circRNA/{srr}/{srr}.gtf", srr=SAMPLES),
-    *expand("results/circRNA/{srr}/high_confidence.bed", srr=SAMPLES),
-    "results/circRNA/count_matrix.tsv",
+    RESULTS_DIR + "/qc/multiqc_report.html",
+    *expand(RESULTS_DIR + "/circRNA/{srr}/high_confidence.bed", srr=SAMPLES),
+    RESULTS_DIR + "/circRNA/count_matrix.tsv",
 ]
+if USE_CIRIQUANT:
+    _ALL_TARGETS += expand(RESULTS_DIR + "/circRNA/{srr}/{srr}.gtf", srr=SAMPLES)
 if HAS_GROUPS:
     _ALL_TARGETS += [
-        "results/de/de_results.tsv",
-        "results/plots/volcano.pdf",
-        "results/plots/heatmap.pdf",
-        "results/plots/pca.pdf",
-        "results/report.html",
+        RESULTS_DIR + "/de/de_results.tsv",
+        RESULTS_DIR + "/plots/volcano.pdf",
+        RESULTS_DIR + "/plots/heatmap.pdf",
+        RESULTS_DIR + "/plots/pca.pdf",
+        RESULTS_DIR + "/report.html",
     ]
 
 rule all:
