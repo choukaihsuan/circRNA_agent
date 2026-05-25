@@ -35,14 +35,16 @@ circRNA_agent/
 │   ├── agent.py                 # CLI 入口（--gse, --setup-ciriquant 等）
 │   ├── prepare_metadata.py      # 從 GEO RunInfo 建立 library_info.csv
 │   ├── download_geo.py          # SRA 下載輔助
-│   ├── consensus_filter.py      # CIRIquant + DCC 共識過濾（輸出 BED）
+│   ├── consensus_filter.py      # CIRIquant + DCC 共識過濾（輸出 BED + confidence score）
 │   ├── merge_counts.py          # 從 CIRIquant GTF 建立 BSJ + FSJ count matrix
+│   ├── annotate_circbase.py     # circBase hg19 座標比對注釋（自動下載或讀本地檔）
+│   ├── rank_biomarkers.py       # Biomarker 候選排序（composite score）
 │   ├── analysis.R               # DE 分析（edgeR_ciriquant / deseq2 / limma）
-│   ├── generate_report.py       # 輸出 HTML 報告
+│   ├── generate_report.py       # 輸出 HTML 報告（含 Type I/II、biomarker 表格）
 │   ├── utils.py                 # 共用工具函數
-│   ├── web_ui.py                # Flask Web UI（工具選擇介面）
+│   ├── web_ui.py                # Flask Web UI（GEO 一鍵啟動 + 工具/方法選擇）
 │   └── templates/
-│       ├── index.html           # 主設定頁面（Step 1-3）
+│       ├── index.html           # 主設定頁面（GEO 入口 + Step 1-3）
 │       └── status.html          # Pipeline 執行狀態頁面（auto-refresh log）
 ├── envs/
 │   └── circrna.yaml             # Conda 環境定義
@@ -89,7 +91,9 @@ HISAT2 + BWA-MEM                    STAR chimeric junctions
                      ▼
              [consensus_filter]
              共識過濾（min_tools=2, slop=10, min_bsj=2）
-             → high_confidence.bed
+             pseudo-circ QC（BSJ/FSJ > max_junction_ratio 過濾）
+             confidence_score = Σ[log2(bsj+1)×(1−dist/slop)] / n_supporting
+             → high_confidence.bed（7 欄，含 confidence_score）
              → consensus_summary.tsv
              （支援單工具模式：USE_CIRIQUANT / USE_DCC）
                      │
@@ -99,15 +103,25 @@ HISAT2 + BWA-MEM                    STAR chimeric junctions
              → circRNA/count_matrix.tsv
              → circRNA/fsj_count_matrix.tsv
                      │
-                     ▼
-             [de_analysis]（需要 sample_groups.csv）
-             edgeR_ciriquant / deseq2 / limma
-             → de/de_results.tsv
-             → plots/volcano.pdf, heatmap.pdf, pca.pdf
-                     │
-                     ▼
-             [generate_report]
-             → report.html
+                     ├─────────────────────────┐
+                     ▼                         ▼
+             [de_analysis]              [annotate_circbase]
+             edgeR_ciriquant /          比對 circBase hg19
+             deseq2 / limma             → circRNA/circbase_annotated.tsv
+             → de/de_results.tsv              │
+             → plots/*.pdf                    │
+                     │                        │
+                     └──────────┬─────────────┘
+                                ▼
+                        [rank_biomarkers]
+                        composite score：
+                        significance + |log2FC|
+                        + confidence + circBase bonus
+                        → de/biomarker_candidates.tsv
+                                │
+                                ▼
+                        [generate_report]
+                        → report.html（含 Type I/II、biomarker 表）
 ```
 
 ---
@@ -148,6 +162,37 @@ DCC {paired_junction} \
 - 命令是大寫 `DCC`（不是 `dcc`）
 - BAM 參數是 `-B`（不是 `-A`）
 - `-mt1`/`-mt2` 直接傳檔案路徑（不支援 `@filelist` 格式）
+
+### Consensus 過濾與 Confidence Score
+
+`consensus_filter.py` 的過濾流程（每個 sample 獨立執行）：
+
+1. **min_bsj 過濾**：各工具輸出中，BSJ < min_bsj 的 circRNA 直接丟棄
+2. **Pseudo-circ QC**（CIRIquant only）：解析 GTF 中的 FSJ，若 BSJ/FSJ > `max_junction_ratio`（預設 1.0）則丟棄。真實 circRNA 幾乎都有 BSJ < FSJ；比值 > 1 是誤比對或 repeat 假陽性的警訊。FSJ = 0 的 locus 不做此過濾（缺乏對應線性轉錄本資訊）
+3. **座標共識投票**：各工具的座標在 slop 範圍內（預設 10 bp）視為一致
+4. **Confidence score** = `Σ[log2(bsj+1) × (1−dist/slop)] / n_supporting_tools`
+   - 分母是**實際支持該 circRNA 的工具數**（非所有工具數），代表「各支持工具的平均每工具信心」
+   - 論文應標明此為 weighted scoring heuristic，**非機率值**，引用 CirComPara2 + Hansen (2018) 作為 consensus 正當性基礎
+
+### circBase 注釋（`annotate_circbase.py`）
+
+- 從 `http://www.circbase.org/download/hsa_hg19_circRNA.txt` 自動下載（或讀 `--circbase-file` 本地檔案，預設快取於 `/tmp/circbase_hg19.txt`）
+- 以 max(|Δstart|, |Δend|) ≤ slop 判斷為已知 circRNA
+- 輸出欄位：`circbase_id`（或 `"novel"`）、`circbase_gene`、`in_circbase`（0/1）
+
+### Biomarker 排序（`rank_biomarkers.py`）
+
+四維 composite score，每維度在 significant set 內 min-max 標準化後平均：
+
+```
+biomarker_score = (sig_norm + fc_norm + conf_norm + known_bonus) / 4
+  sig_norm  = -log10(padj),  上限 10，標準化
+  fc_norm   = |log2FC|,      上限 5，標準化
+  conf_norm = confidence_score 標準化
+  known_bonus = 1 若 in_circbase，否則 0（不做標準化）
+```
+
+輸入：`de_results.tsv` + `circbase_annotated.tsv`，只對 FDR 顯著的 circRNA 排序。
 
 ### CIRIquant GTF 輸出格式
 
@@ -199,10 +244,13 @@ genome:
 ciriquant_config: config/ciriquant.yaml
 
 consensus:
-  tools:        [ciriquant, dcc]   # 工具選擇
-  min_tools:    2                  # 共識閾值
-  slop:         10                 # 座標容忍 bp
-  min_bsj_reads: 2
+  tools:             [ciriquant, dcc]  # 工具選擇
+  min_tools:         2                # 共識閾值
+  slop:              10               # 座標容忍 bp
+  min_bsj_reads:     2
+  max_junction_ratio: 1.0             # pseudo-circ QC：BSJ/FSJ 上限（CIRIquant only）
+
+circbase_file: ""   # 留空 = 自動下載；或填本地路徑
 
 de:
   method:       edgeR_ciriquant    # edgeR_ciriquant / deseq2 / limma
@@ -279,12 +327,20 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 ```
 
 **功能**：
+- **GEO 一鍵啟動**（頂部卡片）：輸入 GSE ID + cores → POST `/run_gse` → 呼叫 `agent.py --gse {gse_id}` → 跳轉狀態頁
 - Step 1：circRNA 工具選擇（CIRIquant / DCC / 兩者），自動顯示共識模式說明
 - Step 2：DE 方法選擇（edgeR_ciriquant 推薦 / DESeq2 / limma-voom）
-- Step 3：進階參數（min_bsj, slop, FDR, log2FC, threads）
+- Step 3：進階參數（min_bsj, slop, **max_junction_ratio**, FDR, log2FC, threads）
 - 儲存設定 → 更新 `config.yaml`
 - 儲存並執行 → 更新 config 後啟動 Snakemake subprocess
 - 狀態頁（`/status`）：每 5 秒 auto-refresh log，顯示 pipeline 是否執行中
+
+**Web UI routes**：
+- `GET /` — 主設定頁
+- `POST /update` — 儲存設定（+ 可選執行 Snakemake）
+- `POST /run_gse` — GEO 一鍵啟動
+- `GET /status` — 狀態頁
+- `GET /api/log` — log JSON（前端 polling 用）
 
 ---
 
@@ -315,6 +371,24 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 
 ---
 
+## HTML 報告內容（`generate_report.py`）
+
+報告為自包含 HTML（PDF 圖表以 base64 內嵌）：
+
+| 區塊 | 說明 |
+|------|------|
+| Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down |
+| **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量；Type I = circRNA 專一性，Type II = 基因層次 |
+| **Biomarker 候選表** | top 30，欄位：rank, circ_id, log2FC, padj, biomarker_score, in_circbase, circbase_id, circbase_gene, Type |
+| Top DE table | FDR 顯著的 circRNA，含 Type 欄（若存在） |
+| Volcano plot | PDF embedded |
+| PCA | PDF embedded |
+| Heatmap | top 50 DE，PDF embedded |
+
+報告標頭顯示使用的 DE 方法（`method-tag` badge）。
+
+---
+
 ## 目前執行進度（2026-05-25）
 
 | 步驟 | 狀態 |
@@ -323,11 +397,13 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 | FastQC raw | ✅ 6/6 完成 |
 | CIRIquant | ✅ 6/6 完成（GTF 在 `~/GSE113230_results/circRNA/SRRxxxxxxx/`） |
 | STAR paired-end | ✅ 5/6 完成，SRR7012371 重跑中 |
-| STAR mate1（新） | 🔄 跑中 |
-| STAR mate2（新） | 🔄 跑中 |
+| STAR mate1 | 🔄 跑中 |
+| STAR mate2 | 🔄 跑中 |
 | DCC | ⏳ 等 mate1/mate2 完成 |
-| consensus_filter | ⏳ 等 DCC |
+| consensus_filter（含 pseudo-circ QC） | ⏳ 等 DCC |
 | merge_counts | ⏳ |
+| annotate_circbase | ⏳ |
+| rank_biomarkers | ⏳ |
 | DE analysis | ⏳ |
 | report | ⏳ |
 
