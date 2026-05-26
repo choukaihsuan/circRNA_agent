@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 circRNA Agent 通知模組
-支援：SMTP Email + Slack/LINE Webhook
+支援：SMTP Email + Slack Webhook
 
 用法：
     python scripts/notify.py --event success --report results/report.html
@@ -15,7 +15,8 @@ circRNA Agent 通知模組
     NOTIFY_SMTP_HOST     (選填，預設 smtp.gmail.com)
     NOTIFY_SMTP_PORT     (選填，預設 587)
     NOTIFY_SLACK_WEBHOOK Slack Incoming Webhook URL（選填）
-    NOTIFY_LINE_TOKEN    LINE Notify token（選填）
+
+注意：LINE Notify 已於 2025-03-31 停止服務。
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ import argparse
 import json
 import os
 import smtplib
-import urllib.parse
 import urllib.request
 from datetime import datetime
 from email import encoders
@@ -40,7 +40,6 @@ SMTP_USER     = os.getenv("NOTIFY_EMAIL_FROM", "")
 SMTP_PASS     = os.getenv("NOTIFY_EMAIL_PASS", "")
 EMAIL_TO      = os.getenv("NOTIFY_EMAIL_TO", "")
 SLACK_WEBHOOK = os.getenv("NOTIFY_SLACK_WEBHOOK", "")
-LINE_TOKEN    = os.getenv("NOTIFY_LINE_TOKEN", "")
 
 _ATTACH_LIMIT_MB = 20  # Gmail attachment size limit
 
@@ -100,29 +99,12 @@ def send_slack(text: str) -> None:
         print(f"[notify] Slack 失敗: {exc}")
 
 
-def send_line(text: str) -> None:
-    if not LINE_TOKEN:
-        return
-    data = urllib.parse.urlencode({"message": text}).encode()
-    req = urllib.request.Request(
-        "https://notify-api.line.me/api/notify",
-        data=data,
-        headers={"Authorization": f"Bearer {LINE_TOKEN}"},
-    )
-    try:
-        urllib.request.urlopen(req, timeout=10)
-        print("[notify] LINE 通知已發送")
-    except Exception as exc:
-        print(f"[notify] LINE 失敗: {exc}")
-
-
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def notify_start(project_id: str) -> None:
     now  = datetime.now().strftime("%Y-%m-%d %H:%M")
     text = f"🚀 [{project_id}] Pipeline 啟動（{now}）"
     send_slack(text)
-    send_line(text)
     print(f"[notify] start: {text}")
 
 
@@ -158,7 +140,6 @@ def notify_success(project_id: str, report_path: str = "",
 
     send_email(subject, body, report_path)
     send_slack(slack_text)
-    send_line(slack_text.replace("*", ""))
 
 
 def notify_failure(project_id: str, failed_rule: str = "unknown",
@@ -186,7 +167,6 @@ def notify_failure(project_id: str, failed_rule: str = "unknown",
 
     send_email(subject, body)
     send_slack(slack_text)
-    send_line(slack_text.replace("*", "").replace("`", ""))
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
