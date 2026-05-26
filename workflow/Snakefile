@@ -3,8 +3,10 @@ circRNA Agent – Master Snakefile
 Pipeline: download → QC+trim → circRNA detection → DE → HTML report
 """
 
+import json
 import os
 import platform
+import subprocess
 import sys
 
 import pandas as pd
@@ -86,3 +88,57 @@ if HAS_GROUPS:
 
 rule all:
     input: _ALL_TARGETS
+
+
+# ─── Notification hooks ───────────────────────────────────
+
+def _notify(event: str, **kwargs) -> None:
+    """Call scripts/notify.py in a fire-and-forget subprocess."""
+    cmd = [
+        sys.executable,
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts", "notify.py"),
+        "--event",   event,
+        "--project", config.get("project_id", "circRNA"),
+    ]
+    for k, v in kwargs.items():
+        cmd += [f"--{k}", str(v)]
+    subprocess.Popen(cmd)
+
+
+def _de_stats() -> str:
+    """Parse DE results into JSON stats for the success notification."""
+    de_path = os.path.join(config["results_dir"], "de", "de_results.tsv")
+    try:
+        import pandas as _pd
+        df  = _pd.read_csv(de_path, sep="\t")
+        fdr = config.get("de", {}).get("fdr_cutoff", 0.05)
+        sig = df[df["FDR"] < fdr]
+        fc_col = next((c for c in df.columns if "logfc" in c.lower() or c == "log2FC"), None)
+        n_up   = int((sig[fc_col] > 0).sum()) if fc_col else "?"
+        n_down = int((sig[fc_col] < 0).sum()) if fc_col else "?"
+        return json.dumps({
+            "total_circ": len(df),
+            "n_sig":      len(sig),
+            "n_up":       n_up,
+            "n_down":     n_down,
+        })
+    except Exception:
+        return "{}"
+
+
+onstart:
+    _notify("start")
+
+onsuccess:
+    _notify(
+        "success",
+        report = os.path.join(config["results_dir"], "report.html"),
+        stats  = _de_stats(),
+    )
+
+onerror:
+    _notify(
+        "failure",
+        rule = "unknown",
+        log  = "logs/pipeline_run.log",
+    )
