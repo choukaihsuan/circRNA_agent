@@ -43,6 +43,7 @@ circRNA_agent/
 │   ├── isoform_switching.R      # 計算 IUI、Wilcoxon rank-sum 測試 isoform switching
 │   ├── analysis.R               # DE 分析（edgeR_ciriquant / deseq2 / limma）
 │   ├── generate_report.py       # 輸出 HTML 報告（互動式 Plotly + Type I/II + biomarker）
+│   ├── notify.py                # 通知模組（Email/Slack/LINE，Snakemake hook 呼叫）
 │   ├── utils.py                 # 共用工具函數
 │   ├── web_ui.py                # Flask Web UI（GEO 一鍵啟動 + 進度視覺化）
 │   └── templates/
@@ -369,6 +370,54 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 | `consensus_filter.py` `TypeError: 'type' object is not subscriptable` | Python 3.7：module-level 的 `CoordMap = dict[tuple[...], ...]` 賦值在執行時求值，不能用內建 `dict`/`tuple` 做 subscript；`from __future__ import annotations` 只延遲 annotation 求值，**不影響普通賦值** | 改為 `from typing import Dict, Tuple; CoordMap = Dict[Tuple[str,int,int], float]` |
 | `parse_ciriquant` 回傳 0 筆 circRNA | CIRIquant 1.1.3 GTF 屬性欄用小寫 `bsj`/`fsj`，regex 搜尋大寫 `BSJ`/`FSJ` 全部未匹配 | 兩個 `re.search()` 加 `re.IGNORECASE` flag |
 | `parse_dcc` 回傳 0 筆 circRNA | `CircCoordinates` 只有座標（8 欄，無 count）；舊程式讀 col 3 得到 Gene 欄（字串），`float()` 失敗後全部 skip | `parse_dcc()` 改為優先讀同目錄的 `CircRNACount`（col 3 = junction count）；不存在時 fallback count=5 |
+
+---
+
+## 通知系統（`notify.py`）
+
+Pipeline 完成、失敗、啟動時自動發送通知，透過 Snakemake `onstart` / `onsuccess` / `onerror` hook 呼叫。
+
+**支援管道**：
+
+| 管道 | 說明 |
+|------|------|
+| SMTP Email | Gmail TLS 587，成功時附加 `report.html`（>20 MB 略過附件） |
+| Slack Webhook | Incoming Webhook，Markdown 格式 |
+| LINE Notify | LINE Notify token，純文字 |
+
+**通知內容**：
+
+| 事件 | 內容 |
+|------|------|
+| `start` | 啟動時間 |
+| `success` | 完成時間、總 circRNA 數、顯著 DECs、上調/下調數 |
+| `failure` | 失敗 rule 名稱、pipeline log 最後 50 行 |
+
+**環境變數設定**（加到 server `~/.bashrc`）：
+
+```bash
+export NOTIFY_EMAIL_FROM="寄件gmail@gmail.com"
+export NOTIFY_EMAIL_PASS="xxxx xxxx xxxx xxxx"   # Gmail App Password（非登入密碼）
+export NOTIFY_EMAIL_TO="chou.kaihsuan@gmail.com"
+export NOTIFY_SLACK_WEBHOOK="https://hooks.slack.com/services/..."  # 選填
+export NOTIFY_LINE_TOKEN="..."                                        # 選填
+```
+
+Gmail App Password 申請：Google 帳號 → 安全性 → 兩步驟驗證開啟後 → 應用程式密碼。
+
+**手動測試**：
+```bash
+python scripts/notify.py --event start --project GSE113230
+python scripts/notify.py --event success --project GSE113230 --report results/report.html
+python scripts/notify.py --event failure --project GSE113230 --rule dcc --log logs/pipeline_run.log
+```
+
+未設定任何環境變數時，`notify.py` 只列印 log，不影響 pipeline 執行。
+
+**Snakemake hook 實作**（`workflow/Snakefile`）：
+- `onstart` → fire-and-forget subprocess 呼叫 `notify.py --event start`
+- `onsuccess` → 解析 `de_results.tsv` 統計後呼叫 `notify.py --event success --stats {...}`
+- `onerror` → 呼叫 `notify.py --event failure --rule unknown --log logs/pipeline_run.log`
 
 ---
 
