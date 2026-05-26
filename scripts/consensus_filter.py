@@ -18,13 +18,14 @@ import math
 import re
 import sys
 from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
 
 # ── Type alias ────────────────────────────────────────────────────────────────
-# Maps (chr, start, end) → BSJ count
-CoordMap = dict[tuple[str, int, int], float]
+# Maps (chr, start, end) → BSJ count  (typing.Dict for Python 3.7 compat)
+CoordMap = Dict[Tuple[str, int, int], float]
 
 
 # ── Parsers ───────────────────────────────────────────────────────────────────
@@ -49,8 +50,8 @@ def parse_ciriquant(path: str, min_bsj: int, max_junction_ratio: float = 1.0) ->
             chrom = parts[0]
             start = int(parts[3])
             end   = int(parts[4])
-            bsj_m = re.search(r'BSJ\s+([\d.]+)', parts[8])
-            fsj_m = re.search(r'FSJ\s+([\d.]+)', parts[8])
+            bsj_m = re.search(r'bsj\s+([\d.]+)', parts[8], re.IGNORECASE)
+            fsj_m = re.search(r'fsj\s+([\d.]+)', parts[8], re.IGNORECASE)
             if not bsj_m:
                 continue
             bsj = float(bsj_m.group(1))
@@ -71,24 +72,36 @@ def parse_ciriquant(path: str, min_bsj: int, max_junction_ratio: float = 1.0) ->
 
 
 def parse_dcc(path: str, min_bsj: int) -> CoordMap:
-    """Parse DCC CircCoordinates. Returns {(chr, start, end): count}."""
+    """Parse DCC output. Prefers CircRNACount (has read counts) over CircCoordinates.
+    DCC writes coordinates and counts in separate files; CircRNACount has columns:
+    Chr, Start, End, <sample_name> (the junction file name, index 3).
+    """
     coords: CoordMap = {}
-    with open(path) as fh:
+    # CircRNACount sits in the same directory as CircCoordinates
+    count_path = str(Path(path).parent / "CircRNACount")
+    parse_path = count_path if Path(count_path).exists() else path
+
+    with open(parse_path) as fh:
         raw_header = fh.readline().strip().split("\t")
         header = [h.lower().strip() for h in raw_header]
-        chr_idx   = next((i for i, h in enumerate(header) if h == "chr"), 0)
+        chr_idx   = next((i for i, h in enumerate(header) if h in ("chr", "chrom")), 0)
         start_idx = next((i for i, h in enumerate(header) if h == "start"), 1)
         end_idx   = next((i for i, h in enumerate(header) if h == "end"), 2)
-        count_idx = next((i for i, h in enumerate(header) if h == "c"), 3)
+        # CircRNACount: count is 4th column (index 3), header name is the junction file
+        # CircCoordinates: no count column; fall back to nominal 5 (passed -Nr 5 1 filter)
+        use_count_col = parse_path == count_path
         for line in fh:
             parts = line.strip().split("\t")
-            if len(parts) <= max(chr_idx, start_idx, end_idx, count_idx):
+            if len(parts) <= 2:
                 continue
             try:
                 chrom = parts[chr_idx]
                 start = int(parts[start_idx])
                 end   = int(parts[end_idx])
-                count = float(parts[count_idx])
+                if use_count_col and len(parts) > 3:
+                    count = float(parts[3])
+                else:
+                    count = 5.0  # DCC already filtered by -Nr 5 1
                 if count >= min_bsj:
                     coords[(chrom, start, end)] = count
             except (ValueError, IndexError):
