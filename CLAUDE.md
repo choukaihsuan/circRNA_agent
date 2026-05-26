@@ -39,13 +39,15 @@ circRNA_agent/
 │   ├── merge_counts.py          # 從 CIRIquant GTF 建立 BSJ + FSJ count matrix
 │   ├── annotate_circbase.py     # circBase hg19 座標比對注釋（自動下載或讀本地檔）
 │   ├── rank_biomarkers.py       # Biomarker 候選排序（composite score）
+│   ├── assign_isoforms.py       # circRNA BSJ 座標對應 host gene（依 GTF）
+│   ├── isoform_switching.R      # 計算 IUI、Wilcoxon rank-sum 測試 isoform switching
 │   ├── analysis.R               # DE 分析（edgeR_ciriquant / deseq2 / limma）
-│   ├── generate_report.py       # 輸出 HTML 報告（含 Type I/II、biomarker 表格）
+│   ├── generate_report.py       # 輸出 HTML 報告（互動式 Plotly + Type I/II + biomarker）
 │   ├── utils.py                 # 共用工具函數
-│   ├── web_ui.py                # Flask Web UI（GEO 一鍵啟動 + 工具/方法選擇）
+│   ├── web_ui.py                # Flask Web UI（GEO 一鍵啟動 + 進度視覺化）
 │   └── templates/
 │       ├── index.html           # 主設定頁面（GEO 入口 + Step 1-3）
-│       └── status.html          # Pipeline 執行狀態頁面（auto-refresh log）
+│       └── status.html          # Pipeline 狀態頁（進度條 + rule 狀態格 + log）
 ├── envs/
 │   └── circrna.yaml             # Conda 環境定義
 └── logs/                        # Snakemake 各 rule 的 log 檔
@@ -155,13 +157,14 @@ DCC {paired_junction} \
     -mt2 {mate2_junction} \     # R2 單端 STAR 比對
     -D -an {gtf} \
     -Pi -F -M -Nr 5 1 \
-    -fg -G -B {bam} \
+    -G -B {bam} \
     -O {outdir} -T 4
 ```
 
 - 命令是大寫 `DCC`（不是 `dcc`）
 - BAM 參數是 `-B`（不是 `-A`）
 - `-mt1`/`-mt2` 直接傳檔案路徑（不支援 `@filelist` 格式）
+- **`-fg` 已移除**：觸發 CircSkip 解析，GTF exon_number 屬性尾部引號造成 `ValueError`
 
 ### Consensus 過濾與 Confidence Score
 
@@ -339,8 +342,9 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 - `GET /` — 主設定頁
 - `POST /update` — 儲存設定（+ 可選執行 Snakemake）
 - `POST /run_gse` — GEO 一鍵啟動
-- `GET /status` — 狀態頁
+- `GET /status` — 狀態頁（進度條 + 18 stage 格 + collapsible log）
 - `GET /api/log` — log JSON（前端 polling 用）
+- `GET /api/progress` — Snakemake log 解析 JSON（stages 陣列 + finished/total count + running bool）
 
 ---
 
@@ -362,6 +366,9 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 | DCC 六個樣本全部失敗（IndexError: list index out of range） | 多個 DCC 並行共用工作目錄下的 `_tmp_DCC/`，競爭條件 + 上次失敗殘留的 partial 資料 | 改為 `(cd {params.outdir} && DCC ...)` subshell，每個 sample 的 `_tmp_DCC/` 獨立在各自 outdir 內 |
 | DCC log 路徑失敗（`logs/dcc/SRR.log: No such file or directory`） | `cd {outdir}` 後 `> {log}` 的相對路徑從 outdir 解析 | 同上，subshell 讓 `> {log}` 在 parent shell 的 CWD（`~/circRNA_agent/`）執行 |
 | multiqc numpy 版本衝突（`numpy 1.16.4 < 1.17`） | conda env 安裝的 numpy 過舊，matplotlib 要求 ≥1.17 | `pip install 'numpy>=1.17'` 在 ciriquant env |
+| `consensus_filter.py` `TypeError: 'type' object is not subscriptable` | Python 3.7：module-level 的 `CoordMap = dict[tuple[...], ...]` 賦值在執行時求值，不能用內建 `dict`/`tuple` 做 subscript；`from __future__ import annotations` 只延遲 annotation 求值，**不影響普通賦值** | 改為 `from typing import Dict, Tuple; CoordMap = Dict[Tuple[str,int,int], float]` |
+| `parse_ciriquant` 回傳 0 筆 circRNA | CIRIquant 1.1.3 GTF 屬性欄用小寫 `bsj`/`fsj`，regex 搜尋大寫 `BSJ`/`FSJ` 全部未匹配 | 兩個 `re.search()` 加 `re.IGNORECASE` flag |
+| `parse_dcc` 回傳 0 筆 circRNA | `CircCoordinates` 只有座標（8 欄，無 count）；舊程式讀 col 3 得到 Gene 欄（字串），`float()` 失敗後全部 skip | `parse_dcc()` 改為優先讀同目錄的 `CircRNACount`（col 3 = junction count）；不存在時 fallback count=5 |
 
 ---
 
@@ -385,30 +392,32 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 | **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量；Type I = circRNA 專一性，Type II = 基因層次 |
 | **Biomarker 候選表** | top 30，欄位：rank, circ_id, log2FC, padj, biomarker_score, in_circbase, circbase_id, circbase_gene, Type |
 | Top DE table | FDR 顯著的 circRNA，含 Type 欄（若存在） |
-| Volcano plot | PDF embedded |
-| PCA | PDF embedded |
-| Heatmap | top 50 DE，PDF embedded |
+| Volcano plot | **Plotly 互動式**（hover 顯示 circ_id / log2FC / padj / Type）；fallback to PDF embed if Plotly unavailable |
+| PCA | **Plotly 互動式**（hover 顯示 SRR ID / condition，tumor/normal 顏色區分）；numpy SVD |
+| Heatmap | **Plotly 互動式**（top 50 DE，hover 顯示 circRNA ID，RdBu_r colorscale，z-score 標準化）；fallback to PDF embed |
 
 報告標頭顯示使用的 DE 方法（`method-tag` badge）。
+Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜態 PDF embed。
 
 ---
 
-## 目前執行進度（2026-05-25）
+## 目前執行進度（2026-05-26）
 
 | 步驟 | 狀態 |
 |------|------|
 | fastp QC/trim | ✅ 6/6 完成 |
 | FastQC raw | ✅ 6/6 完成 |
 | CIRIquant | ✅ 6/6 完成（GTF 在 `~/GSE113230_results/circRNA/SRRxxxxxxx/`） |
-| STAR paired-end | ✅ 5/6 完成，SRR7012371 重跑中 |
-| STAR mate1 | 🔄 跑中 |
-| STAR mate2 | 🔄 跑中 |
-| DCC | ⏳ 等 mate1/mate2 完成 |
-| consensus_filter（含 pseudo-circ QC） | ⏳ 等 DCC |
-| merge_counts | ⏳ |
+| STAR paired-end | ✅ 6/6 完成 |
+| STAR mate1 | ✅ 6/6 完成 |
+| STAR mate2 | ✅ 6/6 完成 |
+| DCC | ✅ 5/6 完成；SRR7012368 重跑中（12:15 重啟） |
+| consensus_filter（含 pseudo-circ QC） | ✅ 5/6 完成（1,594–3,157 circRNAs / sample）；等 SRR7012368 |
+| merge_counts | ⏳ 等所有 consensus_filter 完成 |
 | annotate_circbase | ⏳ |
 | rank_biomarkers | ⏳ |
 | DE analysis | ⏳ |
+| isoform switching | ⏳ |
 | report | ⏳ |
 
-Pipeline 以 `nohup` 在背景執行，log 在 `~/circRNA_agent/logs/pipeline_run2.log`。
+Pipeline 以 `nohup` 在背景執行，log 在 `~/circRNA_agent/logs/pipeline_run5.log`。
