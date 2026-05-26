@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Benchmark configuration
+# Run from circRNA_agent/ :
+#   snakemake --snakefile benchmark/Snakefile \
+#             --configfile benchmark/config_benchmark.yaml \
+#             --cores 8
+#
+# NOTE: GSE55872 trimmed FASTQs must already exist (run fastp via main pipeline
+# or download + trim manually before starting the benchmark).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── GSE55872 (RNase R ground truth dataset, Hs68 cell line, hg19) ────────────
+gse55872:
+  total_rna: SRR444655          # total RNA (ground truth reference)
+  rnaser:
+    - SRR444974                 # RNase R replicate 1
+    - SRR445016                 # RNase R replicate 2
+  raw_dir:     /home3/choukaihsuan/GSE55872/raw
+  trimmed_dir: /home3/choukaihsuan/GSE55872/trimmed
+  results_dir:  /home3/choukaihsuan/GSE55872_results
+
+# ── GSE113230 (liver cancer DE benchmark, from main pipeline run) ─────────────
+gse113230:
+  results_dir:    /home3/choukaihsuan/GSE113230_results
+  count_matrix:   /home3/choukaihsuan/GSE113230_results/circRNA/count_matrix.tsv
+  fsj_matrix:     /home3/choukaihsuan/GSE113230_results/circRNA/fsj_count_matrix.tsv
+  de_results:     /home3/choukaihsuan/GSE113230_results/de/de_results.tsv
+  circbase_annot: /home3/choukaihsuan/GSE113230_results/circRNA/circbase_annotated.tsv
+  groups:         /home3/choukaihsuan/circRNA_agent/metadata/sample_groups.csv
+
+# ── Reference genome (hg19) ───────────────────────────────────────────────────
+genome:
+  fasta:        /home3/choukaihsuan/reference/hg19/hg19.fa
+  gtf:          /home3/choukaihsuan/reference/hg19/hg19.gtf
+  bwa_index:    /home3/choukaihsuan/reference/hg19/bwa_index/hg19
+  hisat2_index: /home3/choukaihsuan/reference/hg19/hisat2_index/hg19
+  star_index:   /home3/choukaihsuan/reference/hg19/star_index
+
+ciriquant_config: /home3/choukaihsuan/circRNA_agent/config/ciriquant.yaml
+
+# ── Benchmark output ─────────────────────────────────────────────────────────
+benchmark:
+  output_dir:         /home3/choukaihsuan/GSE113230_results/benchmark
+  slop:               10       # coordinate tolerance (bp); same as main pipeline
+  min_bsj:            2        # pre-filter before voting
+  max_junction_ratio: 1.0      # pseudo-circ QC threshold (CIRIquant only)
+  er_tp_threshold:    1.5      # enrichment ratio > 1.5 → true positive
+  er_tn_threshold:    0.5      # enrichment ratio < 0.5 → true negative
+
+# ── DE parameters (must match main pipeline config) ──────────────────────────
+de_fdr:          0.05
+de_lfc:          1.0
+de_tumor_label:  tumor
+de_normal_label: normal
+
+threads: 8

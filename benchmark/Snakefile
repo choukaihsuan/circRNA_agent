@@ -1,0 +1,526 @@
+"""
+Benchmark Snakefile – circRNA pipeline comparison
+==================================================
+比較 our pipeline vs. nf-core/circrna vs. circRNA-sponging
+
+前提條件：
+  1. GSE113230 的 edgeR_ciriquant DE results 已由主 pipeline 產生
+     （config gse113230.de_results）
+  2. conda env ciriquant 已啟動
+  （GSE55872 下載與 trim 已整合進本 Snakefile，無需手動準備）
+
+執行方式（從 circRNA_agent/ 根目錄執行）：
+  conda activate ciriquant
+  snakemake \\
+      --snakefile benchmark/Snakefile \\
+      --configfile benchmark/config_benchmark.yaml \\
+      --cores 8 \\
+      --resources mem_gb=60 \\
+      --keep-going \\
+      --rerun-incomplete
+
+只跑 accuracy benchmark（跳過 DE quality，適合 GSE113230 未完成的情況）：
+  snakemake \\
+      --snakefile benchmark/Snakefile \\
+      --configfile benchmark/config_benchmark.yaml \\
+      --cores 8 \\
+      --until accuracy_benchmark \\
+      compute_cost
+"""
+
+import os
+
+configfile: "benchmark/config_benchmark.yaml"
+
+shell.executable("bash")
+
+# ─── Config aliases ───────────────────────────────────────────────────────────
+GS55   = config["gse55872"]
+GS113  = config["gse113230"]
+BENCH  = config["benchmark"]
+GENOME = config["genome"]
+
+TOTAL_SRR   = GS55["total_rna"]              # SRR444655
+RNASER_SRRS = GS55["rnaser"]                 # [SRR444974, SRR445016]
+ALL_GSE55   = [TOTAL_SRR] + RNASER_SRRS
+
+RESULTS    = BENCH["output_dir"]
+AGENT_DIR  = os.path.dirname(os.path.abspath(workflow.snakefile))
+
+# Derived from config
+DE_FDR          = config.get("de_fdr",          0.05)
+DE_LFC          = config.get("de_lfc",           1.0)
+DE_TUMOR_LABEL  = config.get("de_tumor_label",  "tumor")
+DE_NORMAL_LABEL = config.get("de_normal_label", "normal")
+
+RAW_DIR = GS55.get("raw_dir", "/home3/choukaihsuan/GSE55872/raw")
+
+wildcard_constraints:
+    srr = r"[A-Z]+\d+"
+
+
+# ─── Target ───────────────────────────────────────────────────────────────────
+rule all:
+    input:
+        RESULTS + "/comparison_report.html"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GSE55872: 下載 + Trim（前置作業）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rule bench_download:
+    """Download GSE55872 SRR via prefetch + fasterq-dump."""
+    output:
+        r1 = RAW_DIR + "/{srr}_1.fastq.gz",
+        r2 = RAW_DIR + "/{srr}_2.fastq.gz",
+    params:
+        raw_dir = RAW_DIR,
+        srr     = "{srr}",
+    threads: 4
+    resources:
+        mem_gb = 4
+    log: "logs/bench/download_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.raw_dir}
+        prefetch {params.srr} --output-directory {params.raw_dir} >> {log} 2>&1
+        fasterq-dump {params.srr} \
+            --split-files \
+            --threads {threads} \
+            --outdir {params.raw_dir} \
+            >> {log} 2>&1
+        pigz -p {threads} {params.raw_dir}/{params.srr}_1.fastq \
+                           {params.raw_dir}/{params.srr}_2.fastq >> {log} 2>&1
+        rm -rf {params.raw_dir}/{params.srr}
+        """
+
+
+rule bench_fastp:
+    """Trim adapters and low-quality bases with fastp."""
+    input:
+        r1 = RAW_DIR + "/{srr}_1.fastq.gz",
+        r2 = RAW_DIR + "/{srr}_2.fastq.gz",
+    output:
+        r1   = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
+        r2   = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
+        json = GS55["trimmed_dir"] + "/{srr}_fastp.json",
+        html = GS55["trimmed_dir"] + "/{srr}_fastp.html",
+    threads: 4
+    resources:
+        mem_gb = 4
+    log: "logs/bench/fastp_{srr}.log"
+    shell:
+        """
+        mkdir -p {GS55[trimmed_dir]}
+        fastp \
+            -i {input.r1} -I {input.r2} \
+            -o {output.r1} -O {output.r2} \
+            --json {output.json} --html {output.html} \
+            --thread {threads} \
+            --detect_adapter_for_pe \
+            --qualified_quality_phred 20 \
+            --length_required 50 \
+            > {log} 2>&1
+        """
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GSE55872: CIRIquant（三個 SRR 各自跑）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rule bench_ciriquant:
+    """Run CIRIquant on a GSE55872 sample (total RNA or RNase R)."""
+    input:
+        r1  = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
+        r2  = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
+    output:
+        gtf = GS55["results_dir"] + "/circRNA/{srr}/{srr}.gtf",
+    params:
+        outdir = GS55["results_dir"] + "/circRNA/{srr}",
+        sample = "{srr}",
+        cfg    = config["ciriquant_config"],
+    threads: config.get("threads", 8)
+    resources:
+        mem_gb = 16
+    log: "logs/bench/ciriquant_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.outdir}
+        CIRIquant -t {threads} \
+            -1 {input.r1} -2 {input.r2} \
+            --config {params.cfg} \
+            -o {params.outdir} \
+            -p {params.sample} \
+            > {log} 2>&1
+        rm -rf {params.outdir}/circ {params.outdir}/align {params.outdir}/gene
+        """
+
+
+# ─── STAR alignment for SRR444655 only (DCC requires STAR junctions) ─────────
+
+rule bench_star_paired:
+    """STAR paired-end alignment (for DCC chimeric junctions)."""
+    input:
+        r1 = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
+        r2 = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
+    output:
+        junc = GS55["results_dir"] + "/circRNA/{srr}/Chimeric.out.junction",
+        bam  = GS55["results_dir"] + "/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
+    params:
+        index  = GENOME["star_index"],
+        prefix = GS55["results_dir"] + "/circRNA/{srr}/",
+        tmp    = GS55["results_dir"] + "/circRNA/{srr}/star_tmp",
+    threads: config.get("threads", 8)
+    resources:
+        mem_gb = 26
+    log: "logs/bench/star_paired_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.tmp}
+        STAR --runThreadN {threads} --genomeDir {params.index} \
+             --readFilesIn {input.r1} {input.r2} \
+             --readFilesCommand zcat \
+             --outSAMtype BAM SortedByCoordinate \
+             --outFileNamePrefix {params.prefix} \
+             --outTmpDir {params.tmp}/_STARtmp \
+             --chimSegmentMin 10 --chimOutType Junctions \
+             --alignSJDBoverhangMin 10 \
+             --outSAMattributes NH HI NM MD AS \
+             > {log} 2>&1
+        samtools index {output.bam}
+        rm -rf {params.tmp}
+        """
+
+
+rule bench_star_mate1:
+    """STAR single-end alignment of R1 (required by DCC -mt1)."""
+    input:
+        r1 = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
+    output:
+        junc = GS55["results_dir"] + "/circRNA/{srr}/mate1/Chimeric.out.junction",
+    params:
+        index  = GENOME["star_index"],
+        prefix = GS55["results_dir"] + "/circRNA/{srr}/mate1/",
+        tmp    = GS55["results_dir"] + "/circRNA/{srr}/mate1_tmp",
+    threads: config.get("threads", 8)
+    resources:
+        mem_gb = 26
+    log: "logs/bench/star_mate1_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.tmp}
+        STAR --runThreadN {threads} --genomeDir {params.index} \
+             --readFilesIn {input.r1} \
+             --readFilesCommand zcat \
+             --outSAMtype BAM Unsorted \
+             --outFileNamePrefix {params.prefix} \
+             --outTmpDir {params.tmp}/_STARtmp \
+             --chimSegmentMin 10 --chimOutType Junctions \
+             --alignSJDBoverhangMin 10 \
+             > {log} 2>&1
+        rm -rf {params.tmp}
+        """
+
+
+rule bench_star_mate2:
+    """STAR single-end alignment of R2 (required by DCC -mt2)."""
+    input:
+        r2 = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
+    output:
+        junc = GS55["results_dir"] + "/circRNA/{srr}/mate2/Chimeric.out.junction",
+    params:
+        index  = GENOME["star_index"],
+        prefix = GS55["results_dir"] + "/circRNA/{srr}/mate2/",
+        tmp    = GS55["results_dir"] + "/circRNA/{srr}/mate2_tmp",
+    threads: config.get("threads", 8)
+    resources:
+        mem_gb = 26
+    log: "logs/bench/star_mate2_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.tmp}
+        STAR --runThreadN {threads} --genomeDir {params.index} \
+             --readFilesIn {input.r2} \
+             --readFilesCommand zcat \
+             --outSAMtype BAM Unsorted \
+             --outFileNamePrefix {params.prefix} \
+             --outTmpDir {params.tmp}/_STARtmp \
+             --chimSegmentMin 10 --chimOutType Junctions \
+             --alignSJDBoverhangMin 10 \
+             > {log} 2>&1
+        rm -rf {params.tmp}
+        """
+
+
+rule bench_dcc:
+    """Run DCC on SRR444655 (total RNA sample used for accuracy benchmark)."""
+    input:
+        junc  = GS55["results_dir"] + "/circRNA/{srr}/Chimeric.out.junction",
+        junc1 = GS55["results_dir"] + "/circRNA/{srr}/mate1/Chimeric.out.junction",
+        junc2 = GS55["results_dir"] + "/circRNA/{srr}/mate2/Chimeric.out.junction",
+        bam   = GS55["results_dir"] + "/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
+        gtf   = GENOME["gtf"],
+    output:
+        GS55["results_dir"] + "/circRNA/{srr}/DCC/CircCoordinates",
+    params:
+        outdir = GS55["results_dir"] + "/circRNA/{srr}/DCC",
+    threads: 4
+    log: "logs/bench/dcc_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.outdir}
+        ( cd {params.outdir} && DCC {input.junc} \
+              -mt1 {input.junc1} \
+              -mt2 {input.junc2} \
+              -D -an {input.gtf} \
+              -Pi -F -M -Nr 5 1 \
+              -G -B {input.bam} \
+              -O {params.outdir} \
+              -T {threads} ) \
+              > {log} 2>&1
+        """
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Task 1 – RNase R ground truth
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rule ground_truth:
+    """Compute enrichment ratios and label TP/TN from RNase R data."""
+    input:
+        total  = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
+        rnaser = expand(
+            GS55["results_dir"] + "/circRNA/{srr}/{srr}.gtf",
+            srr=RNASER_SRRS,
+        ),
+    output:
+        RESULTS + "/rnaser/ground_truth.tsv",
+    params:
+        er_tp = BENCH.get("er_tp_threshold", 1.5),
+        er_tn = BENCH.get("er_tn_threshold", 0.5),
+        slop  = BENCH.get("slop", 10),
+    log: "logs/bench/ground_truth.log"
+    shell:
+        """
+        python {AGENT_DIR}/benchmark/scripts/rnaser_ground_truth.py \
+            --total   {input.total} \
+            --rnaser  {input.rnaser} \
+            --output  {output} \
+            --er-tp   {params.er_tp} \
+            --er-tn   {params.er_tn} \
+            --slop    {params.slop} \
+            2>&1 | tee {log}
+        """
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Task 2a – Three detection strategies on SRR444655
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rule our_filter:
+    """
+    Our adaptive consensus filter:
+    CIRIquant + DCC, slop=10 bp, BSJ/FSJ pseudo-circ QC enabled.
+    """
+    input:
+        cirique = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
+        dcc     = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+    output:
+        bed     = RESULTS + "/detection/our_method.bed",
+        summary = RESULTS + "/detection/our_method_summary.tsv",
+    params:
+        slop               = BENCH.get("slop", 10),
+        min_bsj            = BENCH.get("min_bsj", 2),
+        max_junction_ratio = BENCH.get("max_junction_ratio", 1.0),
+    log: "logs/bench/our_filter.log"
+    shell:
+        """
+        python {AGENT_DIR}/scripts/consensus_filter.py \
+            --cirique {input.cirique} \
+            --dcc     {input.dcc} \
+            --output  {output.bed} \
+            --summary {output.summary} \
+            --min-tools 2 \
+            --slop {params.slop} \
+            --min-bsj {params.min_bsj} \
+            --max-junction-ratio {params.max_junction_ratio} \
+            2>&1 | tee {log}
+        """
+
+
+rule nfcore_sim_filter:
+    """
+    nf-core/circrna simulation:
+    CIRIquant + DCC, slop=0 (exact coordinate match), BSJ/FSJ QC disabled.
+    Replicates nf-core's fixed min_tools=2 consensus behaviour.
+    """
+    input:
+        cirique = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
+        dcc     = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+    output:
+        bed     = RESULTS + "/detection/nfcore_sim.bed",
+        summary = RESULTS + "/detection/nfcore_sim_summary.tsv",
+    params:
+        min_bsj = BENCH.get("min_bsj", 2),
+    log: "logs/bench/nfcore_sim_filter.log"
+    shell:
+        """
+        python {AGENT_DIR}/scripts/consensus_filter.py \
+            --cirique {input.cirique} \
+            --dcc     {input.dcc} \
+            --output  {output.bed} \
+            --summary {output.summary} \
+            --min-tools 2 \
+            --slop 0 \
+            --min-bsj {params.min_bsj} \
+            --max-junction-ratio 999 \
+            2>&1 | tee {log}
+        """
+
+
+# ─── Accuracy benchmark ───────────────────────────────────────────────────────
+
+rule accuracy_benchmark:
+    """Compute Precision/Recall/F1/AUC-PR for the three detection strategies."""
+    input:
+        ground_truth = RESULTS + "/rnaser/ground_truth.tsv",
+        our_bed      = RESULTS + "/detection/our_method.bed",
+        our_summary  = RESULTS + "/detection/our_method_summary.tsv",
+        nfcore_bed   = RESULTS + "/detection/nfcore_sim.bed",
+        dcc_coords   = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+    output:
+        summary    = RESULTS + "/accuracy_summary.tsv",
+        stratified = RESULTS + "/stratified_f1.tsv",
+    params:
+        slop    = BENCH.get("slop", 10),
+        min_bsj = BENCH.get("min_bsj", 2),
+    log: "logs/bench/accuracy_benchmark.log"
+    shell:
+        """
+        python {AGENT_DIR}/benchmark/scripts/accuracy_benchmark.py \
+            --ground-truth      {input.ground_truth} \
+            --our-bed           {input.our_bed} \
+            --our-summary       {input.our_summary} \
+            --nfcore-bed        {input.nfcore_bed} \
+            --dcc-coords        {input.dcc_coords} \
+            --output-summary    {output.summary} \
+            --output-stratified {output.stratified} \
+            --slop    {params.slop} \
+            --min-bsj {params.min_bsj} \
+            2>&1 | tee {log}
+        """
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Task 2b – Compute cost
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rule compute_cost:
+    """Compile compute cost table (our logs + literature values)."""
+    output:
+        RESULTS + "/compute_cost.tsv",
+    log: "logs/bench/compute_cost.log"
+    shell:
+        """
+        python {AGENT_DIR}/benchmark/scripts/compute_cost.py \
+            --output {output} \
+            2>&1 | tee {log}
+        """
+
+# ── Optional rule: run with measured time logs ────────────────────────────────
+# Wrap a step with /usr/bin/time -v to get actual measurements:
+#   /usr/bin/time -v CIRIquant ... 2>&1 | tee logs/bench/time_ciriquant_SRR444655.log
+# Then run compute_cost with those log paths:
+#   python benchmark/scripts/compute_cost.py \
+#       --our-ciriquant-log logs/bench/time_ciriquant_SRR444655.log \
+#       --our-star-log      logs/bench/time_star_SRR444655.log \
+#       --output            results/benchmark/compute_cost.tsv
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Task 2c – DE quality: run DESeq2 on GSE113230 (nf-core simulation)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rule de_deseq2_baseline:
+    """
+    Run DESeq2 on GSE113230 BSJ counts to simulate nf-core/circrna's DE step.
+    Uses the same count matrix as our edgeR_ciriquant run; only the method differs.
+    """
+    input:
+        matrix = GS113["count_matrix"],
+        groups = GS113["groups"],
+    output:
+        de      = RESULTS + "/de/nfcore_deseq2_results.tsv",
+        volcano = RESULTS + "/de/plots/nfcore_volcano.pdf",
+        heatmap = RESULTS + "/de/plots/nfcore_heatmap.pdf",
+        pca     = RESULTS + "/de/plots/nfcore_pca.pdf",
+    params:
+        de_method    = "deseq2",
+        fdr          = DE_FDR,
+        lfc          = DE_LFC,
+        tumor_label  = DE_TUMOR_LABEL,
+        normal_label = DE_NORMAL_LABEL,
+    log: "logs/bench/de_deseq2_baseline.log"
+    script:
+        "../scripts/analysis.R"
+
+
+rule de_quality_benchmark:
+    """Compare DE analysis quality across the three pipeline simulations."""
+    input:
+        our_de    = GS113["de_results"],
+        nfcore_de = RESULTS + "/de/nfcore_deseq2_results.tsv",
+    output:
+        summary = RESULTS + "/de_quality_summary.tsv",
+        jaccard = RESULTS + "/de_jaccard.tsv",
+    params:
+        circbase_arg = (
+            f"--circbase-annot {GS113['circbase_annot']}"
+            if GS113.get("circbase_annot") and
+               os.path.exists(GS113.get("circbase_annot", ""))
+            else ""
+        ),
+        fdr  = DE_FDR,
+        lfc  = DE_LFC,
+    log: "logs/bench/de_quality.log"
+    shell:
+        """
+        python {AGENT_DIR}/benchmark/scripts/de_quality_benchmark.py \
+            --our-de        {input.our_de} \
+            --nfcore-de     {input.nfcore_de} \
+            --output-summary {output.summary} \
+            --output-jaccard {output.jaccard} \
+            --fdr {params.fdr} \
+            --lfc {params.lfc} \
+            {params.circbase_arg} \
+            2>&1 | tee {log}
+        """
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Task 3 – Comparison report
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rule comparison_report:
+    """Generate self-contained HTML comparison report."""
+    input:
+        accuracy   = RESULTS + "/accuracy_summary.tsv",
+        stratified = RESULTS + "/stratified_f1.tsv",
+        compute    = RESULTS + "/compute_cost.tsv",
+        de_quality = RESULTS + "/de_quality_summary.tsv",
+        de_jaccard = RESULTS + "/de_jaccard.tsv",
+    output:
+        RESULTS + "/comparison_report.html",
+    log: "logs/bench/comparison_report.log"
+    shell:
+        """
+        python {AGENT_DIR}/benchmark/scripts/generate_comparison_report.py \
+            --accuracy   {input.accuracy} \
+            --stratified {input.stratified} \
+            --compute    {input.compute} \
+            --de-quality {input.de_quality} \
+            --de-jaccard {input.de_jaccard} \
+            --output     {output} \
+            2>&1 | tee {log}
+        """

@@ -1,0 +1,297 @@
+"""
+accuracy_benchmark.py – 偵測準確率比較（對照 RNase R ground truth）
+
+Three detection strategies evaluated:
+  1. Our adaptive consensus filter
+     CIRIquant + DCC, slop=10 bp, BSJ/FSJ pseudo-circ QC
+  2. nf-core/circrna simulation
+     CIRIquant + DCC, slop=0 (exact coords), no BSJ/FSJ QC
+  3. circRNA-sponging simulation
+     DCC-only, min_bsj=2
+
+Metrics: Precision, Recall, F1, AUC-PR
+Stratification: low BSJ (1–4), mid (5–19), high (≥20 RPM in total RNA)
+
+Outputs:
+  --output-summary    results/benchmark/accuracy_summary.tsv
+  --output-stratified results/benchmark/stratified_f1.tsv
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+
+# ── Coordinate matching ───────────────────────────────────────────────────────
+
+def _parse_id(circ_id: str) -> tuple[str, int, int] | None:
+    m = re.match(r'^(.+):(\d+)\|(\d+)$', circ_id)
+    if not m:
+        return None
+    return m.group(1), int(m.group(2)), int(m.group(3))
+
+
+def _coord_match_in_set(circ_id: str, id_set: set[str], slop: int) -> bool:
+    """Check if circ_id has a match within slop bp anywhere in id_set."""
+    parsed = _parse_id(circ_id)
+    if parsed is None:
+        return circ_id in id_set
+    chrom, start, end = parsed
+    for k in id_set:
+        kp = _parse_id(k)
+        if kp is None or kp[0] != chrom:
+            continue
+        if max(abs(kp[1] - start), abs(kp[2] - end)) <= slop:
+            return True
+    return False
+
+
+def _score_for_id(circ_id: str, scores: dict[str, float], id_set: set[str], slop: int) -> float:
+    """Look up the score for circ_id via fuzzy matching."""
+    parsed = _parse_id(circ_id)
+    if parsed is None:
+        return scores.get(circ_id, 0.0)
+    chrom, start, end = parsed
+    best_score, best_dist = 0.0, float("inf")
+    for k, s in scores.items():
+        kp = _parse_id(k)
+        if kp is None or kp[0] != chrom:
+            continue
+        dist = max(abs(kp[1] - start), abs(kp[2] - end))
+        if dist <= slop and dist < best_dist:
+            best_dist = dist
+            best_score = s
+    return best_score
+
+
+# ── Metric computation ────────────────────────────────────────────────────────
+
+def _prf(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
+    prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    rec  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1   = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+    return round(prec, 4), round(rec, 4), round(f1, 4)
+
+
+def _auc_pr(scores: list[float], labels: list[int]) -> float:
+    """
+    Trapezoid-rule AUC-PR (no sklearn dependency).
+    Handles ties by using micro-averaged precision at each threshold.
+    """
+    n_pos = sum(labels)
+    if n_pos == 0 or len(set(labels)) < 2:
+        return float("nan")
+
+    # Sort by descending score
+    pairs = sorted(zip(scores, labels), key=lambda x: (-x[0], -x[1]))
+    tp = fp = 0
+    precisions = [1.0]
+    recalls    = [0.0]
+
+    for _, label in pairs:
+        if label == 1:
+            tp += 1
+        else:
+            fp += 1
+        precisions.append(tp / (tp + fp))
+        recalls.append(tp / n_pos)
+
+    # Trapezoid rule
+    auc = sum(
+        (recalls[i] - recalls[i - 1]) * (precisions[i] + precisions[i - 1]) / 2
+        for i in range(1, len(recalls))
+    )
+    return round(auc, 4)
+
+
+def evaluate(
+    method_ids: set[str],
+    truth: pd.DataFrame,
+    match_slop: int,
+    scores: dict[str, float] | None = None,
+) -> dict:
+    """
+    Evaluate a predicted set against binary ground truth.
+    Excludes ambiguous entries (is_true == -1).
+    """
+    gt = truth[truth["is_true"].isin([0, 1])]
+    tp = fp = fn = 0
+    score_list: list[float] = []
+    label_list: list[int]   = []
+
+    for _, row in gt.iterrows():
+        detected = _coord_match_in_set(row["circ_id"], method_ids, match_slop)
+        lbl = int(row["is_true"])
+
+        # Score for AUC-PR: use confidence/BSJ if available, else binary detection flag
+        if scores is not None:
+            sc = _score_for_id(row["circ_id"], scores, method_ids, match_slop)
+        else:
+            sc = 1.0 if detected else 0.0
+        score_list.append(sc)
+        label_list.append(lbl)
+
+        if lbl == 1 and detected:
+            tp += 1
+        elif lbl == 0 and detected:
+            fp += 1
+        elif lbl == 1 and not detected:
+            fn += 1
+
+    prec, rec, f1 = _prf(tp, fp, fn)
+    auc = _auc_pr(score_list, label_list)
+    return {
+        "n_detected": len(method_ids),
+        "TP": tp, "FP": fp, "FN": fn,
+        "Precision": prec, "Recall": rec, "F1": f1, "AUC_PR": auc,
+    }
+
+
+def stratified_f1(
+    method_ids: set[str],
+    truth: pd.DataFrame,
+    match_slop: int,
+) -> dict[str, float]:
+    """F1 score stratified by BSJ RPM tier in total RNA sample."""
+    gt  = truth[truth["is_true"].isin([0, 1])]
+    tiers = [
+        (1.0,  4.99,  "low_1-4"),
+        (5.0,  19.99, "mid_5-19"),
+        (20.0, 1e9,   "high_ge20"),
+    ]
+    result: dict[str, float] = {}
+    for lo, hi, label in tiers:
+        tier = gt[(gt["bsj_total"] >= lo) & (gt["bsj_total"] <= hi)]
+        tp = fp = fn = 0
+        for _, row in tier.iterrows():
+            detected = _coord_match_in_set(row["circ_id"], method_ids, match_slop)
+            lbl = int(row["is_true"])
+            if lbl == 1 and detected:   tp += 1
+            elif lbl == 0 and detected: fp += 1
+            elif lbl == 1:              fn += 1
+        _, _, f1 = _prf(tp, fp, fn)
+        result[label] = f1
+    return result
+
+
+# ── Loaders ───────────────────────────────────────────────────────────────────
+
+def _load_bed(path: str) -> set[str]:
+    ids: set[str] = set()
+    with open(path) as fh:
+        for line in fh:
+            p = line.strip().split("\t")
+            if len(p) >= 3:
+                ids.add(f"{p[0]}:{p[1]}|{p[2]}")
+    return ids
+
+
+def _load_summary_scores(path: str) -> dict[str, float]:
+    df = pd.read_csv(path, sep="\t")
+    if "circ_id" in df.columns and "confidence_score" in df.columns:
+        return dict(zip(df["circ_id"], df["confidence_score"]))
+    return {}
+
+
+def _load_dcc(path: str, min_bsj: int) -> tuple[set[str], dict[str, float]]:
+    """Returns (set of circ_ids, {circ_id: count}) from DCC CircCoordinates."""
+    ids: set[str]          = set()
+    scores: dict[str, float] = {}
+    with open(path) as fh:
+        raw_hdr = fh.readline().strip().split("\t")
+        hdr     = [h.lower().strip() for h in raw_hdr]
+        chr_i   = next((i for i, h in enumerate(hdr) if h == "chr"),   0)
+        start_i = next((i for i, h in enumerate(hdr) if h == "start"), 1)
+        end_i   = next((i for i, h in enumerate(hdr) if h == "end"),   2)
+        cnt_i   = next((i for i, h in enumerate(hdr) if h == "c"),     3)
+        for line in fh:
+            p = line.strip().split("\t")
+            if len(p) <= max(chr_i, start_i, end_i, cnt_i):
+                continue
+            try:
+                cnt = float(p[cnt_i])
+                if cnt >= min_bsj:
+                    cid = f"{p[chr_i]}:{p[start_i]}|{p[end_i]}"
+                    ids.add(cid)
+                    scores[cid] = cnt
+            except (ValueError, IndexError):
+                continue
+    return ids, scores
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Evaluate circRNA detection accuracy against RNase R ground truth"
+    )
+    parser.add_argument("--ground-truth",      required=True)
+    parser.add_argument("--our-bed",           required=True,
+                        help="Our consensus filter BED (consensus_filter.py output)")
+    parser.add_argument("--our-summary",       required=True,
+                        help="Consensus summary TSV (contains confidence_score)")
+    parser.add_argument("--nfcore-bed",        required=True,
+                        help="nf-core sim BED (slop=0, no BSJ/FSJ QC)")
+    parser.add_argument("--dcc-coords",        required=True,
+                        help="DCC CircCoordinates (circRNA-sponging sim)")
+    parser.add_argument("--output-summary",    required=True)
+    parser.add_argument("--output-stratified", required=True)
+    parser.add_argument("--slop",    type=int, default=10)
+    parser.add_argument("--min-bsj", type=int, default=2, dest="min_bsj")
+    args = parser.parse_args()
+
+    truth = pd.read_csv(args.ground_truth, sep="\t")
+    n_tp  = int((truth["is_true"] == 1).sum())
+    n_tn  = int((truth["is_true"] == 0).sum())
+    print(f"[accuracy] Ground truth: TP={n_tp}, TN={n_tn} "
+          f"(ambiguous excluded)", file=sys.stderr)
+
+    # ── Load predictions ──────────────────────────────────────────────────────
+    our_ids       = _load_bed(args.our_bed)
+    our_scores    = _load_summary_scores(args.our_summary)
+    nfcore_ids    = _load_bed(args.nfcore_bed)
+    sponge_ids, sponge_scores = _load_dcc(args.dcc_coords, args.min_bsj)
+
+    print(f"[accuracy] Detected: ours={len(our_ids)}, "
+          f"nfcore_sim={len(nfcore_ids)}, sponging_sim={len(sponge_ids)}",
+          file=sys.stderr)
+
+    # ── Evaluate each method ──────────────────────────────────────────────────
+    methods = [
+        ("Our_adaptive",   our_ids,    args.slop, our_scores),
+        ("nfcore_fixed",   nfcore_ids, 0,         None),          # exact coords
+        ("sponging_DCC",   sponge_ids, args.slop, sponge_scores),
+    ]
+
+    summary_rows = []
+    strat_rows   = []
+    for name, ids, slop, scores in methods:
+        m = evaluate(ids, truth, slop, scores)
+        summary_rows.append({"Method": name, **m})
+
+        s = stratified_f1(ids, truth, slop)
+        strat_rows.append({"Method": name, **s})
+        print(
+            f"[accuracy] {name:20s}  "
+            f"Prec={m['Precision']:.3f}  Rec={m['Recall']:.3f}  "
+            f"F1={m['F1']:.3f}  AUC-PR={m['AUC_PR']:.3f}",
+            file=sys.stderr,
+        )
+
+    # ── Write outputs ─────────────────────────────────────────────────────────
+    out_dir = Path(args.output_summary).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pd.DataFrame(summary_rows).to_csv(args.output_summary,    sep="\t", index=False)
+    pd.DataFrame(strat_rows).to_csv(  args.output_stratified, sep="\t", index=False)
+    print(f"[accuracy] Summary    → {args.output_summary}",    file=sys.stderr)
+    print(f"[accuracy] Stratified → {args.output_stratified}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
