@@ -27,7 +27,7 @@ rule de_analysis:
 
 
 rule annotate_circbase:
-    """Annotate consensus circRNAs against the circBase hg19 database."""
+    """Annotate all consensus circRNAs (merged across samples) against circBase hg19."""
     input:
         summary = expand(
             RESULTS_DIR + "/circRNA/{srr}/consensus_summary.tsv", srr=SAMPLES
@@ -35,24 +35,21 @@ rule annotate_circbase:
     output:
         RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
     params:
-        slop           = config["consensus"]["slop"],
-        circbase_file  = config.get("circbase_file", ""),
+        slop   = config["consensus"]["slop"],
+        cb_arg = lambda w: (
+            f"--circbase-file {config['circbase_file']}"
+            if config.get("circbase_file") else ""
+        ),
     log: "logs/circbase_annotation.log"
-    run:
-        import subprocess, sys
-        summaries = " ".join(input.summary)
-        cb_arg = f"--circbase-file {params.circbase_file}" if params.circbase_file else ""
-        # Merge all per-sample summaries first, then annotate the first one
-        # (annotation is per-coordinate, sample-agnostic)
-        # We annotate the merged count matrix coordinates via the first summary
-        shell(
-            f"python scripts/annotate_circbase.py "
-            f"--summary {input.summary[0]} "
-            f"--output {output[0]} "
-            f"--slop {params.slop} "
-            f"{cb_arg} "
-            f"2>&1 | tee {log}"
-        )
+    shell:
+        """
+        python scripts/annotate_circbase.py \
+            --summary     {input.summary} \
+            --output      {output} \
+            --slop        {params.slop} \
+            {params.cb_arg} \
+            2>&1 | tee {log}
+        """
 
 
 rule rank_biomarkers:
@@ -79,6 +76,44 @@ rule rank_biomarkers:
         """
 
 
+rule assign_isoforms:
+    """Map consensus circRNA coordinates to host genes; build isoform group table."""
+    input:
+        matrix = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        gtf    = config["genome"]["gtf"],
+    output:
+        RESULTS_DIR + "/circRNA/isoform_groups.tsv",
+    log: "logs/assign_isoforms.log"
+    shell:
+        """
+        python scripts/assign_isoforms.py \
+            --count-matrix {input.matrix} \
+            --gtf          {input.gtf} \
+            --out          {output} \
+            2>&1 | tee {log}
+        """
+
+
+rule isoform_switching:
+    """Compute per-isoform IUI and test for switching between tumor and normal."""
+    input:
+        bsj_matrix     = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        isoform_groups = RESULTS_DIR + "/circRNA/isoform_groups.tsv",
+        de_results     = RESULTS_DIR + "/de/de_results.tsv",
+        sample_groups  = config["groups"],
+    output:
+        iui_matrix = RESULTS_DIR + "/de/iui_matrix.tsv",
+        switching  = RESULTS_DIR + "/de/isoform_switching.tsv",
+    params:
+        tumor_label      = config["de"]["tumor_label"],
+        normal_label     = config["de"]["normal_label"],
+        fdr              = config["de"]["fdr_cutoff"],
+        delta_iui_cutoff = 0.1,
+    log: "logs/isoform_switching.log"
+    script:
+        "../../scripts/isoform_switching.R"
+
+
 rule generate_report:
     """Build a self-contained HTML summary report."""
     input:
@@ -89,6 +124,8 @@ rule generate_report:
         heatmap    = RESULTS_DIR + "/plots/heatmap.pdf",
         pca        = RESULTS_DIR + "/plots/pca.pdf",
         multiqc    = RESULTS_DIR + "/qc/multiqc_report.html",
+        switching  = RESULTS_DIR + "/de/isoform_switching.tsv",
+        groups     = config["groups"],
     output:
         RESULTS_DIR + "/report.html",
     params:

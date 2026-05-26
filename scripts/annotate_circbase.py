@@ -68,14 +68,25 @@ def load_circbase(path: str | None) -> pd.DataFrame:
 def _read_circbase(path: str) -> pd.DataFrame:
     opener = gzip.open if path.endswith(".gz") else open
     with opener(path, "rt") as fh:
-        raw_header = fh.readline().strip().split("\t")
+        first_line = fh.readline().strip()
+
+    # Strip leading '#' that circBase uses for its header line
+    if first_line.startswith("#"):
+        first_line = first_line.lstrip("#").strip()
+    raw_header = first_line.split("\t")
     header = [h.lower().strip() for h in raw_header]
 
-    df = pd.read_csv(path, sep="\t", comment="#", header=0, names=raw_header,
-                     dtype=str, compression="gzip" if path.endswith(".gz") else None)
-    df.columns = header
+    # Use header=None + skiprows=1 so the actual first data row is NOT lost.
+    # (comment="#" + header=0 would silently drop the first data entry.)
+    df = pd.read_csv(
+        path, sep="\t",
+        header=None, names=header, skiprows=1,
+        dtype=str,
+        compression="gzip" if path.endswith(".gz") else None,
+    )
 
-    # Normalise column names across circBase versions
+    # Normalise column names across circBase versions.
+    # Handles "# chrom", "circRNA ID", "gene symbol", etc.
     rename_map = {}
     for col in header:
         if "chrom" in col or col == "chr":
@@ -84,7 +95,8 @@ def _read_circbase(path: str) -> pd.DataFrame:
             rename_map[col] = "start"
         elif col in ("end", "chromend"):
             rename_map[col] = "end"
-        elif "name" in col or "circ_id" in col or col == "id":
+        elif ("name" in col or "circ_id" in col or col == "id"
+              or ("circrna" in col and "id" in col)):
             rename_map[col] = "circbase_id"
         elif "gene" in col or "symbol" in col:
             rename_map[col] = "gene"
@@ -94,10 +106,7 @@ def _read_circbase(path: str) -> pd.DataFrame:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     df = df.dropna(subset=["chr", "start", "end"])
-    print(
-        f"[circBase] loaded {len(df)} entries",
-        file=sys.stderr,
-    )
+    print(f"[circBase] loaded {len(df):,} entries", file=sys.stderr)
     return df
 
 
@@ -121,16 +130,54 @@ def _annotate_row(chrom: str, start: int, end: int,
     return "novel", ""
 
 
-def annotate(summary_file: str, circbase_df: pd.DataFrame,
+def annotate(summary_files: list[str], circbase_df: pd.DataFrame,
              slop: int) -> pd.DataFrame:
-    df = pd.read_csv(summary_file, sep="\t")
+    """
+    Load one or more consensus_summary.tsv files, deduplicate by circ_id,
+    then annotate all unique circRNAs against circBase.
+    Accepting multiple files ensures every circRNA in the merged count matrix
+    is annotated, not just those from a single sample.
+    """
+    frames = [pd.read_csv(f, sep="\t") for f in summary_files]
+    df = pd.concat(frames, ignore_index=True)
+
+    # Keep the row with the highest confidence_score when duplicated
+    if "confidence_score" in df.columns:
+        df = (df.sort_values("confidence_score", ascending=False)
+                .drop_duplicates(subset="circ_id")
+                .reset_index(drop=True))
+    else:
+        df = df.drop_duplicates(subset="circ_id").reset_index(drop=True)
+
+    print(f"[circBase] {len(df)} unique circRNAs to annotate "
+          f"(from {len(summary_files)} sample(s))", file=sys.stderr)
+
+    # Build per-chromosome index for O(n_circ × n_chr) instead of O(n_circ × N)
+    cb_by_chr: dict[str, pd.DataFrame] = {
+        chrom: grp for chrom, grp in circbase_df.groupby("chr")
+    }
 
     cb_ids, cb_genes, in_cb = [], [], []
     for _, row in df.iterrows():
-        cid, gene = _annotate_row(
-            str(row["chr"]), int(row["start"]), int(row["end"]),
-            circbase_df, slop,
-        )
+        chrom = str(row["chr"])
+        start = int(row["start"])
+        end   = int(row["end"])
+        sub   = cb_by_chr.get(chrom, pd.DataFrame())
+
+        if sub.empty:
+            cid, gene = "novel", ""
+        else:
+            dist      = sub.apply(
+                lambda r: max(abs(r["start"] - start), abs(r["end"] - end)), axis=1
+            )
+            best_idx  = dist.idxmin()
+            if dist[best_idx] <= slop:
+                best  = sub.loc[best_idx]
+                cid   = str(best.get("circbase_id", ""))
+                gene  = str(best.get("gene", ""))
+            else:
+                cid, gene = "novel", ""
+
         cb_ids.append(cid)
         cb_genes.append(gene)
         in_cb.append(0 if cid == "novel" else 1)
@@ -154,7 +201,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Annotate circRNAs against circBase (hg19)"
     )
-    parser.add_argument("--summary",       required=True, help="consensus_summary.tsv from consensus_filter.py")
+    parser.add_argument("--summary", nargs="+", required=True,
+                        help="One or more consensus_summary.tsv files from consensus_filter.py")
     parser.add_argument("--output",        required=True, help="Output annotated TSV")
     parser.add_argument("--slop",          type=int, default=10, help="Coordinate tolerance in bp (default: 10)")
     parser.add_argument("--circbase-file", default=None, dest="circbase_file",

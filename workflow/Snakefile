@@ -69,6 +69,7 @@ _ALL_TARGETS = [
     RESULTS_DIR + "/qc/multiqc_report.html",
     *expand(RESULTS_DIR + "/circRNA/{srr}/high_confidence.bed", srr=SAMPLES),
     RESULTS_DIR + "/circRNA/count_matrix.tsv",
+    RESULTS_DIR + "/circRNA/isoform_groups.tsv",   # gene assignment (always)
 ]
 if USE_CIRIQUANT:
     _ALL_TARGETS += expand(RESULTS_DIR + "/circRNA/{srr}/{srr}.gtf", srr=SAMPLES)
@@ -78,6 +79,8 @@ if HAS_GROUPS:
         RESULTS_DIR + "/plots/volcano.pdf",
         RESULTS_DIR + "/plots/heatmap.pdf",
         RESULTS_DIR + "/plots/pca.pdf",
+        RESULTS_DIR + "/de/iui_matrix.tsv",
+        RESULTS_DIR + "/de/isoform_switching.tsv",
         RESULTS_DIR + "/report.html",
     ]
 

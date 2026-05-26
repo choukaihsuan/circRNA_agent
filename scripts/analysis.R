@@ -83,45 +83,93 @@ if (de_method == "edgeR_ciriquant") {
   bsj <- counts[common_circs, ]
   fsj <- fsj[common_circs, ]
 
-  # ── TMM normalisation on FSJ to get library-size offset ──────────────────
-  fsj_safe <- fsj + 1L                  # avoid log(0) for zero-FSJ loci
-  fsj_dge  <- DGEList(counts = fsj_safe, group = condition)
-  fsj_dge  <- calcNormFactors(fsj_dge, method = "TMM")
-  # offset[i,j] = log( effective FSJ library size for sample j )
-  eff_lib <- fsj_dge$samples$lib.size * fsj_dge$samples$norm.factors
-  offset_mat <- matrix(log(eff_lib), nrow = nrow(bsj), ncol = ncol(bsj), byrow = TRUE)
+  # Min-count filter: require >= 1 read in at least min_samples samples
+  min_samp <- min(table(condition))
+  keep <- rowSums(bsj >= 1) >= min_samp
+  bsj  <- bsj[keep, ]
+  fsj  <- fsj[keep, ]
+  message(sprintf("[edgeR_v2] %d circRNAs after min-count filter", sum(keep)))
 
-  # ── BSJ GLM with FSJ offset ───────────────────────────────────────────────
-  dge    <- DGEList(counts = bsj, group = condition)
+  # ── Per-locus FSJ offset ──────────────────────────────────────────────────
+  # Each circRNA uses its own FSJ counts as offset, so the GLM tests the
+  # BSJ/FSJ ratio change rather than absolute BSJ abundance.
+  fsj_pseudo <- fsj + 0.5
+  y_fsj_norm <- DGEList(counts = fsj, group = condition)
+  y_fsj_norm <- calcNormFactors(y_fsj_norm, method = "TMM")
+  fsj_scaled <- t(t(fsj_pseudo) * y_fsj_norm$samples$norm.factors)
+  fsj_cpm    <- t(t(fsj_scaled) / colSums(fsj_scaled) * 1e6)
+  offset_mat <- log(fsj_cpm + 0.5)   # n_circ × n_sample
+
+  # ── BSJ GLM with per-locus FSJ offset ────────────────────────────────────
   design <- model.matrix(~ condition)
-  dge    <- estimateDisp(dge, design = design, offset = offset_mat)
-  fit    <- glmQLFit(dge, design = design, offset = offset_mat)
+  dge    <- DGEList(counts = bsj, group = condition)
+  dge$offset <- offset_mat
+  dge    <- estimateDisp(dge, design, robust = TRUE)
+  fit    <- glmQLFit(dge, design, robust = TRUE)
   qlf    <- glmQLFTest(fit, coef = 2)
-  res    <- as.data.frame(topTags(qlf, n = Inf, sort.by = "PValue"))
+  res_bsj <- as.data.frame(topTags(qlf, n = Inf, sort.by = "none"))
 
-  # ── Type classification via separate FSJ test ────────────────────────────
-  fsj_dge2 <- calcNormFactors(DGEList(counts = fsj_safe, group = condition), method = "TMM")
-  fsj_dge2 <- estimateDisp(fsj_dge2, design = design)
-  fsj_fit  <- glmQLFit(fsj_dge2, design = design)
-  fsj_qlf  <- glmQLFTest(fsj_fit, coef = 2)
-  fsj_res  <- as.data.frame(topTags(fsj_qlf, n = Inf))
+  # ── Independent FSJ test (host gene expression) ──────────────────────────
+  fsj_safe <- fsj + 1L
+  dge_fsj  <- DGEList(counts = fsj_safe, group = condition)
+  dge_fsj  <- calcNormFactors(dge_fsj, method = "TMM")
+  dge_fsj  <- estimateDisp(dge_fsj, design, robust = TRUE)
+  fit_fsj  <- glmQLFit(dge_fsj, design, robust = TRUE)
+  qlf_fsj  <- glmQLFTest(fit_fsj, coef = 2)
+  res_fsj  <- as.data.frame(topTags(qlf_fsj, n = Inf, sort.by = "none"))
 
-  # Type I  : ratio changes, FSJ stable  (circRNA-specific)
-  # Type II : FSJ also significantly changes in same direction (gene-level)
-  type_vec <- ifelse(
-    rownames(res) %in% rownames(fsj_res[fsj_res$FDR < 0.05, ]) &
-      sign(res$logFC) == sign(fsj_res[rownames(res), "logFC"]),
-    "II", "I"
+  # ── Merge BSJ + FSJ results ───────────────────────────────────────────────
+  res_bsj$circ_id <- rownames(res_bsj)
+  res_fsj$circ_id <- rownames(res_fsj)
+  res <- merge(
+    res_bsj[, c("circ_id", "logFC", "logCPM", "PValue", "FDR")],
+    res_fsj[, c("circ_id", "logFC", "FDR")],
+    by = "circ_id", all.x = TRUE, suffixes = c("_bsj", "_fsj")
   )
 
+  # ── Type I / II / III classification ─────────────────────────────────────
+  # Type_I   : BSJ/FSJ ratio changes; FSJ stable (circRNA-specific switching)
+  # Type_II  : BSJ/FSJ ratio changes; FSJ also DE in same direction (gene-level)
+  # Type_III : FSJ DE but BSJ/FSJ ratio not significant (host gene only)
+  # NS       : neither significant
+  res$sig_bsj <- res$FDR_bsj < fdr_cutoff & abs(res$logFC_bsj) >= lfc_cutoff
+  res$sig_fsj <- !is.na(res$FDR_fsj) & res$FDR_fsj < fdr_cutoff
+  # concordant requires same direction AND FSJ |logFC| >= 0.5 to avoid
+  # noise when both tests are marginally significant
+  res$concordant <- with(res,
+    !is.na(logFC_fsj) &
+    sign(logFC_bsj) == sign(logFC_fsj) &
+    abs(logFC_fsj) >= 0.5
+  )
+  res$Type <- dplyr::case_when(
+    res$sig_bsj & !res$sig_fsj                   ~ "Type_I",
+    res$sig_bsj & res$sig_fsj & res$concordant   ~ "Type_II",
+    res$sig_bsj & res$sig_fsj & !res$concordant  ~ "Type_I",
+    !res$sig_bsj & res$sig_fsj                   ~ "Type_III",
+    TRUE                                          ~ "NS"
+  )
+
+  # ── Circular Splicing Index (CSI = BSJ / (BSJ + FSJ + 1)) ────────────────
+  tumor_idx  <- which(condition == tumor_label)
+  normal_idx <- which(condition == normal_label)
+  csi_fn <- function(idx)
+    rowMeans(bsj[, idx, drop = FALSE] /
+             (bsj[, idx, drop = FALSE] + fsj[, idx, drop = FALSE] + 1))
+  csi_df <- data.frame(
+    circ_id    = rownames(bsj),
+    csi_tumor  = csi_fn(tumor_idx),
+    csi_normal = csi_fn(normal_idx)
+  )
+  csi_df$delta_csi <- csi_df$csi_tumor - csi_df$csi_normal
+  res <- merge(res, csi_df, by = "circ_id", all.x = TRUE)
+
+  # ── Assemble final res_df ─────────────────────────────────────────────────
   res_df <- res %>%
-    tibble::rownames_to_column("circ_id") %>%
-    mutate(Type = type_vec) %>%
-    rename(log2FC = logFC, pvalue = PValue, padj = FDR) %>%
-    select(circ_id, log2FC, pvalue, padj, Type, everything()) %>%
+    rename(log2FC = logFC_bsj, pvalue = PValue, padj = FDR_bsj) %>%
+    select(circ_id, log2FC, pvalue, padj, Type,
+           logFC_fsj, FDR_fsj, delta_csi, csi_tumor, csi_normal, logCPM) %>%
     arrange(padj)
 
-  # Log-normalised counts for plots (log2 CPM with FSJ offset)
   log_cpm <- cpm(dge, log = TRUE, offset = offset_mat)
 
 } else if (de_method == "deseq2") {

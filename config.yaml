@@ -26,6 +26,7 @@ genome:
   hisat2_index: /mnt/d/ref/hg19/hisat2_index/hg19
   species: hg19
   star_index: /mnt/d/ref/hg19/star_index
+circbase_file: ""   # leave empty for auto-download; or set local path
 groups: metadata/sample_groups.csv
 log_dir: logs
 metadata: metadata/library_info.csv

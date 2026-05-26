@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 from pathlib import Path
 
@@ -33,6 +34,103 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     with open(CONFIG_PATH, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+PIPELINE_STAGES = [
+    ("download_fastq",         "下載 SRA → FASTQ"),
+    ("fastqc_raw",             "FastQC (raw)"),
+    ("fastp_trim",             "fastp 品質過濾"),
+    ("multiqc",                "MultiQC 報告"),
+    ("check_ciriquant_config", "驗證 CIRIquant 設定"),
+    ("ciriquant",              "CIRIquant"),
+    ("star_align",             "STAR paired"),
+    ("star_align_mate1",       "STAR mate1"),
+    ("star_align_mate2",       "STAR mate2"),
+    ("dcc",                    "DCC"),
+    ("consensus_filter",       "Consensus filter"),
+    ("merge_counts",           "合併計數矩陣"),
+    ("annotate_circbase",      "circBase 注釋"),
+    ("de_analysis",            "DE 分析"),
+    ("rank_biomarkers",        "Biomarker 排序"),
+    ("assign_isoforms",        "Isoform 分組"),
+    ("isoform_switching",      "Isoform switching"),
+    ("generate_report",        "HTML 報告"),
+]
+
+
+def parse_log_progress(log_text: str) -> dict:
+    """Parse a Snakemake log and return per-rule status + overall progress."""
+    job_to_rule: dict[str, str] = {}
+    rule_started: dict[str, int] = {}
+    rule_done:    dict[str, int] = {}
+    rule_failed:  set[str]       = set()
+    current_rule: str | None     = None
+    finished_count = total_count = 0
+
+    for line in log_text.splitlines():
+        # "rule ciriquant:" or "localrule all:"
+        m = re.match(r"\s*(?:local)?rule\s+(\w+)\s*:", line)
+        if m:
+            current_rule = m.group(1)
+            continue
+
+        # "    jobid: 5"  (indented, follows immediately after rule block)
+        if current_rule:
+            m = re.match(r"\s+jobid:\s*(\d+)", line)
+            if m:
+                jid = m.group(1)
+                job_to_rule[jid]      = current_rule
+                rule_started[current_rule] = rule_started.get(current_rule, 0) + 1
+                current_rule = None
+                continue
+            # Non-indented non-empty line → lost rule context
+            if line and not line[0].isspace():
+                current_rule = None
+
+        # "Finished job 5."
+        m = re.search(r"Finished job (\d+)\.", line)
+        if m:
+            rule = job_to_rule.get(m.group(1))
+            if rule:
+                rule_done[rule] = rule_done.get(rule, 0) + 1
+
+        # "Error in rule ciriquant:"
+        m = re.match(r"\s*Error in rule\s+(\w+)\s*:", line)
+        if m:
+            rule_failed.add(m.group(1))
+
+        # "3 of 19 steps (16%) done"
+        m = re.search(r"(\d+) of (\d+) steps", line)
+        if m:
+            finished_count = int(m.group(1))
+            total_count    = int(m.group(2))
+
+    stages = []
+    for rule_id, label in PIPELINE_STAGES:
+        started = rule_started.get(rule_id, 0)
+        done    = rule_done.get(rule_id, 0)
+        failed  = rule_id in rule_failed
+        if failed:
+            status = "error"
+        elif started > 0 and done >= started:
+            status = "done"
+        elif started > 0:
+            status = "running"
+        else:
+            status = "pending"
+        stages.append({
+            "id":      rule_id,
+            "label":   label,
+            "status":  status,
+            "started": started,
+            "done":    done,
+        })
+
+    return {
+        "stages":         stages,
+        "finished_count": finished_count,
+        "total_count":    total_count,
+    }
 
 
 def tail_log(n: int = 80) -> str:
@@ -153,6 +251,14 @@ def status():
 @app.route("/api/log")
 def api_log():
     return jsonify({"log": tail_log(50), "running": pipeline_is_running()})
+
+
+@app.route("/api/progress")
+def api_progress():
+    log_text = LOG_PATH.read_text(errors="replace") if LOG_PATH.exists() else ""
+    data = parse_log_progress(log_text)
+    data["running"] = pipeline_is_running()
+    return jsonify(data)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

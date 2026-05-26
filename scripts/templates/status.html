@@ -5,41 +5,86 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pipeline 執行狀態</title>
   <style>
-    :root { --primary: #2563eb; --success: #16a34a; --error: #dc2626;
-            --border: #e2e8f0; --bg: #f8fafc; --radius: 12px; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-           background: var(--bg); color: #1e293b; }
-    .container { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
-    .header { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
-    .header h1 { font-size: 20px; font-weight: 700; }
-    .back-link { font-size: 13px; color: var(--primary); text-decoration: none;
-                 display: flex; align-items: center; gap: 4px; margin-left: auto; }
-    .back-link:hover { text-decoration: underline; }
-    .status-card { background: white; border: 1px solid var(--border);
-                   border-radius: var(--radius); padding: 20px; margin-bottom: 20px; }
-    .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-    .dot-run  { background: var(--primary); animation: pulse 1.2s ease-in-out infinite; }
-    .dot-idle { background: var(--success); }
+    :root { --primary:#2563eb; --success:#16a34a; --error:#dc2626;
+            --border:#e2e8f0; --bg:#f8fafc; --radius:12px; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+           background:var(--bg); color:#1e293b; }
+    .container { max-width:860px; margin:0 auto; padding:32px 16px 64px; }
+
+    /* ── Header ── */
+    .header { display:flex; align-items:center; gap:12px; margin-bottom:28px; }
+    .header h1 { font-size:20px; font-weight:700; }
+    .back-link { font-size:13px; color:var(--primary); text-decoration:none;
+                 display:flex; align-items:center; gap:4px; margin-left:auto; }
+    .back-link:hover { text-decoration:underline; }
+
+    /* ── Card ── */
+    .card { background:white; border:1px solid var(--border);
+            border-radius:var(--radius); padding:20px; margin-bottom:20px; }
+    .card-title { font-weight:700; font-size:15px; margin-bottom:14px; }
+
+    /* ── Status dot ── */
+    .status-row { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+    .dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .dot-run  { background:var(--primary); animation:pulse 1.2s ease-in-out infinite; }
+    .dot-idle { background:#94a3b8; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-    .status-label { font-size: 15px; font-weight: 600; }
-    .log-box { background: #0f172a; color: #94a3b8; border-radius: 8px;
-               padding: 16px; font-family: "Courier New", monospace; font-size: 12px;
-               line-height: 1.6; overflow-y: auto; max-height: 540px; white-space: pre-wrap;
-               word-break: break-all; }
-    .log-box .ok   { color: #4ade80; }
-    .log-box .err  { color: #f87171; }
-    .log-box .warn { color: #fbbf24; }
-    .btn-row { display: flex; gap: 10px; margin-top: 16px; }
-    .btn { padding: 9px 20px; border: none; border-radius: 8px; font-size: 13px;
-           font-weight: 600; cursor: pointer; text-decoration: none;
-           display: inline-flex; align-items: center; gap: 6px; }
-    .btn-back   { background: #f1f5f9; color: #1e293b; }
-    .btn-refresh{ background: var(--primary); color: white; }
-    .auto-label { font-size: 12px; color: #64748b; margin-left: auto;
-                  display: flex; align-items: center; gap: 6px; }
-    input[type=checkbox] { accent-color: var(--primary); }
+    .status-label { font-size:15px; font-weight:600; }
+
+    /* ── Progress bar ── */
+    .prog-wrap { background:#e2e8f0; border-radius:8px; height:12px;
+                 overflow:hidden; margin:10px 0 6px; }
+    .prog-fill { height:12px; background:var(--primary); border-radius:8px;
+                 transition:width 0.5s ease; min-width:0; }
+    .prog-label { font-size:12px; color:#64748b; }
+
+    /* ── Stage grid ── */
+    .stage-grid { display:flex; flex-direction:column; gap:2px; }
+    .stage-row  { display:flex; align-items:center; gap:10px; padding:6px 8px;
+                  border-radius:6px; transition:background 0.15s; }
+    .stage-row:hover { background:#f8fafc; }
+    .stage-row.pending { opacity:0.4; }
+
+    .s-icon { width:20px; height:20px; border-radius:50%; flex-shrink:0;
+              display:flex; align-items:center; justify-content:center; font-size:11px;
+              font-weight:700; }
+    .s-pending { border:2px solid #cbd5e1; background:white; }
+    .s-running { background:var(--primary); animation:pulse 1.2s ease-in-out infinite; }
+    .s-done    { background:var(--success); color:white; }
+    .s-error   { background:var(--error);   color:white; }
+
+    .stage-label { flex:1; font-size:13px; }
+    .stage-badge { font-size:11px; font-weight:600; padding:2px 8px;
+                   border-radius:10px; white-space:nowrap; }
+    .badge-pending { background:#f1f5f9; color:#94a3b8; }
+    .badge-running { background:#dbeafe; color:var(--primary); }
+    .badge-done    { background:#dcfce7; color:var(--success); }
+    .badge-error   { background:#fee2e2; color:var(--error); }
+    .stage-count   { font-size:11px; color:#94a3b8; min-width:32px; text-align:right; }
+
+    /* ── Log ── */
+    .log-toggle { font-size:14px; font-weight:700; cursor:pointer;
+                  user-select:none; display:flex; align-items:center; gap:6px; }
+    .log-toggle:hover { color:var(--primary); }
+    .log-box { background:#0f172a; color:#94a3b8; border-radius:8px;
+               padding:16px; font-family:"Courier New",monospace; font-size:12px;
+               line-height:1.6; overflow-y:auto; max-height:400px;
+               white-space:pre-wrap; word-break:break-all; margin-top:12px; }
+    .log-box .ok   { color:#4ade80; }
+    .log-box .err  { color:#f87171; }
+    .log-box .warn { color:#fbbf24; }
+    .auto-label { font-size:12px; color:#64748b; margin-left:auto;
+                  display:flex; align-items:center; gap:6px; font-weight:400; }
+    input[type=checkbox] { accent-color:var(--primary); }
+
+    /* ── Buttons ── */
+    .btn-row { display:flex; gap:10px; margin-top:16px; }
+    .btn { padding:9px 20px; border:none; border-radius:8px; font-size:13px;
+           font-weight:600; cursor:pointer; text-decoration:none;
+           display:inline-flex; align-items:center; gap:6px; }
+    .btn-back    { background:#f1f5f9; color:#1e293b; }
+    .btn-refresh { background:var(--primary); color:white; }
   </style>
 </head>
 <body>
@@ -51,66 +96,138 @@
     <a href="/" class="back-link">← 回到設定</a>
   </div>
 
-  <div class="status-card">
+  <!-- Overall status + progress bar -->
+  <div class="card">
     <div class="status-row">
       <div class="dot {% if running %}dot-run{% else %}dot-idle{% endif %}" id="status-dot"></div>
       <span class="status-label" id="status-label">
         {% if running %}流程執行中…{% else %}流程閒置（未執行）{% endif %}
       </span>
     </div>
+    <div class="prog-wrap">
+      <div class="prog-fill" id="prog-fill" style="width:0%"></div>
+    </div>
+    <div class="prog-label" id="prog-label">— / — 步驟完成</div>
   </div>
 
-  <div class="status-card">
-    <div style="display:flex; align-items:center; margin-bottom:12px;">
-      <span style="font-weight:700; font-size:15px;">執行 Log</span>
-      <label class="auto-label">
+  <!-- Stage status grid -->
+  <div class="card">
+    <div class="card-title">分析步驟</div>
+    <div class="stage-grid" id="stages-grid">
+      <div style="color:#94a3b8;font-size:13px">載入中…</div>
+    </div>
+  </div>
+
+  <!-- Log (collapsible) -->
+  <div class="card">
+    <div class="log-toggle" id="log-toggle" onclick="toggleLog()">
+      <span id="log-caret">▶</span>
+      執行 Log
+      <label class="auto-label" onclick="event.stopPropagation()">
         <input type="checkbox" id="auto-refresh" checked>
         每 5 秒自動更新
       </label>
     </div>
-    <div class="log-box" id="log-box">{{ log }}</div>
+    <div id="log-wrap" style="display:none">
+      <div class="log-box" id="log-box">{{ log }}</div>
+    </div>
   </div>
 
   <div class="btn-row">
     <a href="/" class="btn btn-back">← 回到設定</a>
-    <button onclick="refreshLog()" class="btn btn-refresh">↻ 立即更新</button>
+    <button onclick="refreshAll()" class="btn btn-refresh">↻ 立即更新</button>
   </div>
 
 </div>
-
 <script>
   let timer = null;
+  let logOpen = false;
+
+  function toggleLog() {
+    logOpen = !logOpen;
+    document.getElementById('log-wrap').style.display = logOpen ? 'block' : 'none';
+    document.getElementById('log-caret').textContent  = logOpen ? '▼' : '▶';
+    if (logOpen) {
+      const b = document.getElementById('log-box');
+      b.scrollTop = b.scrollHeight;
+    }
+  }
 
   function colorizeLog(text) {
     return text
-      .replace(/\b(Finished|finished|Completed|Success)\b/g, '<span class="ok">$1</span>')
-      .replace(/\b(Error|error|ERROR|Failed|FAILED)\b/g, '<span class="err">$1</span>')
-      .replace(/\b(Warning|WARNING|warning)\b/g, '<span class="warn">$1</span>');
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\b(Finished|finished|Completed|Success)\b/g,
+               '<span class="ok">$1</span>')
+      .replace(/\b(Error|error|ERROR|Failed|FAILED)\b/g,
+               '<span class="err">$1</span>')
+      .replace(/\b(Warning|WARNING|warning)\b/g,
+               '<span class="warn">$1</span>');
   }
 
-  async function refreshLog() {
+  function stageIcon(status) {
+    switch (status) {
+      case 'running': return '<div class="s-icon s-running"></div>';
+      case 'done':    return '<div class="s-icon s-done">✓</div>';
+      case 'error':   return '<div class="s-icon s-error">✗</div>';
+      default:        return '<div class="s-icon s-pending"></div>';
+    }
+  }
+
+  const BADGE_LABEL = { pending:'等待中', running:'執行中', done:'完成', error:'失敗' };
+
+  function renderStages(stages) {
+    if (!stages || !stages.length)
+      return '<div style="color:#94a3b8;font-size:13px">無法取得進度資訊</div>';
+    return stages.map(s => {
+      const count   = s.started > 0 ? `${s.done}/${s.started}` : '';
+      const dimClass = s.status === 'pending' ? ' pending' : '';
+      return `
+        <div class="stage-row${dimClass}">
+          ${stageIcon(s.status)}
+          <span class="stage-label">${s.label}</span>
+          <span class="stage-badge badge-${s.status}">${BADGE_LABEL[s.status] || s.status}</span>
+          <span class="stage-count">${count}</span>
+        </div>`;
+    }).join('');
+  }
+
+  async function refreshProgress() {
     try {
-      const res  = await fetch('/api/log');
-      const data = await res.json();
-      const box  = document.getElementById('log-box');
-      box.innerHTML = colorizeLog(data.log);
-      box.scrollTop = box.scrollHeight;
+      const data = await fetch('/api/progress').then(r => r.json());
+
+      const pct = data.total_count > 0
+        ? Math.round(data.finished_count / data.total_count * 100) : 0;
+      document.getElementById('prog-fill').style.width = pct + '%';
+      document.getElementById('prog-label').textContent = data.total_count > 0
+        ? `${data.finished_count} / ${data.total_count} 步驟完成（${pct}%）`
+        : '— / — 步驟完成';
 
       const dot   = document.getElementById('status-dot');
       const label = document.getElementById('status-label');
-      if (data.running) {
-        dot.className   = 'dot dot-run';
-        label.textContent = '流程執行中…';
-      } else {
-        dot.className   = 'dot dot-idle';
-        label.textContent = '流程閒置（未執行）';
-      }
-    } catch (e) { /* ignore network errors */ }
+      dot.className     = 'dot ' + (data.running ? 'dot-run' : 'dot-idle');
+      label.textContent = data.running ? '流程執行中…' : '流程閒置（未執行）';
+
+      document.getElementById('stages-grid').innerHTML = renderStages(data.stages);
+    } catch (_) { /* network error — ignore */ }
+  }
+
+  async function refreshLog() {
+    if (!logOpen) return;
+    try {
+      const data = await fetch('/api/log').then(r => r.json());
+      const box = document.getElementById('log-box');
+      box.innerHTML = colorizeLog(data.log);
+      box.scrollTop = box.scrollHeight;
+    } catch (_) {}
+  }
+
+  async function refreshAll() {
+    await Promise.all([refreshProgress(), refreshLog()]);
   }
 
   function startTimer() {
     if (timer) clearInterval(timer);
-    timer = setInterval(refreshLog, 5000);
+    timer = setInterval(refreshAll, 5000);
   }
 
   document.getElementById('auto-refresh').addEventListener('change', e => {
@@ -121,7 +238,7 @@
   // Init
   document.getElementById('log-box').innerHTML =
     colorizeLog(document.getElementById('log-box').textContent);
-  document.getElementById('log-box').scrollTop = 99999;
+  refreshProgress();
   startTimer();
 </script>
 </body>
