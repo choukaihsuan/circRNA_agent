@@ -107,8 +107,8 @@ rule isoform_switching:
     params:
         tumor_label      = config["de"]["tumor_label"],
         normal_label     = config["de"]["normal_label"],
-        fdr              = config["de"]["fdr_cutoff"],
-        delta_iui_cutoff = 0.1,
+        fdr              = config["de"].get("isoform_fdr_cutoff", 0.1),
+        delta_iui_cutoff = config["de"].get("delta_iui_cutoff", 0.1),
     log: "logs/isoform_switching.log"
     script:
         "../../scripts/isoform_switching.R"

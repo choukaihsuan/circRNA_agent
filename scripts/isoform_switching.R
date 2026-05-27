@@ -160,14 +160,15 @@ perform_switching_test <- function(mat, iso_grp,
   }
 
   res <- do.call(rbind, all_rows)
-  # Global BH: for final filtering across all isoforms
+  # Global BH kept for reference; switching uses within-gene FDR (less conservative
+  # and standard in isoform-level analyses, e.g. DEXSeq).
   res$padj_global  <- p.adjust(res$p_value, method = "BH")
   res$is_switching <- (
-    !is.na(res$padj_global) &
-    res$padj_global < fdr_cut &
+    !is.na(res$padj_within_gene) &
+    res$padj_within_gene < fdr_cut &
     abs(res$delta_iui) > delta_cut
   )
-  res[order(res$padj_global), ]
+  res[order(res$padj_within_gene), ]
 }
 
 switching_results <- perform_switching_test(
