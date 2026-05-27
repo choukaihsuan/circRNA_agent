@@ -27,12 +27,12 @@ def parse_gtf(gtf_path: str, sample_name: str) -> pd.DataFrame:
 
             chrom, _, _, start, end, _, strand, _, attributes = parts
 
-            bsj_match = re.search(r'BSJ\s+([\d.]+)', attributes)
+            bsj_match = re.search(r'BSJ\s+([\d.]+)', attributes, re.IGNORECASE)
             if not bsj_match:
                 continue
             bsj = float(bsj_match.group(1))
 
-            fsj_match = re.search(r'FSJ\s+([\d.]+)', attributes)
+            fsj_match = re.search(r'FSJ\s+([\d.]+)', attributes, re.IGNORECASE)
             fsj = float(fsj_match.group(1)) if fsj_match else 0.0
 
             id_match = re.search(r'circ_id\s+"([^"]+)"', attributes)

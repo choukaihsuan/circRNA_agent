@@ -5,12 +5,11 @@ Called as a Snakemake script.  Embeds PDF plots as base64-encoded images
 and includes top DE results as a table.
 """
 
-from __future__ import annotations
-
 import base64
 import math
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -168,7 +167,7 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
     return fig.to_html(include_plotlyjs="cdn", full_html=False)
 
 
-def _isoform_section(switching_file: str | None) -> str:
+def _isoform_section(switching_file: Optional[str]) -> str:
     """Return HTML block for isoform switching results; empty string if unavailable."""
     if not switching_file or not Path(switching_file).exists():
         return ""
@@ -221,7 +220,7 @@ def _isoform_section(switching_file: str | None) -> str:
 """
 
 
-def _biomarker_section(biomarker_file: str | None) -> str:
+def _biomarker_section(biomarker_file: Optional[str]) -> str:
     if not biomarker_file or not Path(biomarker_file).exists():
         return ""
     try:
@@ -339,12 +338,12 @@ def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 50) -> 
     return fig.to_html(include_plotlyjs="cdn", full_html=False)
 
 
-def _plotly_pca(matrix: pd.DataFrame, groups_file: str | None = None) -> str:
+def _plotly_pca(matrix: pd.DataFrame, groups_file: Optional[str] = None) -> str:
     """Interactive Plotly PCA coloured by condition (tumor/normal)."""
     if not _PLOTLY or matrix.shape[1] < 2:
         return ""
 
-    condition_map: dict[str, str] = {}
+    condition_map = {}  # type: ignore[var-annotated]
     if groups_file and Path(groups_file).exists():
         try:
             grp = pd.read_csv(groups_file)
@@ -407,9 +406,9 @@ def build_report(
     fdr:            float = 0.05,
     lfc:            float = 1.0,
     de_method:      str   = "deseq2",
-    biomarker_file: str | None = None,
-    switching_file: str | None = None,
-    groups_file:    str | None = None,
+    biomarker_file: Optional[str] = None,
+    switching_file: Optional[str] = None,
+    groups_file:    Optional[str] = None,
 ) -> None:
     de     = pd.read_csv(de_file, sep="\t")
     matrix = pd.read_csv(matrix_file, sep="\t", index_col=0)

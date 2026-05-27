@@ -52,9 +52,9 @@ groups <- groups[match(common_samples, groups$srr_id), ]
 
 condition <- factor(groups$condition, levels = c(normal_label, tumor_label))
 
-counts <- round(counts)
+counts <- data.matrix(round(counts))
 storage.mode(counts) <- "integer"
-counts <- counts[rowSums(counts) > 0, ]
+counts <- counts[rowSums(counts) > 0, , drop = FALSE]
 
 message(sprintf("[DE] method=%s  samples=%d  circRNAs=%d", de_method,
                 ncol(counts), nrow(counts)))
@@ -72,8 +72,7 @@ if (de_method == "edgeR_ciriquant") {
 
   fsj <- read.table(fsj_file, sep = "\t", header = TRUE, row.names = 1,
                     check.names = FALSE)
-  fsj <- fsj[, common_samples, drop = FALSE]
-  fsj <- round(fsj)
+  fsj <- data.matrix(round(fsj[, common_samples, drop = FALSE]))
   storage.mode(fsj) <- "integer"
 
   # Align rows: only circRNAs present in both matrices

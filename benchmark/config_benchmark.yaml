@@ -31,7 +31,7 @@ gse113230:
 # ── Reference genome (hg19) ───────────────────────────────────────────────────
 genome:
   fasta:        /home3/choukaihsuan/reference/hg19/hg19.fa
-  gtf:          /home3/choukaihsuan/reference/hg19/hg19.gtf
+  gtf:          /home3/choukaihsuan/reference/hg19/genes.gtf
   bwa_index:    /home3/choukaihsuan/reference/hg19/bwa_index/hg19
   hisat2_index: /home3/choukaihsuan/reference/hg19/hisat2_index/hg19
   star_index:   /home3/choukaihsuan/reference/hg19/star_index
