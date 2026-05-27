@@ -512,13 +512,13 @@ def build_report(
     n_sample = matrix.shape[1]
     sig_label = f"p&lt;{fdr}" if use_pvalue else f"FDR&lt;{fdr}"
 
-    # Build human-readable label as first column
+    # Rename circ_id to circ_position for display
     sig = sig.copy()
-    sig.insert(0, "circRNA", sig.apply(_make_label, axis=1))
+    if "circ_id" in sig.columns:
+        sig = sig.rename(columns={"circ_id": "circ_position"})
 
-    # Top table — label first, then annotation, then stats; keep circ_id for reference
     top_cols = [c for c in [
-        "circRNA", "strand", "region", "circ_id",
+        "circ_position", "gene_name", "strand", "region", "exon_span", "circbase_id",
         "log2FC", "pvalue", "padj", "Type",
     ] if c in sig.columns]
     top_table = sig.sort_values(p_col)[top_cols] if top_cols else sig.head(20)
