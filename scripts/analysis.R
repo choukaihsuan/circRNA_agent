@@ -140,10 +140,12 @@ if (de_method == "edgeR_ciriquant") {
   res$sig_fsj <- !is.na(res[[fsj_sig_col]]) & res[[fsj_sig_col]] < fdr_cutoff
   # concordant requires same direction AND FSJ |logFC| >= 0.5 to avoid
   # noise when both tests are marginally significant
+  # concordant: FSJ changes in the same direction as BSJ.
+  # |logFC_fsj| threshold removed — FSJ significance (fsj_sig_col) already
+  # filters noise; requiring an additional FC floor was too conservative.
   res$concordant <- with(res,
     !is.na(logFC_fsj) &
-    sign(logFC_bsj) == sign(logFC_fsj) &
-    abs(logFC_fsj) >= 0.5
+    sign(logFC_bsj) == sign(logFC_fsj)
   )
   res$Type <- dplyr::case_when(
     res$sig_bsj & !res$sig_fsj                   ~ "Type_I",
@@ -169,9 +171,10 @@ if (de_method == "edgeR_ciriquant") {
 
   # ── Assemble final res_df ─────────────────────────────────────────────────
   res_df <- res %>%
-    rename(log2FC = logFC_bsj, pvalue = PValue_bsj, padj = FDR_bsj) %>%
+    rename(log2FC = logFC_bsj, pvalue = PValue_bsj, padj = FDR_bsj,
+           pvalue_fsj = PValue_fsj) %>%
     select(circ_id, log2FC, pvalue, padj, Type,
-           logFC_fsj, FDR_fsj, delta_csi, csi_tumor, csi_normal, logCPM) %>%
+           logFC_fsj, pvalue_fsj, FDR_fsj, delta_csi, csi_tumor, csi_normal, logCPM) %>%
     arrange(padj)
 
   log_cpm <- cpm(dge, log = TRUE, offset = offset_mat)
