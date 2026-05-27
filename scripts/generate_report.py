@@ -435,7 +435,7 @@ def _enrich_de(de: pd.DataFrame,
         try:
             iso = pd.read_csv(isoform_file, sep="\t",
                               usecols=lambda c: c in
-                              ("circ_id", "gene_name", "exon_span"))
+                              ("circ_id", "gene_name", "strand", "region", "exon_span"))
             de = de.merge(iso, on="circ_id", how="left")
         except Exception:
             pass
