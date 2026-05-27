@@ -43,6 +43,27 @@ def _df_to_html(df: pd.DataFrame, max_rows: int = 50) -> str:
     )
 
 
+def _make_label(row: pd.Series) -> str:
+    """Build a human-readable primary ID: circbase_id or gene+exon, fallback to circ_id."""
+    gene  = str(row.get("gene_name", "") or "").strip()
+    exon  = str(row.get("exon_span",  "") or "").strip()
+    cb_id = str(row.get("circbase_id", "") or "").strip()
+    if cb_id and cb_id.lower() not in ("", "nan", "novel"):
+        label = cb_id
+        if gene:
+            label += f" ({gene}"
+            if exon:
+                label += f" {exon}"
+            label += ")"
+    elif gene:
+        label = gene
+        if exon:
+            label += f" {exon}"
+    else:
+        label = str(row.get("circ_id", ""))
+    return label
+
+
 def _de_split_tables(sig: pd.DataFrame, tumor_label: str = "tumor",
                      normal_label: str = "normal") -> str:
     """Return two HTML tables: up-regulated and down-regulated in tumor."""
@@ -491,9 +512,13 @@ def build_report(
     n_sample = matrix.shape[1]
     sig_label = f"p&lt;{fdr}" if use_pvalue else f"FDR&lt;{fdr}"
 
-    # Top table — include annotation columns when present
+    # Build human-readable label as first column
+    sig = sig.copy()
+    sig.insert(0, "circRNA", sig.apply(_make_label, axis=1))
+
+    # Top table — label first, then annotation, then stats; keep circ_id for reference
     top_cols = [c for c in [
-        "circ_id", "gene_name", "strand", "region", "exon_span", "circbase_id",
+        "circRNA", "strand", "region", "circ_id",
         "log2FC", "pvalue", "padj", "Type",
     ] if c in sig.columns]
     top_table = sig.sort_values(p_col)[top_cols] if top_cols else sig.head(20)
