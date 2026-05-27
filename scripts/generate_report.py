@@ -43,6 +43,29 @@ def _df_to_html(df: pd.DataFrame, max_rows: int = 50) -> str:
     )
 
 
+def _de_split_tables(sig: pd.DataFrame, tumor_label: str = "tumor",
+                     normal_label: str = "normal") -> str:
+    """Return two HTML tables: up-regulated and down-regulated in tumor."""
+    if sig.empty or "log2FC" not in sig.columns:
+        return _df_to_html(sig)
+    up   = sig[sig["log2FC"] > 0].copy()
+    down = sig[sig["log2FC"] < 0].copy()
+    html_parts = []
+    if not up.empty:
+        html_parts.append(
+            f'<h3 style="color:#d62728">&#8593; Up-regulated in {tumor_label} '
+            f'(log₂FC &gt; 0) — {len(up)} circRNAs</h3>'
+        )
+        html_parts.append(_df_to_html(up))
+    if not down.empty:
+        html_parts.append(
+            f'<h3 style="color:#1f77b4">&#8595; Down-regulated in {tumor_label} / '
+            f'Up-regulated in {normal_label} (log₂FC &lt; 0) — {len(down)} circRNAs</h3>'
+        )
+        html_parts.append(_df_to_html(down))
+    return "\n".join(html_parts) if html_parts else _df_to_html(sig)
+
+
 # ── Report template ──────────────────────────────────────────────────────────
 
 _STYLE = """
@@ -241,25 +264,32 @@ def _biomarker_section(biomarker_file: Optional[str]) -> str:
 """
 
 
-def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str) -> str:
+def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
+                    use_pvalue: bool = False) -> str:
     """Interactive Plotly volcano; returns '' when plotly is unavailable or DE is empty."""
     if not _PLOTLY:
         return ""
-    df = de[de["padj"].notna() & de["log2FC"].notna()].copy()
+    p_col = "pvalue" if use_pvalue else "padj"
+    if p_col not in de.columns:
+        p_col = "padj" if "padj" in de.columns else None
+    if p_col is None:
+        return ""
+    df = de[de[p_col].notna() & de["log2FC"].notna()].copy()
     if df.empty:
         return ""
 
-    df["nlp"] = df["padj"].clip(lower=1e-300).apply(lambda p: -math.log10(p))
+    df["nlp"] = df[p_col].clip(lower=1e-300).apply(lambda p: -math.log10(p))
 
     def _sig(row):
-        if row["padj"] < fdr and row["log2FC"] > lfc:
+        if row[p_col] < fdr and row["log2FC"] > lfc:
             return "Up"
-        if row["padj"] < fdr and row["log2FC"] < -lfc:
+        if row[p_col] < fdr and row["log2FC"] < -lfc:
             return "Down"
         return "NS"
 
     df["sig"] = df.apply(_sig, axis=1)
     has_type = "Type" in df.columns
+    p_label = "p-value (nominal)" if use_pvalue else "adjusted p-value"
 
     colors = {"Up": "#d62728", "Down": "#1f77b4", "NS": "rgba(150,150,150,0.35)"}
     sizes  = {"Up": 6, "Down": 6, "NS": 4}
@@ -273,7 +303,7 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str) ->
             lambda r: (
                 f"<b>{r.get('circ_id', '')}</b><br>"
                 f"log₂FC: {r['log2FC']:.3f}<br>"
-                f"padj: {r['padj']:.2e}"
+                f"{p_label}: {r[p_col]:.2e}"
                 + (f"<br>Type: {r['Type']}" if has_type and pd.notna(r.get("Type")) else "")
             ), axis=1,
         )
@@ -293,7 +323,7 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str) ->
     fig.update_layout(
         title=dict(text=f"Volcano Plot [{de_method}]", font_size=14),
         xaxis_title="log₂ Fold Change (Tumor / Normal)",
-        yaxis_title="−log₁₀(adjusted p-value)",
+        yaxis_title=f"−log₁₀({p_label})",
         height=500, plot_bgcolor="white", paper_bgcolor="white",
         legend=dict(title="", orientation="h", y=1.02, x=0),
         margin=dict(t=60),
@@ -303,15 +333,17 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str) ->
     return fig.to_html(include_plotlyjs="cdn", full_html=False)
 
 
-def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 50) -> str:
+def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 50,
+                    use_pvalue: bool = False) -> str:
     """Interactive Plotly heatmap of top DE circRNAs (log2 + z-score)."""
     if not _PLOTLY:
         return ""
-    if "circ_id" not in de.columns or "padj" not in de.columns:
+    p_col = "pvalue" if (use_pvalue and "pvalue" in de.columns) else "padj"
+    if "circ_id" not in de.columns or p_col not in de.columns:
         return ""
 
     top_ids = (
-        de.dropna(subset=["padj"]).sort_values("padj").head(top_n)["circ_id"].tolist()
+        de.dropna(subset=[p_col]).sort_values(p_col).head(top_n)["circ_id"].tolist()
     )
     avail = [i for i in top_ids if i in matrix.index]
     if len(avail) < 2:
@@ -395,6 +427,29 @@ def _plotly_pca(matrix: pd.DataFrame, groups_file: Optional[str] = None) -> str:
     return fig.to_html(include_plotlyjs="cdn", full_html=False)
 
 
+def _enrich_de(de: pd.DataFrame,
+               isoform_file: Optional[str],
+               circbase_file: Optional[str]) -> pd.DataFrame:
+    """Merge host gene name, circBase ID, and exon span into the DE table."""
+    if isoform_file:
+        try:
+            iso = pd.read_csv(isoform_file, sep="\t",
+                              usecols=lambda c: c in
+                              ("circ_id", "gene_name", "exon_span"))
+            de = de.merge(iso, on="circ_id", how="left")
+        except Exception:
+            pass
+    if circbase_file:
+        try:
+            cb = pd.read_csv(circbase_file, sep="\t",
+                             usecols=lambda c: c in
+                             ("circ_id", "circbase_id", "circbase_gene", "in_circbase"))
+            de = de.merge(cb, on="circ_id", how="left")
+        except Exception:
+            pass
+    return de
+
+
 def build_report(
     de_file:        str,
     matrix_file:    str,
@@ -409,6 +464,11 @@ def build_report(
     biomarker_file: Optional[str] = None,
     switching_file: Optional[str] = None,
     groups_file:    Optional[str] = None,
+    use_pvalue:     bool  = False,
+    tumor_label:    str   = "tumor",
+    normal_label:   str   = "normal",
+    isoform_file:   Optional[str] = None,
+    circbase_file:  Optional[str] = None,
 ) -> None:
     de     = pd.read_csv(de_file, sep="\t")
     matrix = pd.read_csv(matrix_file, sep="\t", index_col=0)
@@ -417,7 +477,11 @@ def build_report(
     if "log2FC" not in de.columns and "log2FoldChange" in de.columns:
         de = de.rename(columns={"log2FoldChange": "log2FC"})
 
-    sig_mask = (de["padj"] < fdr) & (de["log2FC"].abs() > lfc) if "padj" in de.columns else pd.Series(False, index=de.index)
+    # Enrich with host gene, circBase ID, exon span
+    de = _enrich_de(de, isoform_file, circbase_file)
+
+    p_col = "pvalue" if (use_pvalue and "pvalue" in de.columns) else "padj"
+    sig_mask = (de[p_col] < fdr) & (de["log2FC"].abs() > lfc) if p_col in de.columns else pd.Series(False, index=de.index)
     sig: pd.DataFrame = de.loc[sig_mask]
 
     n_total  = len(matrix)
@@ -425,18 +489,22 @@ def build_report(
     n_up     = int((sig["log2FC"] > 0).sum()) if len(sig) else 0
     n_dn     = int((sig["log2FC"] < 0).sum()) if len(sig) else 0
     n_sample = matrix.shape[1]
+    sig_label = f"p&lt;{fdr}" if use_pvalue else f"FDR&lt;{fdr}"
 
-    # Top table — include Type column when present
-    top_cols = [c for c in ["circ_id", "log2FC", "pvalue", "padj", "Type"] if c in sig.columns]
-    top_table = sig.sort_values("padj")[top_cols] if top_cols else sig.head(20)
+    # Top table — include annotation columns when present
+    top_cols = [c for c in [
+        "circ_id", "gene_name", "strand", "region", "exon_span", "circbase_id",
+        "log2FC", "pvalue", "padj", "Type",
+    ] if c in sig.columns]
+    top_table = sig.sort_values(p_col)[top_cols] if top_cols else sig.head(20)
 
     type_html      = _type_section(sig)
     biomarker_html = _biomarker_section(biomarker_file)
     isoform_html   = _isoform_section(switching_file)
 
     # Interactive Plotly charts; fall back to static PDF embeds when unavailable
-    p_volcano = _plotly_volcano(de, fdr, lfc, de_method)
-    p_heatmap = _plotly_heatmap(de, matrix)
+    p_volcano = _plotly_volcano(de, fdr, lfc, de_method, use_pvalue=use_pvalue)
+    p_heatmap = _plotly_heatmap(de, matrix, use_pvalue=use_pvalue)
     p_pca     = _plotly_pca(matrix, groups_file)
     volcano_html = p_volcano if p_volcano else _embed_pdf(volcano_pdf)
     heatmap_html = p_heatmap if p_heatmap else _embed_pdf(heatmap_pdf)
@@ -459,7 +527,7 @@ def build_report(
   <div>
     <div class="stat-box"><div class="num">{n_sample}</div><div class="lbl">Samples</div></div>
     <div class="stat-box"><div class="num">{n_total}</div><div class="lbl">Total circRNAs</div></div>
-    <div class="stat-box"><div class="num">{n_sig}</div><div class="lbl">Significant (FDR&lt;{fdr}, |log2FC|&gt;{lfc})</div></div>
+    <div class="stat-box"><div class="num">{n_sig}</div><div class="lbl">Significant ({sig_label}, |log2FC|&gt;{lfc})</div></div>
     <div class="stat-box"><div class="num">{n_up}</div><div class="lbl">Up-regulated</div></div>
     <div class="stat-box"><div class="num">{n_dn}</div><div class="lbl">Down-regulated</div></div>
   </div>
@@ -470,8 +538,8 @@ def build_report(
 
   {isoform_html}
 
-  <h2>Top Differentially Expressed circRNAs (FDR &lt; {fdr}, |log2FC| &gt; {lfc})</h2>
-  {_df_to_html(top_table)}
+  <h2>Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
+  {_de_split_tables(top_table, tumor_label=tumor_label, normal_label=normal_label)}
 
   <h2>Volcano Plot</h2>
   {volcano_html}
@@ -507,4 +575,9 @@ if "snakemake" in dir():
         biomarker_file = snakemake.input.biomarkers,            # type: ignore[name-defined]
         switching_file = snakemake.input.switching,             # type: ignore[name-defined]
         groups_file    = getattr(snakemake.input, "groups", None),  # type: ignore[name-defined]
+        use_pvalue     = bool(getattr(snakemake.params, "use_pvalue", False)),  # type: ignore[name-defined]
+        tumor_label    = str(snakemake.params.tumor_label),     # type: ignore[name-defined]
+        normal_label   = str(snakemake.params.normal_label),    # type: ignore[name-defined]
+        isoform_file   = getattr(snakemake.input, "isoform_groups", None),  # type: ignore[name-defined]
+        circbase_file  = getattr(snakemake.input, "circbase_annot", None),  # type: ignore[name-defined]
     )

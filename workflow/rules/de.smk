@@ -21,6 +21,7 @@ rule de_analysis:
         lfc          = config["de"]["log2fc_cutoff"],
         tumor_label  = config["de"]["tumor_label"],
         normal_label = config["de"]["normal_label"],
+        use_pvalue   = config["de"].get("de_sig_by", "padj") == "pvalue",
     log: "logs/de_analysis.log"
     script:
         "../../scripts/analysis.R"
@@ -61,8 +62,9 @@ rule rank_biomarkers:
     output:
         RESULTS_DIR + "/de/biomarker_candidates.tsv",
     params:
-        fdr = config["de"]["fdr_cutoff"],
-        lfc = config["de"]["log2fc_cutoff"],
+        fdr             = config["de"]["fdr_cutoff"],
+        lfc             = config["de"]["log2fc_cutoff"],
+        use_pvalue_flag = "--use-pvalue" if config["de"].get("de_sig_by", "padj") == "pvalue" else "",
     log: "logs/rank_biomarkers.log"
     shell:
         """
@@ -72,6 +74,7 @@ rule rank_biomarkers:
             --output  {output} \
             --fdr     {params.fdr} \
             --lfc     {params.lfc} \
+            {params.use_pvalue_flag} \
             2>&1 | tee {log}
         """
 
@@ -117,22 +120,27 @@ rule isoform_switching:
 rule generate_report:
     """Build a self-contained HTML summary report."""
     input:
-        de         = RESULTS_DIR + "/de/de_results.tsv",
-        biomarkers = RESULTS_DIR + "/de/biomarker_candidates.tsv",
-        matrix     = RESULTS_DIR + "/circRNA/count_matrix.tsv",
-        volcano    = RESULTS_DIR + "/plots/volcano.pdf",
-        heatmap    = RESULTS_DIR + "/plots/heatmap.pdf",
-        pca        = RESULTS_DIR + "/plots/pca.pdf",
-        multiqc    = RESULTS_DIR + "/qc/multiqc_report.html",
-        switching  = RESULTS_DIR + "/de/isoform_switching.tsv",
-        groups     = config["groups"],
+        de             = RESULTS_DIR + "/de/de_results.tsv",
+        biomarkers     = RESULTS_DIR + "/de/biomarker_candidates.tsv",
+        matrix         = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        volcano        = RESULTS_DIR + "/plots/volcano.pdf",
+        heatmap        = RESULTS_DIR + "/plots/heatmap.pdf",
+        pca            = RESULTS_DIR + "/plots/pca.pdf",
+        multiqc        = RESULTS_DIR + "/qc/multiqc_report.html",
+        switching      = RESULTS_DIR + "/de/isoform_switching.tsv",
+        groups         = config["groups"],
+        isoform_groups = RESULTS_DIR + "/circRNA/isoform_groups.tsv",
+        circbase_annot = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
     output:
         RESULTS_DIR + "/report.html",
     params:
-        project_id = config["project_id"],
-        fdr        = config["de"]["fdr_cutoff"],
-        lfc        = config["de"]["log2fc_cutoff"],
-        de_method  = DE_METHOD,
+        project_id   = config["project_id"],
+        fdr          = config["de"]["fdr_cutoff"],
+        lfc          = config["de"]["log2fc_cutoff"],
+        de_method    = DE_METHOD,
+        use_pvalue   = config["de"].get("de_sig_by", "padj") == "pvalue",
+        tumor_label  = config["de"]["tumor_label"],
+        normal_label = config["de"]["normal_label"],
     log: "logs/generate_report.log"
     script:
         "../../scripts/generate_report.py"

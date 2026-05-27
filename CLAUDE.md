@@ -39,11 +39,11 @@ circRNA_agent/
 │   ├── merge_counts.py          # 從 CIRIquant GTF 建立 BSJ + FSJ count matrix
 │   ├── annotate_circbase.py     # circBase hg19 座標比對注釋（自動下載或讀本地檔）
 │   ├── rank_biomarkers.py       # Biomarker 候選排序（composite score）
-│   ├── assign_isoforms.py       # circRNA BSJ 座標對應 host gene（依 GTF）
+│   ├── assign_isoforms.py       # circRNA BSJ 座標對應 host gene + exon span + strand + region
 │   ├── isoform_switching.R      # 計算 IUI、Wilcoxon rank-sum 測試 isoform switching
 │   ├── analysis.R               # DE 分析（edgeR_ciriquant / deseq2 / limma）
 │   ├── generate_report.py       # 輸出 HTML 報告（互動式 Plotly + Type I/II + biomarker）
-│   ├── notify.py                # 通知模組（Email/Slack/LINE，Snakemake hook 呼叫）
+│   ├── notify.py                # 通知模組（Email/Slack，Snakemake hook 呼叫）
 │   ├── utils.py                 # 共用工具函數
 │   ├── web_ui.py                # Flask Web UI（GEO 一鍵啟動 + 進度視覺化）
 │   └── templates/
@@ -106,25 +106,30 @@ HISAT2 + BWA-MEM                    STAR chimeric junctions
              → circRNA/count_matrix.tsv
              → circRNA/fsj_count_matrix.tsv
                      │
-                     ├─────────────────────────┐
-                     ▼                         ▼
-             [de_analysis]              [annotate_circbase]
-             edgeR_ciriquant /          比對 circBase hg19
-             deseq2 / limma             → circRNA/circbase_annotated.tsv
-             → de/de_results.tsv              │
-             → plots/*.pdf                    │
-                     │                        │
-                     └──────────┬─────────────┘
-                                ▼
-                        [rank_biomarkers]
-                        composite score：
-                        significance + |log2FC|
-                        + confidence + circBase bonus
-                        → de/biomarker_candidates.tsv
-                                │
-                                ▼
-                        [generate_report]
-                        → report.html（含 Type I/II、biomarker 表）
+          ┌──────────┴───────────────────────┐
+          ▼                                  ▼
+  [assign_isoforms]                  [annotate_circbase]
+  host gene + strand +               比對 circBase hg19
+  exon_span + region                 → circbase_annotated.tsv
+  → isoform_groups.tsv
+          │
+          ▼
+   [de_analysis]
+   edgeR_ciriquant / deseq2 / limma
+   → de/de_results.tsv
+   → plots/*.pdf
+          │
+          ├──────────────────┐
+          ▼                  ▼
+  [rank_biomarkers]   [isoform_switching]
+  composite score     IUI + Wilcoxon test
+  → biomarker_        → iui_matrix.tsv
+    candidates.tsv    → isoform_switching.tsv
+          │
+          └──────────┬───────────────────────┘
+                     ▼
+             [generate_report]
+             → report.html
 ```
 
 ---
@@ -184,29 +189,35 @@ DCC {paired_junction} \
 - 以 max(|Δstart|, |Δend|) ≤ slop 判斷為已知 circRNA
 - 輸出欄位：`circbase_id`（或 `"novel"`）、`circbase_gene`、`in_circbase`（0/1）
 
+### Host Gene / Exon / Strand 注釋（`assign_isoforms.py`）
+
+`assign_isoforms.py` 對每個 circRNA 輸出以下額外欄位：
+
+| 欄位 | 說明 |
+|------|------|
+| `gene_name` | Host gene 名稱（GTF gene 特徵，取最小包含基因體） |
+| `strand` | `+` 或 `-`（來自 host gene GTF 記錄） |
+| `exon_span` | 環化的 exon 範圍，格式 `eN-eM`（如 `e3-e7`）；找不到時為空白 |
+| `region` | `exonic`（兩端都匹配 exon 邊界）/ `intronic`（在基因內但不匹配 exon）/ `intergenic` |
+
+**exon_span 判斷邏輯**：對每個 circRNA (start, end) 掃描 host gene 所有 transcript，找到 `exon.start ≈ circ_start` 且 `exon.end ≈ circ_end`（±10 bp）的 transcript，回報 exon 編號。負股基因的 exon_number 可能出現反向（如 `e9-e8`），這是正常現象——GTF exon_number 按基因組座標遞增，但 mRNA 順序在負股上相反。
+
+GSE113230 結果：9,349 circRNA 中 8,046 exonic（86%）、1,089 intronic（12%）、214 intergenic（2%）。
+
 ### Biomarker 排序（`rank_biomarkers.py`）
 
 四維 composite score，每維度在 significant set 內 min-max 標準化後平均：
 
 ```
 biomarker_score = (sig_norm + fc_norm + conf_norm + known_bonus) / 4
-  sig_norm  = -log10(padj),  上限 10，標準化
-  fc_norm   = |log2FC|,      上限 5，標準化
+  sig_norm  = -log10(pvalue 或 padj),  上限 10，標準化  ← 依 de_sig_by 切換
+  fc_norm   = |log2FC|,                上限 5，標準化
   conf_norm = confidence_score 標準化
   known_bonus = 1 若 in_circbase，否則 0（不做標準化）
 ```
 
-輸入：`de_results.tsv` + `circbase_annotated.tsv`，只對 FDR 顯著的 circRNA 排序。
-
-### CIRIquant GTF 輸出格式
-
-```
-chr1  CIRIquant  circRNA  100  200  .  +  .  gene_id "G1"; BSJ 5; FSJ 20; circ_id "chr1:100|200";
-```
-
-- `BSJ`：back-splice junction reads（circRNA 特異性）
-- `FSJ`：forward-splice junction reads（linear RNA 同位點）
-- 兩者都由 `merge_counts.py` 的 `parse_gtf()` 提取，輸出兩個獨立矩陣
+- 顯著閾值欄位依 `de_sig_by` 而定：`pvalue`（nominal）或 `padj`（BH 校正）
+- CLI 參數：`--use-pvalue` 對應 `de_sig_by: pvalue`
 
 ### DE 分析方法（`config de.method`）
 
@@ -217,11 +228,29 @@ chr1  CIRIquant  circRNA  100  200  .  +  .  gene_id "G1"; BSJ 5; FSJ 20; circ_i
 | `limma` | limma-voom |
 
 **`edgeR_ciriquant` 核心邏輯**：
-FSJ counts → TMM normalization → `log(lib.size × norm.factors)` 作為 GLM offset
+FSJ counts → TMM normalization → per-locus FSJ CPM 作為 GLM offset
 → 效果等同於測試 BSJ/FSJ 比值是否在 tumor vs. normal 之間改變
 → 同時對 FSJ 跑獨立 QLFTest，若 FSJ 也顯著且方向相同 → Type II（基因層次），否則 → Type I（circRNA 專一性）
 
+**Type I / II / III 分類**：
+- **Type_I**：BSJ 顯著，FSJ 不顯著（或方向相反）→ circRNA 環化效率真正改變
+- **Type_II**：BSJ 顯著，FSJ 也顯著且同方向（|FSJ logFC| ≥ 0.5）→ host gene 整體變化帶動
+- **Type_III**：只有 FSJ 顯著 → 線性 mRNA 變化，不是 circRNA DE
+- `concordant` 判斷要求 FSJ logFC 方向相同**且** |FSJ logFC| ≥ 0.5，避免邊緣顯著雜訊
+
+**重要欄位命名**：merge BSJ/FSJ 結果後，`PValue` 不加後綴（只有 `logFC`、`FDR` 因同時出現在兩表才加 `_bsj`/`_fsj`）。`bsj_sig_col` 必須用 `"PValue"`，不是 `"PValue_bsj"`。
+
+**顯著性欄位切換**（`config de.de_sig_by`）：
+- `padj`（預設）：BH 校正 FDR。小樣本（n=3 vs 3）+ 多重檢定（~7,779 tests）時 min padj ≈ 0.432，幾乎無法通過
+- `pvalue`：nominal p-value（未校正）。小樣本研究的實務做法，論文中需標明
+
 `analysis.R` 有 **backward-compatible fallback**：若 `snakemake@input[["fsj_matrix"]]` 不存在（舊 DAG），自動 fallback 到 deseq2。
+
+### Isoform Switching（`isoform_switching.R`）
+
+**是否顯著的判斷使用 within-gene BH FDR**（`padj_within_gene`），而非 global BH。
+
+原因：global BH 跨所有 isoform（~7,360 tests）→ min padj = 0.937，完全無法找到 switching。Within-gene BH（每個基因內部獨立做 BH）是 DEXSeq 風格的標準做法，在 GSE113230 結果中找到 66 個 significant switching events（FDR < 0.1, |ΔIUI| > 0.1）。
 
 ---
 
@@ -257,11 +286,14 @@ consensus:
 circbase_file: ""   # 留空 = 自動下載；或填本地路徑
 
 de:
-  method:       edgeR_ciriquant    # edgeR_ciriquant / deseq2 / limma
-  fdr_cutoff:   0.05
-  log2fc_cutoff: 1.0
-  tumor_label:  tumor
-  normal_label: normal
+  method:              edgeR_ciriquant    # edgeR_ciriquant / deseq2 / limma
+  fdr_cutoff:          0.05
+  log2fc_cutoff:       1.0
+  de_sig_by:           pvalue            # pvalue = nominal p；padj = BH 校正 FDR
+  isoform_fdr_cutoff:  0.1               # within-gene FDR for isoform switching
+  delta_iui_cutoff:    0.1               # minimum |ΔIUI| to call switching
+  tumor_label:         tumor
+  normal_label:        normal
 
 threads: 8
 ```
@@ -271,6 +303,7 @@ threads: 8
 - `trimmed_dir: /home3/choukaihsuan/GSE113230/trimmed`
 - `results_dir: /home3/choukaihsuan/GSE113230_results`
 - `star_index: /home3/choukaihsuan/reference/hg19/star_index`
+- `gtf: /home3/choukaihsuan/reference/hg19/genes.gtf`（注意：檔名是 `genes.gtf`，非 `hg19.gtf`）
 
 ---
 
@@ -288,6 +321,10 @@ threads: 8
 | 磁碟 | /home3：596 GB 可用 |
 | Conda env | `ciriquant`（CIRIquant 1.1.3, DCC 0.5.0, STAR, HISAT2, BWA, samtools, snakemake） |
 | Java | `/usr/bin/java`（不在 conda env 內，ciriquant.yaml 必須指定此路徑） |
+
+**R packages（安裝在 conda env `ciriquant` 的 r-base 4.2.2）**：
+r-ggplot2, r-pheatmap, r-rcolorbrewer, r-dplyr, r-ggrepel, r-tibble, r-tidyr,
+bioconductor-edger, bioconductor-limma, r-statmod
 
 **SSH 連線**：
 ```bash
@@ -368,8 +405,15 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 | DCC log 路徑失敗（`logs/dcc/SRR.log: No such file or directory`） | `cd {outdir}` 後 `> {log}` 的相對路徑從 outdir 解析 | 同上，subshell 讓 `> {log}` 在 parent shell 的 CWD（`~/circRNA_agent/`）執行 |
 | multiqc numpy 版本衝突（`numpy 1.16.4 < 1.17`） | conda env 安裝的 numpy 過舊，matplotlib 要求 ≥1.17 | `pip install 'numpy>=1.17'` 在 ciriquant env |
 | `consensus_filter.py` `TypeError: 'type' object is not subscriptable` | Python 3.7：module-level 的 `CoordMap = dict[tuple[...], ...]` 賦值在執行時求值，不能用內建 `dict`/`tuple` 做 subscript；`from __future__ import annotations` 只延遲 annotation 求值，**不影響普通賦值** | 改為 `from typing import Dict, Tuple; CoordMap = Dict[Tuple[str,int,int], float]` |
-| `parse_ciriquant` 回傳 0 筆 circRNA | CIRIquant 1.1.3 GTF 屬性欄用小寫 `bsj`/`fsj`，regex 搜尋大寫 `BSJ`/`FSJ` 全部未匹配 | 兩個 `re.search()` 加 `re.IGNORECASE` flag |
+| `parse_ciriquant` / `merge_counts.py` 回傳 0 筆 circRNA | CIRIquant 1.1.3 GTF 屬性欄用小寫 `bsj`/`fsj`，regex 搜尋大寫 `BSJ`/`FSJ` 全部未匹配 | 兩個 `re.search()` 加 `re.IGNORECASE` flag（`consensus_filter.py` 和 `merge_counts.py` 均適用） |
 | `parse_dcc` 回傳 0 筆 circRNA | `CircCoordinates` 只有座標（8 欄，無 count）；舊程式讀 col 3 得到 Gene 欄（字串），`float()` 失敗後全部 skip | `parse_dcc()` 改為優先讀同目錄的 `CircRNACount`（col 3 = junction count）；不存在時 fallback count=5 |
+| `analysis.R` `storage.mode(counts) <- "integer"` 失敗 | conda install r-pheatmap 後 dplyr 進入 env，data.frame subsetting 回傳 tibble-like 物件，`storage.mode` 不接受 | 在 `storage.mode` 之前加 `data.matrix(round(counts))` 轉為真正的 matrix（BSJ 和 FSJ 矩陣均需處理） |
+| `generate_report.py` `SyntaxError: from __future__ imports must occur at the beginning` | Snakemake `script:` wrapper 在 user 腳本前插入 ~11 行 setup code，將 `from __future__ import annotations` 推到第 12 行；Python 3.7 要求此 import 必須是第一行 | 移除 `from __future__ import annotations`；改用 `from typing import Optional`；所有 `str \| None` 改為 `Optional[str]` |
+| `analysis.R` `Error: replacement has 0 rows, data has 7779`（edgeR_ciriquant + use_pvalue）| `bsj_sig_col` 設為 `"PValue_bsj"`，但 merge 後該欄名為 `"PValue"`（只有 logFC/FDR 在兩表均存在才加後綴） | 改為 `bsj_sig_col <- if (use_pvalue) "PValue" else "FDR_bsj"` |
+| Snakemake hook `notify.py` 路徑錯誤（找到 conda env 的 Python runner） | `onstart`/`onsuccess`/`onerror` 中 `__file__` 指向 conda env 的腳本執行器，非專案目錄 | 改用 `workflow.snakefile` 推算專案根目錄路徑 |
+| benchmark `MissingInputException`（hg19.gtf） | benchmark config 路徑是 `hg19.gtf`，但 server 實際檔名是 `genes.gtf` | 更新 `benchmark/config_benchmark.yaml` GTF 路徑 |
+| isoform switching 找到 0 個 significant events | Global BH 校正跨 ~7,360 isoform，min padj = 0.937 | 改用 within-gene BH（`padj_within_gene`）；結果：66 events（FDR < 0.1, \|ΔIUI\| > 0.1） |
+| DE analysis 0 個 significant circRNA（padj 校正） | n=3 vs 3，BH 校正後 min padj = 0.432 | 改用 nominal p-value（`de_sig_by: pvalue`）；結果：831 個 significant circRNA |
 
 ---
 
@@ -383,7 +427,8 @@ Pipeline 完成、失敗、啟動時自動發送通知，透過 Snakemake `onsta
 |------|------|
 | SMTP Email | Gmail TLS 587，成功時附加 `report.html`（>20 MB 略過附件） |
 | Slack Webhook | Incoming Webhook，Markdown 格式 |
-| LINE Notify | LINE Notify token，純文字 |
+
+（LINE Notify 已於 2025-03-31 終止服務，已從 `notify.py` 移除）
 
 **通知內容**：
 
@@ -400,7 +445,6 @@ export NOTIFY_EMAIL_FROM="寄件gmail@gmail.com"
 export NOTIFY_EMAIL_PASS="xxxx xxxx xxxx xxxx"   # Gmail App Password（非登入密碼）
 export NOTIFY_EMAIL_TO="chou.kaihsuan@gmail.com"
 export NOTIFY_SLACK_WEBHOOK="https://hooks.slack.com/services/..."  # 選填
-export NOTIFY_LINE_TOKEN="..."                                        # 選填
 ```
 
 Gmail App Password 申請：Google 帳號 → 安全性 → 兩步驟驗證開啟後 → 應用程式密碼。
@@ -418,6 +462,7 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 - `onstart` → fire-and-forget subprocess 呼叫 `notify.py --event start`
 - `onsuccess` → 解析 `de_results.tsv` 統計後呼叫 `notify.py --event success --stats {...}`
 - `onerror` → 呼叫 `notify.py --event failure --rule unknown --log logs/pipeline_run.log`
+- hook 內必須用 `workflow.snakefile` 推算專案路徑，**不能用 `__file__`**（會指向 conda env）
 
 ---
 
@@ -437,36 +482,52 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 
 | 區塊 | 說明 |
 |------|------|
-| Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down |
-| **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量；Type I = circRNA 專一性，Type II = 基因層次 |
+| Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down；顯著標準依 `de_sig_by` 顯示 `p<0.05` 或 `FDR<0.05` |
+| **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量 |
 | **Biomarker 候選表** | top 30，欄位：rank, circ_id, log2FC, padj, biomarker_score, in_circbase, circbase_id, circbase_gene, Type |
-| Top DE table | FDR 顯著的 circRNA，含 Type 欄（若存在） |
-| Volcano plot | **Plotly 互動式**（hover 顯示 circ_id / log2FC / padj / Type）；fallback to PDF embed if Plotly unavailable |
+| **Top DE table（分兩表）** | 上調（tumor 高）和下調（tumor 低）分開顯示；欄位含 gene_name / strand / region / exon_span / circbase_id / log2FC / pvalue / padj / Type |
+| Volcano plot | **Plotly 互動式**（hover 顯示 circ_id / log2FC / p-value / Type）；Y 軸標題依 `de_sig_by` 動態切換；fallback to PDF embed if Plotly unavailable |
 | PCA | **Plotly 互動式**（hover 顯示 SRR ID / condition，tumor/normal 顏色區分）；numpy SVD |
 | Heatmap | **Plotly 互動式**（top 50 DE，hover 顯示 circRNA ID，RdBu_r colorscale，z-score 標準化）；fallback to PDF embed |
+| Isoform Switching | Plotly 長條圖（top 10 switching genes 的 IUI tumor vs normal）+ 顯著 switching 表格 |
+
+**DE table 資料來源合併**：
+- `de_results.tsv`（主表）
+- `isoform_groups.tsv` → `gene_name`, `strand`, `region`, `exon_span`
+- `circbase_annotated.tsv` → `circbase_id`, `circbase_gene`, `in_circbase`
 
 報告標頭顯示使用的 DE 方法（`method-tag` badge）。
 Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜態 PDF embed。
 
 ---
 
-## 目前執行進度（2026-05-26）
+## 目前執行進度（2026-05-27）
 
 | 步驟 | 狀態 |
 |------|------|
 | fastp QC/trim | ✅ 6/6 完成 |
 | FastQC raw | ✅ 6/6 完成 |
-| CIRIquant | ✅ 6/6 完成（GTF 在 `~/GSE113230_results/circRNA/SRRxxxxxxx/`） |
+| CIRIquant | ✅ 6/6 完成 |
 | STAR paired-end | ✅ 6/6 完成 |
 | STAR mate1 | ✅ 6/6 完成 |
 | STAR mate2 | ✅ 6/6 完成 |
-| DCC | ✅ 5/6 完成；SRR7012368 重跑中（12:15 重啟） |
-| consensus_filter（含 pseudo-circ QC） | ✅ 5/6 完成（1,594–3,157 circRNAs / sample）；等 SRR7012368 |
-| merge_counts | ⏳ 等所有 consensus_filter 完成 |
-| annotate_circbase | ⏳ |
-| rank_biomarkers | ⏳ |
-| DE analysis | ⏳ |
-| isoform switching | ⏳ |
-| report | ⏳ |
+| DCC | ✅ 6/6 完成 |
+| consensus_filter | ✅ 6/6 完成（1,594–3,728 circRNAs / sample） |
+| merge_counts | ✅ 完成（9,349 circRNAs） |
+| assign_isoforms | ✅ 完成（含 strand / exon_span / region） |
+| annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（nominal p < 0.05；831 significant circRNAs） |
+| isoform switching | ✅ 完成（66 events，within-gene FDR < 0.1） |
+| rank_biomarkers | ✅ 完成（831 candidates） |
+| report | ✅ 完成（含 gene / strand / region / exon_span / circbase_id 欄位） |
 
-Pipeline 以 `nohup` 在背景執行，log 在 `~/circRNA_agent/logs/pipeline_run5.log`。
+**GSE113230 各工具偵測數量**：
+
+| SRR ID | 分組 | CIRIquant | DCC | 共識 |
+|--------|------|----------:|----:|-----:|
+| SRR7012366 | Tumor 1 | 26,455 | 6,010 | 1,905 |
+| SRR7012367 | Tumor 2 | 34,075 | 7,222 | 2,329 |
+| SRR7012368 | Tumor 3 | 35,000 | 10,756 | 3,728 |
+| SRR7012369 | Normal 1 | 27,105 | 9,397 | 3,157 |
+| SRR7012370 | Normal 2 | 39,211 | 9,349 | 2,790 |
+| SRR7012371 | Normal 3 | 12,985 | 5,788 | 1,594 |

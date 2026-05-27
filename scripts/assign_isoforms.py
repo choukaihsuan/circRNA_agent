@@ -20,14 +20,15 @@ import argparse
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 import pandas as pd
 
 
 # ── GTF parsing ───────────────────────────────────────────────────────────────
 
-def _parse_attrs(attr_str: str) -> dict[str, str]:
-    attrs: dict[str, str] = {}
+def _parse_attrs(attr_str: str) -> Dict[str, str]:
+    attrs: Dict[str, str] = {}
     for token in attr_str.split(";"):
         token = token.strip()
         if not token:
@@ -46,9 +47,9 @@ def parse_gtf_genes(gtf_path: str) -> pd.DataFrame:
     Returns DataFrame with columns:
         chrom, g_start (1-based), g_end (1-based), strand, gene_id, gene_name
     """
-    gene_rows: list[dict] = []
+    gene_rows: List[dict] = []
     # Accumulate transcript boundaries per gene as fallback
-    tx_bounds: dict[str, dict] = defaultdict(lambda: {
+    tx_bounds: Dict[str, dict] = defaultdict(lambda: {
         "chrom": "", "g_start": 10**12, "g_end": 0,
         "strand": ".", "gene_name": "",
     })
@@ -103,6 +104,78 @@ def parse_gtf_genes(gtf_path: str) -> pd.DataFrame:
     return df
 
 
+# ── Exon parsing & exon-span annotation ──────────────────────────────────────
+
+def parse_gtf_exons(gtf_path: str) -> Dict[str, List[Tuple[int, int, str, str]]]:
+    """
+    Parse exon features from GTF.
+    Returns dict: gene_id → list of (start, end, transcript_id, exon_number).
+    exon_number is '' when the attribute is absent.
+    """
+    gene_exons: Dict[str, List[Tuple[int, int, str, str]]] = defaultdict(list)
+    with open(gtf_path) as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 9 or parts[2] != "exon":
+                continue
+            start  = int(parts[3])
+            end    = int(parts[4])
+            attrs  = _parse_attrs(parts[8])
+            gid    = attrs.get("gene_id", "")
+            tx_id  = attrs.get("transcript_id", "")
+            exon_n = attrs.get("exon_number", "")
+            if gid:
+                gene_exons[gid].append((start, end, tx_id, exon_n))
+    n_genes = len(gene_exons)
+    print(f"[assign_isoforms] Exon index built: {n_genes:,} genes", file=sys.stderr)
+    return gene_exons
+
+
+def _exon_span(circ_start: int, circ_end: int, gene_id: str,
+               gene_exons: Dict[str, List[Tuple[int, int, str, str]]],
+               slop: int = 10) -> str:
+    """
+    Find the exon numbers that form the circRNA backsplice boundaries.
+
+    For a circRNA (start, end):
+      - circ_start should match an exon's *start* coordinate (upstream donor)
+      - circ_end   should match an exon's *end*   coordinate (downstream acceptor)
+
+    Tries every transcript of the host gene; picks the transcript where both
+    endpoints are explained.  Reports 'eN-eM' using exon_number attributes, or
+    positional rank within the transcript if exon_number is absent.
+    Returns '' when no matching transcript is found.
+    """
+    exons = gene_exons.get(gene_id, [])
+    if not exons:
+        return ""
+
+    # Group by transcript
+    by_tx: Dict[str, List[Tuple[int, int, str]]] = defaultdict(list)
+    for s, e, tx, en in exons:
+        by_tx[tx].append((s, e, en))
+
+    for tx, tx_exons in by_tx.items():
+        tx_sorted = sorted(tx_exons, key=lambda x: x[0])  # genomic order
+
+        start_hit = None
+        end_hit   = None
+        for rank, (s, e, en) in enumerate(tx_sorted, start=1):
+            if abs(s - circ_start) <= slop:
+                start_hit = en if en else str(rank)
+            if abs(e - circ_end) <= slop:
+                end_hit = en if en else str(rank)
+
+        if start_hit is not None and end_hit is not None:
+            if start_hit == end_hit:
+                return f"e{start_hit}"
+            return f"e{start_hit}-e{end_hit}"
+
+    return ""
+
+
 # ── circRNA coordinate parsing ────────────────────────────────────────────────
 
 def parse_circ_ids(count_matrix_path: str) -> pd.DataFrame:
@@ -148,7 +221,7 @@ def assign_host_gene(circ_df: pd.DataFrame, gene_df: pd.DataFrame) -> pd.DataFra
     When multiple genes qualify, the narrowest span wins (most specific).
     """
     # Index genes by chromosome for O(n_genes/n_chr) per lookup
-    by_chrom: dict[str, pd.DataFrame] = {
+    by_chrom: Dict[str, pd.DataFrame] = {
         chrom: grp.reset_index(drop=True)
         for chrom, grp in gene_df.groupby("chrom")
     }
@@ -169,15 +242,28 @@ def assign_host_gene(circ_df: pd.DataFrame, gene_df: pd.DataFrame) -> pd.DataFra
                 gene_id   = best["gene_id"]
                 gene_name = best["gene_name"]
 
+        strand = "."
+        if c_chrom in by_chrom:
+            cands = by_chrom[c_chrom]
+            mask  = (cands["g_start"] <= c_start) & (cands["g_end"] >= c_end)
+            hits  = cands[mask]
+            if not hits.empty:
+                hits = hits.copy()
+                hits["_span"] = hits["g_end"] - hits["g_start"]
+                best   = hits.loc[hits["_span"].idxmin()]
+                strand = best.get("strand", ".")
+
         results.append({
             "circ_id":    circ["circ_id"],
             "chrom":      c_chrom,
             "start":      c_start,
             "end":        c_end,
+            "strand":     strand,
             "gene_id":    gene_id,
             "gene_name":  gene_name,
             "isoform_id": f"{gene_id}|{c_chrom}:{c_start}-{c_end}",
         })
+
 
     df = pd.DataFrame(results)
 
@@ -211,6 +297,37 @@ def main() -> None:
     gene_df = parse_gtf_genes(args.gtf)
 
     result = assign_host_gene(circ_df, gene_df)
+
+    # Add exon-span annotation
+    print("[assign_isoforms] Parsing exons for exon-span annotation…", file=sys.stderr)
+    gene_exons = parse_gtf_exons(args.gtf)
+    result["exon_span"] = result.apply(
+        lambda r: _exon_span(r["start"], r["end"], r["gene_id"], gene_exons)
+        if r["gene_id"] != "intergenic" else "",
+        axis=1,
+    )
+    n_annotated = (result["exon_span"] != "").sum()
+    print(
+        f"[assign_isoforms] Exon span annotated: {n_annotated}/{len(result)} circRNAs",
+        file=sys.stderr,
+    )
+
+    # Region classification
+    # exonic: both BSJ boundaries match exon edges (ecircRNA)
+    # intronic: within gene body but boundaries don't match exon edges (ciRNA)
+    # intergenic: outside any annotated gene
+    def _classify(row):
+        if row["gene_id"] == "intergenic":
+            return "intergenic"
+        return "exonic" if row["exon_span"] else "intronic"
+
+    result["region"] = result.apply(_classify, axis=1)
+    counts = result["region"].value_counts().to_dict()
+    print(
+        f"[assign_isoforms] Region: exonic={counts.get('exonic',0)} "
+        f"intronic={counts.get('intronic',0)} intergenic={counts.get('intergenic',0)}",
+        file=sys.stderr,
+    )
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(args.out, sep="\t", index=False)

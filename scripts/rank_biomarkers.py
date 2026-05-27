@@ -22,7 +22,8 @@ Usage:
         --annot   circRNA/circbase_annotated.tsv \
         --output  de/biomarker_candidates.tsv \
         --fdr     0.05 \
-        --lfc     1.0
+        --lfc     1.0 \
+        --use-pvalue
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ def rank_biomarkers(
     output:     str,
     fdr:        float = 0.05,
     lfc:        float = 1.0,
+    use_pvalue: bool  = False,
 ) -> None:
     de    = pd.read_csv(de_file,    sep="\t")
     annot = pd.read_csv(annot_file, sep="\t")
@@ -74,12 +76,13 @@ def rank_biomarkers(
     merged["circbase_gene"] = merged.get("circbase_gene", pd.Series("", index=merged.index)).fillna("")
 
     # Filter to significant DE circRNAs
-    if "padj" not in merged.columns or "log2FC" not in merged.columns:
-        sys.exit("[rank] ERROR: DE file must contain padj and log2FC columns")
+    sig_col = "pvalue" if use_pvalue else "padj"
+    if sig_col not in merged.columns or "log2FC" not in merged.columns:
+        sys.exit(f"[rank] ERROR: DE file must contain {sig_col} and log2FC columns")
 
     sig_mask = (
-        merged["padj"].notna() &
-        (merged["padj"] < fdr) &
+        merged[sig_col].notna() &
+        (merged[sig_col] < fdr) &
         (merged["log2FC"].abs() > lfc)
     )
     sig = merged.loc[sig_mask].copy()
@@ -90,7 +93,7 @@ def rank_biomarkers(
         return
 
     # ── Component scores ───────────────────────────────────────────────────────
-    sig["_sig"] = sig["padj"].apply(lambda p: min(-math.log10(max(p, 1e-10)), 10))
+    sig["_sig"] = sig[sig_col].apply(lambda p: min(-math.log10(max(p, 1e-10)), 10))
     sig["_fc"]  = sig["log2FC"].abs().clip(upper=5)
     sig["_conf"] = sig["confidence_score"].clip(lower=0)
 
@@ -125,8 +128,10 @@ def main() -> None:
     parser.add_argument("--de",     required=True, help="DE results TSV (from analysis.R)")
     parser.add_argument("--annot",  required=True, help="circBase-annotated summary TSV")
     parser.add_argument("--output", required=True, help="Output ranked TSV")
-    parser.add_argument("--fdr",    type=float, default=0.05)
-    parser.add_argument("--lfc",    type=float, default=1.0)
+    parser.add_argument("--fdr",       type=float, default=0.05)
+    parser.add_argument("--lfc",       type=float, default=1.0)
+    parser.add_argument("--use-pvalue", action="store_true",
+                        help="Use nominal p-value instead of adjusted p-value")
     args = parser.parse_args()
 
     rank_biomarkers(
@@ -135,6 +140,7 @@ def main() -> None:
         output     = args.output,
         fdr        = args.fdr,
         lfc        = args.lfc,
+        use_pvalue = args.use_pvalue,
     )
 
 

@@ -23,6 +23,7 @@ fdr_cutoff   <- as.numeric(snakemake@params[["fdr"]])
 lfc_cutoff   <- as.numeric(snakemake@params[["lfc"]])
 tumor_label  <- snakemake@params[["tumor_label"]]
 normal_label <- snakemake@params[["normal_label"]]
+use_pvalue   <- isTRUE(tryCatch(snakemake@params[["use_pvalue"]], error = function(e) FALSE))
 
 # Backward-compatible: older DAG may not pass de_method or fsj_matrix
 de_method <- tryCatch(snakemake@params[["de_method"]], error = function(e) NULL)
@@ -131,7 +132,10 @@ if (de_method == "edgeR_ciriquant") {
   # Type_II  : BSJ/FSJ ratio changes; FSJ also DE in same direction (gene-level)
   # Type_III : FSJ DE but BSJ/FSJ ratio not significant (host gene only)
   # NS       : neither significant
-  res$sig_bsj <- res$FDR_bsj < fdr_cutoff & abs(res$logFC_bsj) >= lfc_cutoff
+  # PValue is not duplicated in the merge (only logFC/FDR appear in both tables),
+  # so it keeps its original name; FDR becomes FDR_bsj due to the suffix.
+  bsj_sig_col <- if (use_pvalue) "PValue" else "FDR_bsj"
+  res$sig_bsj <- res[[bsj_sig_col]] < fdr_cutoff & abs(res$logFC_bsj) >= lfc_cutoff
   res$sig_fsj <- !is.na(res$FDR_fsj) & res$FDR_fsj < fdr_cutoff
   # concordant requires same direction AND FSJ |logFC| >= 0.5 to avoid
   # noise when both tests are marginally significant
@@ -227,17 +231,20 @@ message("[OK] DE results (", nrow(res_df), " circRNAs) → ", de_out)
 # ── Shared plot helpers ───────────────────────────────────────────────────────
 sig_col <- c(Up = "#d62728", Down = "#1f77b4", NS = "grey70")
 
+plot_sig_col <- if (use_pvalue) "pvalue" else "padj"
+plot_y_label <- if (use_pvalue) expression(-log[10]~"(p-value, nominal)") else expression(-log[10]~"(adjusted p-value)")
+
 plot_df <- res_df %>%
-  filter(!is.na(padj)) %>%
+  filter(!is.na(.data[[plot_sig_col]])) %>%
   mutate(sig = case_when(
-    padj < fdr_cutoff & log2FC >  lfc_cutoff ~ "Up",
-    padj < fdr_cutoff & log2FC < -lfc_cutoff ~ "Down",
+    .data[[plot_sig_col]] < fdr_cutoff & log2FC >  lfc_cutoff ~ "Up",
+    .data[[plot_sig_col]] < fdr_cutoff & log2FC < -lfc_cutoff ~ "Down",
     TRUE ~ "NS"
   ))
 
 # ── Volcano ───────────────────────────────────────────────────────────────────
 pdf(volcano_out, width = 7, height = 6)
-ggplot(plot_df, aes(x = log2FC, y = -log10(padj), colour = sig)) +
+ggplot(plot_df, aes(x = log2FC, y = -log10(.data[[plot_sig_col]]), colour = sig)) +
   geom_point(alpha = 0.6, size = 1.5) +
   scale_colour_manual(values = sig_col) +
   geom_vline(xintercept = c(-lfc_cutoff, lfc_cutoff), linetype = "dashed",
@@ -248,7 +255,7 @@ ggplot(plot_df, aes(x = log2FC, y = -log10(padj), colour = sig)) +
     title  = paste0("Volcano (", tumor_label, " vs ", normal_label,
                     ")  [", de_method, "]"),
     x      = expression(log[2]~"Fold Change"),
-    y      = expression(-log[10]~"(adjusted p-value)"),
+    y      = plot_y_label,
     colour = NULL
   ) +
   theme_bw(base_size = 13) +

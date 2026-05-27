@@ -11,6 +11,7 @@ de:
   method: edgeR_ciriquant
   fdr_cutoff: 0.05
   log2fc_cutoff: 1.0
+  de_sig_by: pvalue         # pvalue = nominal p < fdr_cutoff; padj = BH-adjusted FDR
   isoform_fdr_cutoff: 0.1   # within-gene FDR for isoform switching (less strict than global)
   delta_iui_cutoff: 0.1     # minimum |ΔIUI| to call switching
   normal_label: normal
