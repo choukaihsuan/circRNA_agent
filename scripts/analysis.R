@@ -121,9 +121,11 @@ if (de_method == "edgeR_ciriquant") {
   # ── Merge BSJ + FSJ results ───────────────────────────────────────────────
   res_bsj$circ_id <- rownames(res_bsj)
   res_fsj$circ_id <- rownames(res_fsj)
+  # Include PValue from both tables so FSJ nominal p-value is available.
+  # With PValue in both tables it becomes PValue_bsj / PValue_fsj after merge.
   res <- merge(
     res_bsj[, c("circ_id", "logFC", "logCPM", "PValue", "FDR")],
-    res_fsj[, c("circ_id", "logFC", "FDR")],
+    res_fsj[, c("circ_id", "logFC", "PValue", "FDR")],
     by = "circ_id", all.x = TRUE, suffixes = c("_bsj", "_fsj")
   )
 
@@ -132,11 +134,10 @@ if (de_method == "edgeR_ciriquant") {
   # Type_II  : BSJ/FSJ ratio changes; FSJ also DE in same direction (gene-level)
   # Type_III : FSJ DE but BSJ/FSJ ratio not significant (host gene only)
   # NS       : neither significant
-  # PValue is not duplicated in the merge (only logFC/FDR appear in both tables),
-  # so it keeps its original name; FDR becomes FDR_bsj due to the suffix.
-  bsj_sig_col <- if (use_pvalue) "PValue" else "FDR_bsj"
+  bsj_sig_col <- if (use_pvalue) "PValue_bsj" else "FDR_bsj"
+  fsj_sig_col <- if (use_pvalue) "PValue_fsj" else "FDR_fsj"
   res$sig_bsj <- res[[bsj_sig_col]] < fdr_cutoff & abs(res$logFC_bsj) >= lfc_cutoff
-  res$sig_fsj <- !is.na(res$FDR_fsj) & res$FDR_fsj < fdr_cutoff
+  res$sig_fsj <- !is.na(res[[fsj_sig_col]]) & res[[fsj_sig_col]] < fdr_cutoff
   # concordant requires same direction AND FSJ |logFC| >= 0.5 to avoid
   # noise when both tests are marginally significant
   res$concordant <- with(res,
@@ -168,7 +169,7 @@ if (de_method == "edgeR_ciriquant") {
 
   # ── Assemble final res_df ─────────────────────────────────────────────────
   res_df <- res %>%
-    rename(log2FC = logFC_bsj, pvalue = PValue, padj = FDR_bsj) %>%
+    rename(log2FC = logFC_bsj, pvalue = PValue_bsj, padj = FDR_bsj) %>%
     select(circ_id, log2FC, pvalue, padj, Type,
            logFC_fsj, FDR_fsj, delta_csi, csi_tumor, csi_normal, logCPM) %>%
     arrange(padj)
