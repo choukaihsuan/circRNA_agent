@@ -78,8 +78,27 @@
                   display:flex; align-items:center; gap:6px; font-weight:400; }
     input[type=checkbox] { accent-color:var(--primary); }
 
+    /* ── Job ID card ── */
+    .job-card { background:linear-gradient(135deg,#eff6ff,#faf5ff);
+                border:1px solid #c4b5fd; border-radius:var(--radius);
+                padding:18px 20px; margin-bottom:20px;
+                display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    .job-id-block { display:flex; flex-direction:column; gap:2px; }
+    .job-id-label { font-size:11px; font-weight:600; color:#6d28d9;
+                    text-transform:uppercase; letter-spacing:0.06em; }
+    .job-id-code  { font-size:26px; font-weight:800; letter-spacing:0.08em;
+                    color:#4c1d95; font-family:monospace; }
+    .copy-btn { padding:6px 14px; border:1px solid #c4b5fd; border-radius:6px;
+                background:white; cursor:pointer; font-size:12px; font-weight:600;
+                color:#7c3aed; transition:all 0.15s; }
+    .copy-btn:hover { background:#ede9fe; }
+    .copy-btn.copied { background:#7c3aed; color:white; border-color:#7c3aed; }
+    .job-meta { margin-left:auto; text-align:right; }
+    .job-meta-gse  { font-size:15px; font-weight:700; }
+    .job-meta-time { font-size:12px; color:#6d28d9; margin-top:2px; }
+
     /* ── Buttons ── */
-    .btn-row { display:flex; gap:10px; margin-top:16px; }
+    .btn-row { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }
     .btn { padding:9px 20px; border:none; border-radius:8px; font-size:13px;
            font-weight:600; cursor:pointer; text-decoration:none;
            display:inline-flex; align-items:center; gap:6px; }
@@ -95,6 +114,26 @@
     <h1>Pipeline 執行狀態</h1>
     <a href="/" class="back-link">← 回到設定</a>
   </div>
+
+  <!-- Job ID card -->
+  {% if job %}
+  <div class="job-card">
+    <div class="job-id-block">
+      <div class="job-id-label">任務編號</div>
+      <div class="job-id-code" id="job-id-code">{{ job_id }}</div>
+    </div>
+    <button class="copy-btn" id="copy-btn" onclick="copyJobId()">複製編號</button>
+    <div class="job-meta">
+      <div class="job-meta-gse">{{ job.gse_id }}</div>
+      <div class="job-meta-time">啟動於 {{ job.start_time }}</div>
+    </div>
+  </div>
+  {% elif job_id %}
+  <div style="padding:14px 18px;background:#fee2e2;border:1px solid #fca5a5;
+              border-radius:10px;margin-bottom:20px;font-size:14px;color:#991b1b;">
+    找不到任務編號：<strong>{{ job_id }}</strong>，請確認編號是否正確。
+  </div>
+  {% endif %}
 
   <!-- Overall status + progress bar -->
   <div class="card">
@@ -140,8 +179,22 @@
 
 </div>
 <script>
+  const JOB_ID = {{ ('"' + job_id + '"') | safe if job_id else 'null' }};
   let timer = null;
   let logOpen = false;
+
+  function copyJobId() {
+    if (!JOB_ID) return;
+    navigator.clipboard.writeText(JOB_ID).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.textContent = '已複製！';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = '複製編號';
+        btn.classList.remove('copied');
+      }, 2000);
+    });
+  }
 
   function toggleLog() {
     logOpen = !logOpen;
@@ -193,7 +246,8 @@
 
   async function refreshProgress() {
     try {
-      const data = await fetch('/api/progress').then(r => r.json());
+      const url = JOB_ID ? `/api/progress?job=${JOB_ID}` : '/api/progress';
+      const data = await fetch(url).then(r => r.json());
 
       const pct = data.total_count > 0
         ? Math.round(data.finished_count / data.total_count * 100) : 0;
@@ -214,7 +268,8 @@
   async function refreshLog() {
     if (!logOpen) return;
     try {
-      const data = await fetch('/api/log').then(r => r.json());
+      const url = JOB_ID ? `/api/log?job=${JOB_ID}` : '/api/log';
+      const data = await fetch(url).then(r => r.json());
       const box = document.getElementById('log-box');
       box.innerHTML = colorizeLog(data.log);
       box.scrollTop = box.scrollHeight;

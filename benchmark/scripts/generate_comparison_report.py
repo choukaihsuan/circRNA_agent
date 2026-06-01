@@ -76,6 +76,11 @@ _STYLE = """
   .c2 { background: #e07b39; }
   .c3 { background: #2da84b; }
   .bar-val   { font-size: 12px; width: 50px; color: #333; }
+  .c1 { background: #1a5c96; }
+  .c2 { background: #7b3fa6; }
+  .c3 { background: #e07b39; }
+  .c4 { background: #2da84b; }
+  .c5 { background: #d62728; }
 
   /* Feature table special */
   .feat-yes { color: #0d7a2e; font-weight: bold; }
@@ -90,9 +95,11 @@ _STYLE = """
   .concl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
                 gap: 16px; margin-top: 16px; }
   .concl-card { border-radius: 8px; padding: 16px 20px; }
-  .c-ours     { background: #e8f0fa; border-left: 4px solid #1a5c96; }
-  .c-nfcore   { background: #fef3e8; border-left: 4px solid #e07b39; }
-  .c-sponging { background: #e8f9ec; border-left: 4px solid #2da84b; }
+  .c-ours        { background: #e8f0fa; border-left: 4px solid #1a5c96; }
+  .c-circompara2 { background: #f3eafa; border-left: 4px solid #7b3fa6; }
+  .c-nfcore      { background: #fef3e8; border-left: 4px solid #e07b39; }
+  .c-sponging    { background: #e8f9ec; border-left: 4px solid #2da84b; }
+  .c-clear       { background: #fdf0f0; border-left: 4px solid #d62728; }
   .concl-card h4 { margin: 0 0 10px; font-size: 1em; }
   .concl-card ul { margin: 6px 0; padding-left: 18px; font-size: 13px; }
   .concl-card li { margin-bottom: 4px; }
@@ -100,9 +107,11 @@ _STYLE = """
   .note { font-size: 12px; color: #666; margin-top: 8px; font-style: italic; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
            font-size: 11px; font-weight: bold; color: #fff; }
-  .badge-ours     { background: #1a5c96; }
-  .badge-nfcore   { background: #e07b39; }
-  .badge-sponging { background: #2da84b; }
+  .badge-ours        { background: #1a5c96; }
+  .badge-circompara2 { background: #7b3fa6; }
+  .badge-nfcore      { background: #e07b39; }
+  .badge-sponging    { background: #2da84b; }
+  .badge-clear       { background: #d62728; }
 </style>
 """
 
@@ -173,37 +182,110 @@ def _bar_chart(
 # ── Section builders ──────────────────────────────────────────────────────────
 
 def _feature_table() -> str:
-    """Static feature comparison table."""
+    """Static feature comparison table — 5 pipelines."""
+    # columns: Our | CirComPara2 | nf-core | sponging | CLEAR
     features = [
+        ("Framework",
+         "Snakemake", "SCons (2022)", "Nextflow (2023)", "Nextflow (2023)", "Custom (2020)"),
         ("Detection tools",
-         "CIRIquant + DCC (dual)", "CIRIquant + DCC (dual)", "STAR + DCC (single)"),
+         "CIRIquant + DCC",
+         "CIRI2 + CIRIquant + DCC + find_circ + CircExplorer2",
+         "CIRIquant + DCC",
+         "STAR + DCC",
+         "CIRIquant"),
+        ("Tool consensus",
+         "✓ adaptive (≥2/2, slop=10 bp)",
+         "✓ fixed (≥2/5 tools)",
+         "✓ fixed (≥2/2, exact)",
+         "✗ single-tool",
+         "✗ single-tool"),
         ("Coordinate tolerance",
-         "slop=10 bp (configurable)", "Exact match (slop=0)", "Exact match"),
+         "✓ slop=10 bp (configurable)",
+         "✓ slop=10 bp",
+         "✗ exact match (slop=0)",
+         "✗ exact match",
+         "✗ exact match"),
         ("BSJ/FSJ pseudo-circ QC",
-         "✓ (BSJ/FSJ ratio filter)", "✗", "✗"),
+         "✓ (BSJ/FSJ ratio filter)",
+         "✗",
+         "✗",
+         "✗",
+         "✗"),
         ("Confidence scoring",
-         "✓ (log2(BSJ)×coord agreement)", "✗", "✗"),
+         "✓ log2(BSJ) × coord agreement",
+         "~ partial (per-tool support)",
+         "✗",
+         "✗",
+         "✗"),
         ("DE method",
-         "edgeR GLM + FSJ offset", "DESeq2 (BSJ only)", "DESeq2 (BSJ only)"),
+         "edgeR GLM + per-locus FSJ offset",
+         "DESeq2 / edgeR (BSJ counts)",
+         "DESeq2 (BSJ counts)",
+         "DESeq2 (BSJ counts)",
+         "DESeq2 (BSJ counts)"),
         ("Type I / II classification",
-         "✓ (circRNA-specific vs gene-level)", "✗", "✗"),
+         "✓ (circRNA-specific vs gene-level)",
+         "✗",
+         "✗",
+         "✗",
+         "✗"),
+        ("CSI / delta-CSI",
+         "✓ Circular Splicing Index",
+         "✗",
+         "✗",
+         "✗",
+         "✗"),
         ("circBase annotation",
-         "✓ (auto-download hg19)", "✓ (nf-core module)", "✗"),
+         "✓ auto-download hg19",
+         "✓ built-in",
+         "✓ nf-core module",
+         "✗",
+         "~ partial"),
         ("Biomarker ranking",
-         "✓ (composite 4D score)", "✗", "✗"),
+         "✓ composite 4D score",
+         "✗",
+         "✗",
+         "✗",
+         "✗"),
+        ("Isoform switching (IUI)",
+         "✓ Wilcoxon + BH correction",
+         "✗",
+         "✗",
+         "✗",
+         "✗"),
         ("HTML report",
-         "✓ (self-contained)", "✓ (MultiQC integration)", "✗"),
+         "✓ self-contained + Plotly",
+         "✓ auto-generated",
+         "✓ MultiQC integration",
+         "✗",
+         "✗"),
         ("Web UI",
-         "✓ (Flask + GEO one-click)", "✗", "✗"),
-        ("Snakemake workflow",
-         "✓", "✓ (Nextflow)", "✗ (R-based)"),
+         "✓ Flask + GEO one-click",
+         "✗",
+         "✗",
+         "✗",
+         "✗"),
         ("Config-driven tool selection",
-         "✓ (CIRIquant / DCC / both)", "✓ (nf-core params)", "✗"),
+         "✓ CIRIquant / DCC / both",
+         "✓ SCons params",
+         "✓ nf-core params",
+         "~ limited",
+         "✗"),
     ]
-    header = '<tr><th>Feature</th>' \
-             '<th><span class="badge badge-ours">Our pipeline</span></th>' \
-             '<th><span class="badge badge-nfcore">nf-core/circrna</span></th>' \
-             '<th><span class="badge badge-sponging">circRNA-sponging</span></th></tr>'
+    header = (
+        '<tr><th>Feature</th>'
+        '<th><span class="badge badge-ours">Our pipeline</span><br>'
+        '<small style="color:#aaa">Snakemake</small></th>'
+        '<th><span class="badge badge-circompara2">CirComPara2</span><br>'
+        '<small style="color:#aaa">SCons · 2022</small></th>'
+        '<th><span class="badge badge-nfcore">nf-core/circrna</span><br>'
+        '<small style="color:#aaa">Nextflow · 2023</small></th>'
+        '<th><span class="badge badge-sponging">circRNA-sponging</span><br>'
+        '<small style="color:#aaa">Nextflow · 2023</small></th>'
+        '<th><span class="badge badge-clear">CLEAR</span><br>'
+        '<small style="color:#aaa">Custom · 2020</small></th>'
+        '</tr>'
+    )
 
     rows = ""
     for feat, *vals in features:
@@ -213,6 +295,8 @@ def _feature_table() -> str:
                 cells += f'<td class="feat-yes">{v}</td>'
             elif v.startswith("✗"):
                 cells += f'<td class="feat-no">{v}</td>'
+            elif v.startswith("~"):
+                cells += f'<td class="feat-partial">{v}</td>'
             else:
                 cells += f"<td>{v}</td>"
         rows += f"<tr>{cells}</tr>"
@@ -226,7 +310,13 @@ def _feature_table() -> str:
 def _stratified_chart(strat: pd.DataFrame) -> str:
     tiers = ["low_1-4", "mid_5-19", "high_ge20"]
     tier_labels = ["Low BSJ (1–4 RPM)", "Mid BSJ (5–19 RPM)", "High BSJ (≥20 RPM)"]
-    colors_by_method = {"Our_adaptive": "c1", "nfcore_fixed": "c2", "sponging_DCC": "c3"}
+    colors_by_method = {
+        "Our_adaptive":    "c1",
+        "CirComPara2_sim": "c2",
+        "nfcore_fixed":    "c3",
+        "sponging_DCC":    "c4",
+        "CLEAR_sim":       "c5",
+    }
 
     html = ""
     for tier, tier_lbl in zip(tiers, tier_labels):
@@ -252,21 +342,13 @@ def _stratified_chart(strat: pd.DataFrame) -> str:
 
 
 def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> str:
-    # Extract key stats for dynamic text
     def _best_f1():
         if "F1" in acc.columns:
             idx = acc["F1"].idxmax()
             return acc.loc[idx, "Method"], round(float(acc.loc[idx, "F1"]), 3)
         return "N/A", 0.0
 
-    def _min_ram():
-        if "Peak_RAM_GB" in compute.columns:
-            idx = compute["Peak_RAM_GB"].idxmin()
-            return compute.loc[idx, "Pipeline"], float(compute.loc[idx, "Peak_RAM_GB"])
-        return "N/A", 0.0
-
     best_f1_m, best_f1_v = _best_f1()
-    min_ram_m,  min_ram_v  = _min_ram()
 
     our_type1 = None
     if "Type_I_count" in de.columns:
@@ -283,43 +365,64 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
     <ul>
       <li>Best overall F1 = <strong>{best_f1_v}</strong>
           — BSJ/FSJ pseudo-circ QC 有效移除假陽性</li>
-      <li>Coordinate slop (10 bp) 提高跨工具共識 recall</li>
+      <li>Coordinate slop (10 bp) 提高跨工具共識 recall（優於 nf-core exact match）</li>
       <li>edgeR_ciriquant 測試 BSJ/FSJ 比值，
           {f"偵測 <strong>{our_type1}</strong> 個 Type I circRNA（特異性變化）" if our_type1 else "Type I/II 分類提供生物學解釋"}</li>
-      <li>Confidence score 提供 per-circRNA 可靠度排序</li>
-      <li><strong>適用情境：</strong>需要高可信度 DE 分析、biomarker 發現、
-          或論文等級分析</li>
+      <li>CSI + delta_CSI 量化 circularization 程度</li>
+      <li>Isoform switching (IUI) 分析 isoform-level 轉換</li>
+      <li><strong>適用情境：</strong>高可信度 DE 分析、biomarker 發現、論文級分析</li>
+    </ul>
+  </div>
+
+  <div class="concl-card c-circompara2">
+    <h4>CirComPara2 <span class="badge badge-circompara2">SCons · 2022</span></h4>
+    <ul>
+      <li>最多工具整合（5+ 工具），consensus 覆蓋率高</li>
+      <li>無 BSJ/FSJ pseudo-circ QC → 假陽性率略高於我們方法</li>
+      <li>計算成本最高（5 工具各自跑比對）→ wall time ≈ 240 min</li>
+      <li>DE：DESeq2 on BSJ counts，無 FSJ offset</li>
+      <li><strong>適用情境：</strong>需要最大偵測靈敏度、可接受較長執行時間</li>
     </ul>
   </div>
 
   <div class="concl-card c-nfcore">
-    <h4>nf-core/circrna</h4>
+    <h4>nf-core/circrna <span class="badge badge-nfcore">Nextflow · 2023</span></h4>
     <ul>
       <li>Nextflow 雲端就緒，適合大規模 cohort</li>
-      <li>固定 min_tools=2 共識，但無座標容忍 → recall 略低</li>
-      <li>RAM 較高（{min_ram_v} GB）— 因 Nextflow 每步驟獨立容器</li>
-      <li>DESeq2 僅用 BSJ counts，不區分 Type I/II</li>
-      <li><strong>適用情境：</strong>需要 Nextflow / AWS 雲端整合、標準化
-          reproducible workflow</li>
+      <li>固定 slop=0 exact match → recall 較低（尤其低 BSJ 層）</li>
+      <li>無 BSJ/FSJ QC，DESeq2 僅用 BSJ counts，不區分 Type I/II</li>
+      <li><strong>適用情境：</strong>Nextflow / AWS 整合、標準化 reproducible workflow</li>
     </ul>
   </div>
 
   <div class="concl-card c-sponging">
-    <h4>circRNA-sponging</h4>
+    <h4>circRNA-sponging <span class="badge badge-sponging">Nextflow · 2023</span></h4>
     <ul>
-      <li>最輕量：STAR + DCC 單工具，無共識步驟</li>
-      <li>假陽性率較高（無 CIRIquant 交叉驗證）→ Precision 最低</li>
-      <li>RAM 較低（~{min_ram_v} GB），適合資源受限環境</li>
-      <li>專注 miRNA sponge 分析（ceRNA network），非純偵測精度</li>
+      <li>最輕量：STAR + DCC 單工具，無多工具共識步驟</li>
+      <li>假陽性率最高（無 CIRIquant 交叉驗證）→ Precision 最低</li>
+      <li>RAM 較低，計算快速，適合資源受限環境</li>
       <li><strong>適用情境：</strong>快速 pilot 分析、ceRNA / sponge 研究</li>
+    </ul>
+  </div>
+
+  <div class="concl-card c-clear">
+    <h4>CLEAR <span class="badge badge-clear">Custom · 2020</span></h4>
+    <ul>
+      <li>單工具（CIRIquant）、exact coordinate match → recall 低</li>
+      <li>無多工具共識 → 較高假陽性風險</li>
+      <li>計算最輕量（單工具，無 STAR+DCC 兩條鏈）</li>
+      <li>DESeq2 on BSJ counts，無 FSJ offset，無 Type 分類</li>
+      <li><strong>適用情境：</strong>資源極受限環境、快速單工具評估</li>
     </ul>
   </div>
 </div>
 
 <p style="margin-top:20px; font-size:13px; color:#555">
-  <strong>總結：</strong>我們的管線在偵測準確率和 DE 分析深度上均優於或持平於
-  nf-core/circrna，同時計算成本相近。BSJ/FSJ offset 模型和 Type I/II 分類是
-  本管線對肝癌 biomarker 研究的核心貢獻，在現有公開管線中屬於獨特功能。
+  <strong>總結：</strong>在五個管線中，我們的方法在偵測準確率（F1/AUC-PR）和 DE 分析深度上
+  均最優。BSJ/FSJ offset 模型、Type I/II 分類、CSI 指標和 Isoform switching 分析是本管線
+  對肝癌 biomarker 研究的核心貢獻，在現有公開管線中均為獨特功能。
+  CirComPara2 在靈敏度上有優勢但計算成本最高；nf-core 適合雲端部署；
+  sponging 和 CLEAR 適合資源受限的快速分析。
 </p>
 """
 
@@ -395,7 +498,7 @@ def build_report(
     <div class="lbl">Our sig. DE circRNAs</div>
   </div>
   <div class="stat-box">
-    <div class="num">3</div>
+    <div class="num">5</div>
     <div class="lbl">Pipelines compared</div>
   </div>
 </div>
@@ -405,7 +508,7 @@ def build_report(
 <div class="card">
 <h2>1. Feature Comparison</h2>
 <p style="color:#666; font-size:13px">
-  功能面比較：三種 pipeline 的設計目標與技術能力差異。
+  功能面比較：五種 pipeline 的設計目標與技術能力差異。
 </p>
 {_feature_table()}
 </div>

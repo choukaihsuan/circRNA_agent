@@ -36,9 +36,19 @@ def _embed_pdf(pdf_path: str, height: int = 480) -> str:
     )
 
 
+def _fmt_floats(df: pd.DataFrame) -> pd.DataFrame:
+    """Format float columns to 3 significant figures to improve readability."""
+    out = df.copy()
+    for col in out.select_dtypes(include="float").columns:
+        out[col] = out[col].apply(
+            lambda v: f"{v:.3g}" if pd.notna(v) else "—"
+        )
+    return out
+
+
 def _df_to_html(df: pd.DataFrame, max_rows: int = 50) -> str:
     return (
-        df.head(max_rows)
+        _fmt_floats(df.head(max_rows))
           .to_html(index=False, classes="table", border=0, na_rep="—")
     )
 
@@ -64,11 +74,55 @@ def _make_label(row: pd.Series) -> str:
     return label
 
 
+def _eff_sig(de: pd.DataFrame, de_sig_by: str, fdr: float):
+    """Return (column, threshold, label) for the effective significance criterion."""
+    if de_sig_by == "auto":
+        if "qvalue" in de.columns and (de["qvalue"] < 0.2).any():
+            return "qvalue", 0.2, "Storey q-value"
+        return "pvalue", 0.05, "p-value (nominal)"
+    if de_sig_by == "qvalue":
+        return "qvalue", 0.2, "Storey q-value"
+    if de_sig_by == "pvalue":
+        return "pvalue", fdr, "p-value (nominal)"
+    return "padj", fdr, "adjusted p-value"
+
+
+def _load_interactions(json_file: Optional[str]) -> dict:
+    """Load pre-fetched ENCORI interactions JSON, return {} on any error."""
+    if not json_file:
+        return {}
+    try:
+        import json as _json
+        return _json.loads(Path(json_file).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _de_table_clickable(df: pd.DataFrame, interactions: dict) -> str:
+    """Render DE table with circ_position column as clickable links."""
+    if df.empty:
+        return "<p class='no-data'>No data.</p>"
+    disp = df.copy()
+    id_col = "circ_position" if "circ_position" in disp.columns else (
+             "circ_id" if "circ_id" in disp.columns else None)
+    if id_col:
+        def _link(v: str) -> str:
+            tip = "in interaction data" if str(v) in interactions else "no interaction data pre-fetched"
+            return (f'<a class="circ-link" onclick="showCircDetail(\'{v}\')" '
+                    f'title="{tip}">{v}</a>')
+        disp[id_col] = disp[id_col].astype(str).apply(_link)
+    disp = _fmt_floats(disp)
+    return disp.head(50).to_html(index=False, classes="table", border=0,
+                                  na_rep="—", escape=False)
+
+
 def _de_split_tables(sig: pd.DataFrame, tumor_label: str = "tumor",
-                     normal_label: str = "normal") -> str:
+                     normal_label: str = "normal",
+                     interactions: Optional[dict] = None) -> str:
     """Return two HTML tables: up-regulated and down-regulated in tumor."""
     if sig.empty or "log2FC" not in sig.columns:
         return _df_to_html(sig)
+    ixn  = interactions or {}
     up   = sig[sig["log2FC"] > 0].copy()
     down = sig[sig["log2FC"] < 0].copy()
     html_parts = []
@@ -77,13 +131,13 @@ def _de_split_tables(sig: pd.DataFrame, tumor_label: str = "tumor",
             f'<h3 style="color:#d62728">&#8593; Up-regulated in {tumor_label} '
             f'(log₂FC &gt; 0) — {len(up)} circRNAs</h3>'
         )
-        html_parts.append(_df_to_html(up))
+        html_parts.append(_de_table_clickable(up, ixn))
     if not down.empty:
         html_parts.append(
-            f'<h3 style="color:#1f77b4">&#8595; Down-regulated in {tumor_label} / '
+            f'<h3 style="color:#2CA02C">&#8595; Down-regulated in {tumor_label} / '
             f'Up-regulated in {normal_label} (log₂FC &lt; 0) — {len(down)} circRNAs</h3>'
         )
-        html_parts.append(_df_to_html(down))
+        html_parts.append(_de_table_clickable(down, ixn))
     return "\n".join(html_parts) if html_parts else _df_to_html(sig)
 
 
@@ -114,6 +168,37 @@ _STYLE = """
   .badge-type2 { background:#e07b39; }
   .method-tag { display:inline-block; background:#eaf3ff; border:1px solid #99c2f0;
                 border-radius:4px; padding:2px 10px; font-size:0.9em; color:#2c6fad; }
+  /* Clickable circRNA link */
+  .circ-link { color:#2c6fad; text-decoration:none; cursor:pointer; font-family:monospace; font-size:12px; }
+  .circ-link:hover { text-decoration:underline; }
+  /* Modal overlay */
+  .circ-modal { display:none; position:fixed; z-index:2000; inset:0;
+                background:rgba(0,0,0,0.55); justify-content:center; align-items:center; }
+  .circ-modal-box { background:#fff; border-radius:10px; padding:28px 32px;
+                    max-width:760px; width:94%; max-height:85vh; overflow-y:auto;
+                    position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.25); }
+  .circ-modal-close { position:absolute; top:14px; right:18px; font-size:22px;
+                      cursor:pointer; color:#888; line-height:1; }
+  .circ-modal-close:hover { color:#333; }
+  .circ-modal-title { font-size:1.15em; font-weight:bold; color:#333; margin-bottom:2px; }
+  .circ-modal-sub { font-size:12px; color:#888; margin-bottom:14px; }
+  /* Tabs */
+  .ctab-bar { display:flex; gap:0; border-bottom:2px solid #e0e8f0; margin-bottom:14px; }
+  .ctab-btn { padding:7px 20px; border:none; background:none; cursor:pointer;
+              color:#666; font-size:13px; border-bottom:3px solid transparent;
+              margin-bottom:-2px; }
+  .ctab-btn.active { color:#2c6fad; border-bottom-color:#2c6fad; font-weight:bold; }
+  .ctab-content { display:none; }
+  .ctab-content.active { display:block; }
+  /* Exon SVG container */
+  .exon-wrap { overflow-x:auto; padding:8px 0; }
+  /* Interaction tables */
+  .itable { border-collapse:collapse; width:100%; font-size:12px; }
+  .itable th { background:#f0f5ff; color:#335; padding:5px 10px; border:1px solid #dde; text-align:left; }
+  .itable td { padding:4px 10px; border:1px solid #eee; }
+  .itable tr:hover td { background:#f8faff; }
+  .no-data { color:#aaa; font-size:13px; font-style:italic; padding:8px 0; }
+  .conf-high { color:#2c6fad; font-weight:bold; }
 </style>
 """
 
@@ -231,11 +316,12 @@ def _isoform_section(switching_file: Optional[str]) -> str:
 
     show_cols = [c for c in
                  ["gene_name", "circ_id", "iui_normal", "iui_tumor",
-                  "delta_iui", "p_value", "padj_global"]
+                  "delta_iui", "p_value"]
                  if c in sig.columns]
+    sort_keys = [c for c in ["gene_name", "p_value"] if c in sig.columns]
     table_html = (
-        _df_to_html(sig.sort_values("padj_global")[show_cols], max_rows=20)
-        if show_cols else ""
+        _df_to_html(sig.sort_values(sort_keys)[show_cols], max_rows=40)
+        if show_cols and sort_keys else ""
     )
 
     return f"""
@@ -264,7 +350,8 @@ def _isoform_section(switching_file: Optional[str]) -> str:
 """
 
 
-def _biomarker_section(biomarker_file: Optional[str]) -> str:
+def _biomarker_section(biomarker_file: Optional[str],
+                       interactions: Optional[dict] = None) -> str:
     if not biomarker_file or not Path(biomarker_file).exists():
         return ""
     try:
@@ -273,24 +360,40 @@ def _biomarker_section(biomarker_file: Optional[str]) -> str:
         return ""
     if bm.empty:
         return ""
-    show_cols = [c for c in ["rank", "circ_id", "log2FC", "padj", "biomarker_score",
-                              "in_circbase", "circbase_id", "circbase_gene", "Type"]
+    show_cols = [c for c in ["rank", "circ_id", "log2FC", "n_mirna", "n_rbp",
+                              "biomarker_score", "in_circbase", "circbase_id",
+                              "circbase_gene", "Type"]
                  if c in bm.columns]
+    has_interactions = "n_mirna" in bm.columns and (bm["n_mirna"].max() + bm["n_rbp"].max()) > 0
+    if has_interactions:
+        score_desc = "Score = mean of: −log₁₀(p-value), |log₂FC|, confidence score, circBase bonus, #miRNA binders, #RBP binders (each normalised 0–1; 6D)."
+    else:
+        score_desc = "Score = mean of: −log₁₀(p-value), |log₂FC|, confidence score, circBase known bonus (each normalised 0–1; 4D)."
+
+    disp = _fmt_floats(bm[show_cols].head(30).copy())
+    if "circ_id" in disp.columns and interactions is not None:
+        def _link(v: str) -> str:
+            tip = "in interaction data" if str(v) in interactions else "no interaction data pre-fetched"
+            return (f'<a class="circ-link" onclick="showCircDetail(\'{v}\')" '
+                    f'title="{tip}">{v}</a>')
+        disp["circ_id"] = disp["circ_id"].astype(str).apply(_link)
+
+    table_html = disp.to_html(index=False, classes="table", border=0, na_rep="—", escape=False)
+
     return f"""
   <h2>Biomarker Candidates (top {min(len(bm), 30)} by composite score)</h2>
-  <p style="font-size:13px;color:#555;margin-bottom:8px;">
-    Score = mean of: −log₁₀(padj), |log₂FC|, confidence score, circBase known bonus (each normalised 0–1).
-  </p>
-  {_df_to_html(bm[show_cols], max_rows=30)}
+  <p style="font-size:13px;color:#555;margin-bottom:8px;">{score_desc}</p>
+  <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_id</strong> to view exon diagram, miRNA and RBP binding sites.</p>
+  {table_html}
 """
 
 
 def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
-                    use_pvalue: bool = False) -> str:
+                    p_col: str = "padj", sig_thr: float = 0.05, p_label: str = "adjusted p-value",
+                    heatmap_ids: Optional[set] = None) -> str:
     """Interactive Plotly volcano; returns '' when plotly is unavailable or DE is empty."""
     if not _PLOTLY:
         return ""
-    p_col = "pvalue" if use_pvalue else "padj"
     if p_col not in de.columns:
         p_col = "padj" if "padj" in de.columns else None
     if p_col is None:
@@ -302,17 +405,16 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
     df["nlp"] = df[p_col].clip(lower=1e-300).apply(lambda p: -math.log10(p))
 
     def _sig(row):
-        if row[p_col] < fdr and row["log2FC"] > lfc:
+        if row[p_col] < sig_thr and row["log2FC"] > lfc:
             return "Up"
-        if row[p_col] < fdr and row["log2FC"] < -lfc:
+        if row[p_col] < sig_thr and row["log2FC"] < -lfc:
             return "Down"
         return "NS"
 
     df["sig"] = df.apply(_sig, axis=1)
     has_type = "Type" in df.columns
-    p_label = "p-value (nominal)" if use_pvalue else "adjusted p-value"
 
-    colors = {"Up": "#d62728", "Down": "#1f77b4", "NS": "rgba(150,150,150,0.35)"}
+    colors = {"Up": "#d62728", "Down": "#2CA02C", "NS": "rgba(150,150,150,0.35)"}
     sizes  = {"Up": 6, "Down": 6, "NS": 4}
 
     traces = []
@@ -337,10 +439,35 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
             hovertemplate="%{text}<extra></extra>",
         ))
 
+    # Overlay heatmap top circRNAs with open circle markers + labels
+    if heatmap_ids:
+        heat_df = df[df["circ_id"].isin(heatmap_ids)]
+        if not heat_df.empty:
+            heat_hover = heat_df.apply(
+                lambda r: (
+                    f"<b>{r.get('circ_id','')}</b><br>"
+                    f"★ Heatmap top {int(len(heatmap_ids)//2)} up+down<br>"
+                    f"log₂FC: {r['log2FC']:.3f}<br>"
+                    f"{p_label}: {r[p_col]:.2e}"
+                ), axis=1,
+            )
+            traces.append(go.Scatter(
+                x=heat_df["log2FC"].tolist(), y=heat_df["nlp"].tolist(),
+                mode="markers+text",
+                name="Heatmap top",
+                marker=dict(symbol="circle-open", size=13, color="black",
+                            line=dict(width=2, color="black")),
+                text=heat_df["circ_id"].tolist(),
+                textposition="top center",
+                textfont=dict(size=8, color="black"),
+                hovertext=heat_hover.tolist(),
+                hovertemplate="%{hovertext}<extra></extra>",
+            ))
+
     fig = go.Figure(traces)
     fig.add_vline(x=lfc,   line_dash="dot", line_color="#aaa", line_width=1)
     fig.add_vline(x=-lfc,  line_dash="dot", line_color="#aaa", line_width=1)
-    fig.add_hline(y=-math.log10(fdr), line_dash="dot", line_color="#aaa", line_width=1)
+    fig.add_hline(y=-math.log10(sig_thr), line_dash="dot", line_color="#aaa", line_width=1)
     fig.update_layout(
         title=dict(text=f"Volcano Plot [{de_method}]", font_size=14),
         xaxis_title="log₂ Fold Change (Tumor / Normal)",
@@ -354,39 +481,76 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
     return fig.to_html(include_plotlyjs="cdn", full_html=False)
 
 
-def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 50,
-                    use_pvalue: bool = False) -> str:
-    """Interactive Plotly heatmap of top DE circRNAs (log2 + z-score)."""
+def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
+                    p_col: str = "padj",
+                    groups_file: Optional[str] = None,
+                    normal_label: str = "normal") -> str:
+    """Interactive Plotly heatmap: top N up + N down DE circRNAs (normal-centered z-score)."""
     if not _PLOTLY:
         return ""
-    p_col = "pvalue" if (use_pvalue and "pvalue" in de.columns) else "padj"
-    if "circ_id" not in de.columns or p_col not in de.columns:
+    if p_col not in de.columns:
+        p_col = "padj" if "padj" in de.columns else "pvalue"
+    if "circ_id" not in de.columns or p_col not in de.columns or "log2FC" not in de.columns:
         return ""
 
-    top_ids = (
-        de.dropna(subset=[p_col]).sort_values(p_col).head(top_n)["circ_id"].tolist()
+    # circbase label map (de already enriched by _enrich_de)
+    cb_map = {}
+    if "circbase_id" in de.columns and "in_circbase" in de.columns:
+        known = de[de["in_circbase"] == 1].dropna(subset=["circbase_id"])
+        cb_map = dict(zip(known["circ_id"], known["circbase_id"]))
+
+    def _label(cid: str) -> str:
+        cb = cb_map.get(cid, "")
+        return cb if cb and cb not in ("", "novel") else cid
+
+    up_ids = (
+        de[de["log2FC"] > 0].dropna(subset=[p_col])
+        .sort_values(p_col).head(top_n)["circ_id"].tolist()
     )
+    dn_ids = (
+        de[de["log2FC"] < 0].dropna(subset=[p_col])
+        .sort_values(p_col).head(top_n)["circ_id"].tolist()
+    )
+    top_ids = up_ids + dn_ids
+
     avail = [i for i in top_ids if i in matrix.index]
     if len(avail) < 2:
         return ""
 
     sub = matrix.loc[avail].astype(float)
     log_sub = np.log2(sub + 1)
-    row_mean = log_sub.mean(axis=1)
-    row_std  = log_sub.std(axis=1).clip(lower=0.01)
+
+    # Normal-centered z-score: use normal group mean/SD as reference
+    normal_cols = []
+    if groups_file and Path(groups_file).exists():
+        try:
+            grp = pd.read_csv(groups_file)
+            cond_map = dict(zip(grp["srr_id"], grp["condition"]))
+            normal_cols = [c for c in log_sub.columns if cond_map.get(c, "") == normal_label]
+        except Exception:
+            pass
+    ref_cols = normal_cols if normal_cols else log_sub.columns.tolist()
+    row_mean = log_sub[ref_cols].mean(axis=1)       # center on normal mean
+    row_std  = log_sub.std(axis=1).clip(lower=0.1)  # scale on all-sample SD
     z = log_sub.sub(row_mean, axis=0).div(row_std, axis=0)
 
+    n_up = sum(i in up_ids for i in avail)
+    n_dn = sum(i in dn_ids for i in avail)
+    y_labels = [_label(i) for i in avail]
+
     fig = go.Figure(go.Heatmap(
-        z=z.values.tolist(), x=z.columns.tolist(), y=z.index.tolist(),
-        colorscale="RdBu_r", zmid=0,
-        hovertemplate="<b>%{y}</b><br>%{x}<br>Z-score: %{z:.2f}<extra></extra>",
+        z=z.values.tolist(), x=z.columns.tolist(), y=y_labels,
+        colorscale=[[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']], zmid=0,
+        colorbar=dict(title="z-score<br>(normal-<br>centered)"),
+        hovertemplate="<b>%{y}</b><br>%{x}<br>z-score: %{z:.2f}<extra></extra>",
     ))
     fig.update_layout(
-        title=dict(text=f"Top {len(avail)} DE circRNAs — Heatmap (log₂, z-scored)", font_size=14),
-        yaxis=dict(tickfont=dict(size=9), autorange="reversed"),
-        height=max(420, len(avail) * 14 + 120),
+        title=dict(text=f"Top {n_up} up + {n_dn} down DE circRNAs — Heatmap (normal-centered z-score)",
+                   font_size=14),
+        yaxis=dict(tickfont=dict(size=8), autorange="reversed"),
+        height=max(420, len(avail) * 22 + 120),
         plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(t=60, l=180),
+        margin=dict(t=60, l=300),
     )
     return fig.to_html(include_plotlyjs="cdn", full_html=False)
 
@@ -418,7 +582,7 @@ def _plotly_pca(matrix: pd.DataFrame, groups_file: Optional[str] = None) -> str:
 
     samples    = matrix.columns.tolist()
     conditions = [condition_map.get(smp, "unknown") for smp in samples]
-    color_map  = {"tumor": "#d62728", "normal": "#1f77b4", "unknown": "#888"}
+    color_map  = {"tumor": "#d62728", "normal": "#2CA02C", "unknown": "#888"}
     fallback   = ["#2563eb", "#e07b39", "#16a34a", "#9333ea", "#dc2626"]
     for i, c in enumerate(sorted(set(conditions))):
         color_map.setdefault(c, fallback[i % len(fallback)])
@@ -485,11 +649,14 @@ def build_report(
     biomarker_file: Optional[str] = None,
     switching_file: Optional[str] = None,
     groups_file:    Optional[str] = None,
-    use_pvalue:     bool  = False,
+    de_sig_by:      str   = "auto",
     tumor_label:    str   = "tumor",
     normal_label:   str   = "normal",
-    isoform_file:   Optional[str] = None,
-    circbase_file:  Optional[str] = None,
+    isoform_file:      Optional[str] = None,
+    circbase_file:     Optional[str] = None,
+    heatmap_top_n:     int   = 10,
+    interactions_file: Optional[str] = None,
+    multiqc_file:      Optional[str] = None,
 ) -> None:
     de     = pd.read_csv(de_file, sep="\t")
     matrix = pd.read_csv(matrix_file, sep="\t", index_col=0)
@@ -501,8 +668,8 @@ def build_report(
     # Enrich with host gene, circBase ID, exon span
     de = _enrich_de(de, isoform_file, circbase_file)
 
-    p_col = "pvalue" if (use_pvalue and "pvalue" in de.columns) else "padj"
-    sig_mask = (de[p_col] < fdr) & (de["log2FC"].abs() > lfc) if p_col in de.columns else pd.Series(False, index=de.index)
+    p_col, sig_thr, _sig_label_str = _eff_sig(de, de_sig_by, fdr)
+    sig_mask = (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc) if p_col in de.columns else pd.Series(False, index=de.index)
     sig: pd.DataFrame = de.loc[sig_mask]
 
     n_total  = len(matrix)
@@ -510,7 +677,7 @@ def build_report(
     n_up     = int((sig["log2FC"] > 0).sum()) if len(sig) else 0
     n_dn     = int((sig["log2FC"] < 0).sum()) if len(sig) else 0
     n_sample = matrix.shape[1]
-    sig_label = f"p&lt;{fdr}" if use_pvalue else f"FDR&lt;{fdr}"
+    sig_label = f"{_sig_label_str}&lt;{sig_thr}"
 
     # Rename circ_id to circ_position for display
     sig = sig.copy()
@@ -519,21 +686,595 @@ def build_report(
 
     top_cols = [c for c in [
         "circ_position", "gene_name", "strand", "region", "exon_span", "circbase_id",
-        "log2FC", "pvalue", "padj", "Type",
+        "log2FC", "pvalue", "Type",
     ] if c in sig.columns]
     top_table = sig.sort_values(p_col)[top_cols] if top_cols else sig.head(20)
 
+    # Load pre-fetched interaction data
+    interactions = _load_interactions(interactions_file)
+    import json as _json
+    interactions_js = _json.dumps(interactions, ensure_ascii=False)
+
+    # Build compact volcano data for mini-plot in modal
+    _p_col_v = p_col
+    _vol_rows = []
+    if "log2FC" in de.columns and _p_col_v in de.columns and "circ_id" in de.columns:
+        for _, _r in de.iterrows():
+            if pd.isna(_r["log2FC"]) or pd.isna(_r.get(_p_col_v)):
+                continue
+            _x = round(float(_r["log2FC"]), 3)
+            _pv = float(_r[_p_col_v])
+            _y = round(-math.log10(max(_pv, 1e-300)), 3)
+            _s = ("U" if (_pv < fdr and _r["log2FC"] > lfc) else
+                  "D" if (_pv < fdr and _r["log2FC"] < -lfc) else "N")
+            _vol_rows.append([_x, _y, _s, str(_r["circ_id"])])
+    volcano_data_js = _json.dumps(_vol_rows, ensure_ascii=False)
+    _fdr_js  = sig_thr
+    _lfc_js  = lfc
+    _sig_label_js = _sig_label_str
+
+    # Build HEATMAP_DATA for modal mini-heatmap (no Plotly dependency — pure pandas)
+    heatmap_data_js = "{}"
+    if not de.empty and not matrix.empty:
+        try:
+            _pc_hm = p_col
+            if {"circ_id", "log2FC", _pc_hm}.issubset(de.columns):
+                _up_hm = de[de["log2FC"] > 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(heatmap_top_n)
+                _dn_hm = de[de["log2FC"] < 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(heatmap_top_n)
+                _hm_ids   = list(_up_hm["circ_id"]) + list(_dn_hm["circ_id"])
+                _hm_avail = [i for i in _hm_ids if i in matrix.index]
+                if _hm_avail:
+                    _samps  = matrix.columns.tolist()
+                    _sub_hm = matrix.loc[_hm_avail].astype(float)
+                    _log_hm = (_sub_hm + 1).apply(lambda col: col.apply(lambda v: math.log2(v) if v > 0 else 0.0))
+                    _cmap_hm = {}
+                    if groups_file and Path(groups_file).exists():
+                        try:
+                            _grp_df = pd.read_csv(groups_file)
+                            _cmap_hm = dict(zip(_grp_df["srr_id"].astype(str), _grp_df["condition"].astype(str)))
+                        except Exception:
+                            pass
+                    _ncols = [c for c in _samps if _cmap_hm.get(c, "") == normal_label]
+                    _rcols = _ncols if _ncols else _samps
+                    _rmean = _log_hm[_rcols].mean(axis=1)
+                    _rstd  = _log_hm.std(axis=1).clip(lower=0.1)
+                    _z_hm  = _log_hm.sub(_rmean, axis=0).div(_rstd, axis=0)
+                    heatmap_data_js = _json.dumps({
+                        "samples":    _samps,
+                        "conditions": _cmap_hm,
+                        "rows": {cid: [round(v, 3) for v in _z_hm.loc[cid].tolist()]
+                                 for cid in _hm_avail},
+                    }, ensure_ascii=False)
+        except Exception as _hm_exc:
+            import sys as _sys
+            print(f"[report] HEATMAP_DATA build failed: {_hm_exc}", file=_sys.stderr)
+
+    # Compute heatmap top IDs for volcano annotation
+    heatmap_ids: set = set()
+    if p_col in de.columns and "log2FC" in de.columns and "circ_id" in de.columns:
+        heatmap_ids = set(
+            de[de["log2FC"] > 0].dropna(subset=[p_col])
+            .sort_values(p_col).head(heatmap_top_n)["circ_id"].tolist()
+        ) | set(
+            de[de["log2FC"] < 0].dropna(subset=[p_col])
+            .sort_values(p_col).head(heatmap_top_n)["circ_id"].tolist()
+        )
+
     type_html      = _type_section(sig)
-    biomarker_html = _biomarker_section(biomarker_file)
+    biomarker_html = _biomarker_section(biomarker_file, interactions=interactions)
     isoform_html   = _isoform_section(switching_file)
 
     # Interactive Plotly charts; fall back to static PDF embeds when unavailable
-    p_volcano = _plotly_volcano(de, fdr, lfc, de_method, use_pvalue=use_pvalue)
-    p_heatmap = _plotly_heatmap(de, matrix, use_pvalue=use_pvalue)
+    p_volcano = _plotly_volcano(de, fdr, lfc, de_method, p_col=p_col, sig_thr=sig_thr,
+                                p_label=_sig_label_str, heatmap_ids=heatmap_ids)
+    p_heatmap = _plotly_heatmap(de, matrix, top_n=heatmap_top_n, p_col=p_col,
+                                groups_file=groups_file, normal_label=normal_label)
     p_pca     = _plotly_pca(matrix, groups_file)
     volcano_html = p_volcano if p_volcano else _embed_pdf(volcano_pdf)
     heatmap_html = p_heatmap if p_heatmap else _embed_pdf(heatmap_pdf)
     pca_html     = p_pca     if p_pca     else _embed_pdf(pca_pdf)
+
+    n_ixn = len(interactions)
+    n_ixn_mirna = sum(len(v.get("mirna", [])) > 0 for v in interactions.values())
+
+    _modal_js = f"""
+<script>
+const CIRC_DATA    = {interactions_js};
+const VOLCANO_DATA = {volcano_data_js};
+const HEATMAP_DATA = {heatmap_data_js};
+const _FDR = {_fdr_js};
+const _LFC = {_lfc_js};
+const _SIG_LABEL = "{_sig_label_js}";
+
+function showCircDetail(circId) {{
+  const d    = CIRC_DATA[circId] || {{}};
+  const info = d.info || {{}};
+  document.getElementById('cm-title').textContent = circId;
+  document.getElementById('cm-sub').innerHTML =
+    [info.gene_name, info.strand, info.region, info.exon_span].filter(Boolean).join(' &nbsp;|&nbsp; ');
+  const circEl = document.getElementById('cm-circle-wrap');
+  circEl.innerHTML = '';
+  _drawCircleRNA(circId, circEl);
+  document.getElementById('cm-mirna').innerHTML = _buildInteractionTable(
+    d.mirna||[], ['miRNAName','siteType','circ_pos','clipExpNum','cellType','source','in_circ'],
+    ['miRNA','Site Type','Position','CLIP Exp.','Cell Type','Source','In circRNA']);
+  document.getElementById('cm-rbp').innerHTML = _buildInteractionTable(
+    d.rbp||[], ['RBPName','bindingSites','circ_pos','location','clipExpNum','cellType','source','in_circ'],
+    ['RBP','Sites','Position','Location','CLIP Exp.','Cell Type','Source','In circRNA']);
+  const vEl = document.getElementById('cm-volcano');
+  vEl.dataset.circId = circId;
+  vEl.innerHTML = '<p style="color:#aaa;font-size:12px;padding:8px">Click tab to load volcano.</p>';
+  vEl._plotlyLoaded = false;
+  const hEl = document.getElementById('cm-heatmap');
+  hEl.dataset.circId = circId;
+  hEl.innerHTML = '<p style="color:#aaa;font-size:12px;padding:8px">Click tab to load heatmap.</p>';
+  hEl._plotlyLoaded = false;
+  document.getElementById('cm-tab-heatmap').style.display = '';
+  _switchTab('exon');
+  document.getElementById('circ-modal').style.display = 'flex';
+}}
+
+function closeCircModal() {{
+  document.getElementById('circ-modal').style.display = 'none';
+  ['cm-volcano','cm-heatmap'].forEach(id => {{
+    const el = document.getElementById(id);
+    if (el && el._plotlyLoaded) {{ Plotly.purge(el); el._plotlyLoaded = false; }}
+  }});
+}}
+
+function _switchTab(name) {{
+  document.querySelectorAll('.ctab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.ctab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('cm-' + name).classList.add('active');
+  document.querySelector('.ctab-btn[data-tab="' + name + '"]').classList.add('active');
+  if (name === 'volcano') {{
+    const vEl = document.getElementById('cm-volcano');
+    if (!vEl._plotlyLoaded) _buildMiniVolcano(vEl.dataset.circId);
+  }}
+  if (name === 'heatmap') {{
+    const hEl = document.getElementById('cm-heatmap');
+    if (!hEl._plotlyLoaded) _buildMiniHeatmap(hEl.dataset.circId);
+  }}
+}}
+
+// ── Circular RNA diagram ──────────────────────────────────────────────────────
+function _drawCircleRNA(circId, container) {{
+  const d        = CIRC_DATA[circId] || {{}};
+  const info     = d.info || {{}};
+  const mirnaList= d.mirna || [];
+  const rbpList  = d.rbp   || [];
+  const totalLen = parseInt(info.spliced_length) || 0;
+  const exonBds  = info.exon_boundaries || [];
+
+  const W=480, H=440, cx=240, cy=210;
+  const ROUT=148, RIN=115, MI_OUT=176, MI_IN=153, RBP_OUT=113, RBP_IN=90;
+
+  const MI_COLORS  = ['#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#a65628',
+                      '#c4007a','#0077b6','#c96a00','#2d6a4f','#6d4c91','#b5470b',
+                      '#1d7a3a','#7b2d8b','#0059a6','#8b6900','#c1121f','#3d7a00',
+                      '#1d91c0','#6a3d9a'];
+  const RBP_COLORS = ['#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e',
+                      '#e6ab02','#a6761d','#333333','#1f78b4','#b2df8a','#fb8072','#80b1d3'];
+
+  function posToAngle(pos) {{
+    if (!totalLen) return -Math.PI/2;
+    return -Math.PI/2 + (pos/totalLen)*2*Math.PI;
+  }}
+  function polar(r,a) {{ return [cx+r*Math.cos(a), cy+r*Math.sin(a)]; }}
+  function arcPath(ro,ri,a1,a2) {{
+    const span=((a2-a1)%(2*Math.PI)+2*Math.PI)%(2*Math.PI);
+    const large=span>Math.PI?1:0, f=n=>n.toFixed(2);
+    const [x1,y1]=polar(ro,a1),[x2,y2]=polar(ro,a2);
+    const [x3,y3]=polar(ri,a2),[x4,y4]=polar(ri,a1);
+    return `M${{f(x1)}},${{f(y1)}} A${{ro}},${{ro}} 0 ${{large}},1 ${{f(x2)}},${{f(y2)}} L${{f(x3)}},${{f(y3)}} A${{ri}},${{ri}} 0 ${{large}},0 ${{f(x4)}},${{f(y4)}}Z`;
+  }}
+
+  let svg=`<svg width="${{W}}" height="${{H}}" viewBox="0 0 ${{W}} ${{H}}" style="font-family:sans-serif">`;
+  svg+=`<circle cx="${{cx}}" cy="${{cy}}" r="${{(ROUT+RIN)/2}}" fill="none" stroke="#fce8e8" stroke-width="${{ROUT-RIN}}"/>`;
+  if(totalLen>0&&mirnaList.length>0)
+    svg+=`<circle cx="${{cx}}" cy="${{cy}}" r="${{(MI_OUT+MI_IN)/2}}" fill="none" stroke="#f0f0f0" stroke-width="${{MI_OUT-MI_IN}}"/>`;
+  if(totalLen>0&&rbpList.filter(r=>r.location==='internal').length>0)
+    svg+=`<circle cx="${{cx}}" cy="${{cy}}" r="${{(RBP_OUT+RBP_IN)/2}}" fill="none" stroke="#e8f0e8" stroke-width="${{RBP_OUT-RBP_IN}}"/>`;
+
+  // ── Proportional exon boundaries ──
+  if(exonBds.length>0&&totalLen>0){{
+    exonBds.forEach(eb=>{{
+      // divider line at exon junction
+      if(eb.cum_start>0){{
+        const a=posToAngle(eb.cum_start);
+        const [lx1,ly1]=polar(RIN-2,a),[lx2,ly2]=polar(ROUT+2,a);
+        svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="#999" stroke-width="1.5"/>`;
+      }}
+      // exon label on the middle ring (between RIN and ROUT)
+      const arcFrac=(eb.cum_end-eb.cum_start)/totalLen;
+      const arcPx=arcFrac*2*Math.PI*(RIN+ROUT)/2;
+      if(arcPx>30){{  // only label if enough space
+        const aMid=posToAngle((eb.cum_start+eb.cum_end)/2);
+        const [lx,ly]=polar((RIN+ROUT)/2,aMid);
+        const isLow=(aMid>0&&aMid<Math.PI);
+        const tdeg=isLow?(aMid*180/Math.PI-90):(aMid*180/Math.PI+90);
+        const exonLabel=eb.label.replace(/^e(\d+)$/,'exon $1');
+        svg+=`<text transform="translate(${{lx.toFixed(1)}},${{ly.toFixed(1)}}) rotate(${{tdeg.toFixed(1)}})" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#444" font-weight="600">${{exonLabel}}</text>`;
+      }}
+    }});
+  }}
+
+  // helper: normalize angle to [0, 2π)
+  function normA(a){{ return((a%(2*Math.PI))+2*Math.PI)%(2*Math.PI); }}
+  // helper: de-overlap badge angles — forward bump, min gap in radians
+  function deOverlap(list, gap){{
+    list.sort((a,b)=>a.ang-b.ang);
+    for(let i=1;i<list.length;i++){{
+      if(list[i].ang-list[i-1].ang<gap) list[i].ang=list[i-1].ang+gap;
+    }}
+    return list;
+  }}
+
+  // ── miRNA arcs (outer ring) — group arcs per name, then de-overlapped badges ──
+  const miMap={{}};let miIdx=0;
+  const miLegend=[];
+  const miBadgeAngs={{}};
+  const miArcGroups={{}};
+  if(totalLen>0){{
+    mirnaList.forEach(item=>{{
+      const name=item.miRNAName||'';
+      const m=(item.circ_pos||'').match(/(\d+)[–\-](\d+)/);
+      if(!m)return;
+      if(!(name in miMap)){{
+        miIdx++;
+        miMap[name]={{num:miIdx,color:MI_COLORS[(miIdx-1)%MI_COLORS.length]}};
+        miLegend.push({{num:miIdx,name,color:miMap[name].color,st:item.siteType||'',src:item.source||''}});
+        miArcGroups[name]=[];
+      }}
+      const e=miMap[name];
+      const a1=posToAngle(parseInt(m[1])),a2r=posToAngle(Math.max(parseInt(m[2]),parseInt(m[1])+1));
+      const minA=2*Math.PI/totalLen*3, a2=Math.max(a2r,a1+minA);
+      miArcGroups[name].push({{d:arcPath(MI_OUT,MI_IN,a1,a2),title:`${{name}} · ${{item.siteType||''}} · ${{item.circ_pos}}`}});
+      if(!(name in miBadgeAngs)) miBadgeAngs[name]=normA((a1+a2)/2);
+    }});
+    // Draw arc groups (each name wrapped in <g> for show/hide)
+    Object.entries(miArcGroups).forEach(([name,arcs])=>{{
+      const e=miMap[name];
+      svg+=`<g id="_miarc_${{e.num}}" class="_miarc">`;
+      arcs.forEach(a=>svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.85"><title>${{a.title}}</title></path>`);
+      svg+=`</g>`;
+    }});
+    // place badges immediately outside arc; radially stagger only when angularly too close
+    const miBadgesSorted=Object.entries(miBadgeAngs)
+      .map(([n,a])=>{{return{{name:n,ang:a,e:miMap[n]}}}})
+      .filter(b=>b.e);
+    miBadgesSorted.sort((a,b)=>a.ang-b.ang);
+    const MI_R0=MI_OUT+7, MI_R1=MI_OUT+19, MI_ANG_MIN=0.14;
+    let miLastAng=-Infinity, miRIdx=0;
+    miBadgesSorted.forEach(b=>{{
+      if(b.ang-miLastAng<MI_ANG_MIN){{ miRIdx=1-miRIdx; }}
+      else{{ miRIdx=0; }}
+      b.r=miRIdx===0?MI_R0:MI_R1;
+      miLastAng=b.ang;
+    }});
+    miBadgesSorted.forEach(b=>{{
+      const [nx,ny]=polar(b.r,b.ang);
+      svg+=`<g id="_mib_${{b.e.num}}" class="_mibadge">`;
+      if(b.r>MI_R0){{
+        const [ox,oy]=polar(MI_OUT+2,b.ang);
+        svg+=`<line x1="${{ox.toFixed(1)}}" y1="${{oy.toFixed(1)}}" x2="${{nx.toFixed(1)}}" y2="${{ny.toFixed(1)}}" stroke="${{b.e.color}}" stroke-width="0.8" opacity="0.5" stroke-dasharray="2,2"/>`;
+      }}
+      svg+=`<circle cx="${{nx.toFixed(1)}}" cy="${{ny.toFixed(1)}}" r="6" fill="${{b.e.color}}"/>`;
+      svg+=`<text x="${{nx.toFixed(1)}}" y="${{ny.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="7.5" fill="white" font-weight="bold">${{b.e.num}}</text>`;
+      svg+=`</g>`;
+    }});
+  }}
+
+  // ── RBP arcs (inner ring) — draw arcs first, then de-overlapped badges ──
+  const rbpMap={{}};let rbpIdx=0;
+  const rbpLegend=[];
+  const rbpBadgeAngs={{}};
+  const rbpArcGroups={{}};
+  if(totalLen>0){{
+    rbpList.forEach(item=>{{
+      if(item.location!=='internal')return;
+      const name=item.RBPName||'';
+      if(!(name in rbpMap)){{
+        rbpIdx++;
+        rbpMap[name]={{num:rbpIdx,color:RBP_COLORS[(rbpIdx-1)%RBP_COLORS.length]}};
+        rbpLegend.push({{num:rbpIdx,name,color:rbpMap[name].color,ns:(item.sites||[]).length,src:item.source||''}});
+        rbpArcGroups[name]=[];
+      }}
+      const e=rbpMap[name];
+      const sites=item.sites||[];
+      if(sites.length>0){{
+        sites.forEach(s=>{{
+          const a1=posToAngle(s.circ_start),a2=posToAngle(Math.max(s.circ_end,s.circ_start+1));
+          rbpArcGroups[name].push({{d:arcPath(RBP_OUT,RBP_IN,a1,a2),title:`${{name}} · ${{s.circ_pos}}`}});
+          if(!(name in rbpBadgeAngs)) rbpBadgeAngs[name]=normA((a1+a2)/2);
+        }});
+      }} else {{
+        if(!(name in rbpBadgeAngs)){{
+          const fallbackAng=normA(-Math.PI/2+(rbpIdx-1)/(Math.max(rbpList.filter(r=>r.location==='internal').length,1))*2*Math.PI);
+          rbpBadgeAngs[name]=fallbackAng;
+        }}
+      }}
+    }});
+    // Draw RBP arc groups
+    Object.entries(rbpArcGroups).forEach(([name,arcs])=>{{
+      const e=rbpMap[name];
+      svg+=`<g id="_rbparc_${{e.num}}" class="_rbparc">`;
+      arcs.forEach(a=>svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.8"><title>${{a.title}}</title></path>`);
+      svg+=`</g>`;
+    }});
+    // build + de-overlap badge list, place inside RBP ring (in center-hole)
+    const rbpBadgesSorted=Object.entries(rbpBadgeAngs)
+      .map(([n,a])=>{{return{{name:n,ang:a,e:rbpMap[n]}}}})
+      .filter(b=>b.e);
+    rbpBadgesSorted.sort((a,b)=>a.ang-b.ang);
+    const RBP_R0=RBP_IN-8, RBP_R1=RBP_IN-20, RBP_ANG_MIN=0.14;
+    let rbpLastAng=-Infinity, rbpRIdx=0;
+    rbpBadgesSorted.forEach(b=>{{
+      if(b.ang-rbpLastAng<RBP_ANG_MIN){{ rbpRIdx=1-rbpRIdx; }}
+      else{{ rbpRIdx=0; }}
+      b.r=rbpRIdx===0?RBP_R0:RBP_R1;
+      rbpLastAng=b.ang;
+    }});
+    rbpBadgesSorted.forEach(b=>{{
+      const [nx,ny]=polar(b.r,b.ang);
+      svg+=`<g id="_rbpb_${{b.e.num}}" class="_rbpbadge">`;
+      if(b.r<RBP_R0){{
+        const [ox,oy]=polar(RBP_IN-2,b.ang);
+        svg+=`<line x1="${{ox.toFixed(1)}}" y1="${{oy.toFixed(1)}}" x2="${{nx.toFixed(1)}}" y2="${{ny.toFixed(1)}}" stroke="${{b.e.color}}" stroke-width="0.8" opacity="0.5" stroke-dasharray="2,2"/>`;
+      }}
+      svg+=`<circle cx="${{nx.toFixed(1)}}" cy="${{ny.toFixed(1)}}" r="6" fill="${{b.e.color}}"/>`;
+      svg+=`<text x="${{nx.toFixed(1)}}" y="${{ny.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="7.5" fill="white" font-weight="bold">${{b.e.num}}</text>`;
+      svg+=`</g>`;
+    }});
+  }}
+
+  // BSJ junction line — middle ring only, same weight as exon dividers
+  {{
+    const bsjA=-Math.PI/2;
+    const [bl1x,bl1y]=polar(RIN-2,bsjA),[bl2x,bl2y]=polar(ROUT+2,bsjA);
+    svg+=`<line x1="${{bl1x.toFixed(1)}}" y1="${{bl1y.toFixed(1)}}" x2="${{bl2x.toFixed(1)}}" y2="${{bl2y.toFixed(1)}}" stroke="#999" stroke-width="1.5"/>`;
+  }}
+  // BSJ marker triangle + label
+  const [bx,by]=polar(ROUT+12,-Math.PI/2);
+  svg+=`<polygon points="${{bx.toFixed(1)}},${{(by-10).toFixed(1)}} ${{(bx-7).toFixed(1)}},${{(by+4).toFixed(1)}} ${{(bx+7).toFixed(1)}},${{(by+4).toFixed(1)}}" fill="#d62728"/>`;
+  svg+=`<text x="${{bx.toFixed(1)}}" y="${{(by-13).toFixed(1)}}" text-anchor="middle" font-size="9" fill="#d62728" font-weight="bold">BSJ</text>`;
+
+  // Center text
+  const gname=info.gene_name?`${{info.gene_name}}${{info.strand?' ('+info.strand+')':''}}`:'';
+  const eline=info.exon_span?`exon ${{info.exon_span}}`:(info.region||'');
+  const lline=totalLen?`${{totalLen}} nt`:'(length unknown)';
+  svg+=`<text x="${{cx}}" y="${{cy-18}}" text-anchor="middle" font-size="13" font-weight="bold" fill="#333">${{gname}}</text>`;
+  svg+=`<text x="${{cx}}" y="${{cy}}"    text-anchor="middle" font-size="11" fill="#666">${{eline}}</text>`;
+  svg+=`<text x="${{cx}}" y="${{cy+16}}" text-anchor="middle" font-size="10" fill="#999">${{lline}}</text>`;
+  svg+='</svg>';
+
+  // Legend as HTML below SVG — clickable chips to toggle badge visibility
+  const badge=(c,n)=>`<span style="background:${{c}};color:white;border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:bold;margin-right:3px;flex-shrink:0">${{n}}</span>`;
+  const srcBadge=(src)=>{{
+    const col=src==='ENCORI'?'#0077b6':'#6c757d';
+    return `<span style="background:${{col}};color:white;border-radius:3px;padding:0 3px;font-size:7px;margin-left:2px;vertical-align:middle">${{src}}</span>`;
+  }};
+  const toggleBtn=(label,onclick)=>`<button onclick="${{onclick}}" style="font-size:9px;padding:1px 5px;border:1px solid #ccc;border-radius:3px;background:#f8f8f8;cursor:pointer;margin-left:4px">${{label}}</button>`;
+
+  let legHtml='';
+  if(miLegend.length>0){{
+    legHtml+=`<div style="margin-top:8px;font-size:10px">
+      <span style="font-weight:bold">miRNA (outer ring):</span>
+      ${{toggleBtn('全顯示','_toggleAll(\\'mi\\',true,this.closest(\\'div\\'))')}}
+      ${{toggleBtn('全隱藏','_toggleAll(\\'mi\\',false,this.closest(\\'div\\'))')}}
+      <div style="display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:4px">`;
+    miLegend.forEach(e=>{{
+      legHtml+=`<span id="_leg_mi_${{e.num}}" onclick="_toggleBadge('mi',${{e.num}},this)"
+        title="點擊顯示/隱藏" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;border:1px solid #eee">
+        ${{badge(e.color,e.num)}}${{e.name}}${{e.src?srcBadge(e.src):''}}</span>`;
+    }});
+    legHtml+='</div></div>';
+  }}
+  if(rbpLegend.length>0){{
+    legHtml+=`<div style="margin-top:6px;font-size:10px">
+      <span style="font-weight:bold">RBP (inner ring):</span>
+      ${{toggleBtn('全顯示','_toggleAll(\\'rbp\\',true,this.closest(\\'div\\'))')}}
+      ${{toggleBtn('全隱藏','_toggleAll(\\'rbp\\',false,this.closest(\\'div\\'))')}}
+      <div style="display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:4px">`;
+    rbpLegend.forEach(e=>{{
+      legHtml+=`<span id="_leg_rbp_${{e.num}}" onclick="_toggleBadge('rbp',${{e.num}},this)"
+        title="點擊顯示/隱藏" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;border:1px solid #eee">
+        ${{badge(e.color,e.num)}}${{e.name}} (${{e.ns}} sites)${{e.src?srcBadge(e.src):''}}</span>`;
+    }});
+    legHtml+='</div></div>';
+  }}
+  container.innerHTML=`<div style="text-align:center">${{svg}}</div>`+legHtml;
+}}
+
+// ── Mini heatmap ──────────────────────────────────────────────────────────────
+function _buildMiniHeatmap(circId) {{
+  const el=document.getElementById('cm-heatmap');
+  if(!el)return;
+  if(typeof Plotly==='undefined'){{el.innerHTML='<p class="no-data">Plotly not available.</p>';return;}}
+  if(!HEATMAP_DATA||!HEATMAP_DATA.rows||Object.keys(HEATMAP_DATA.rows).length===0){{
+    el.innerHTML='<p class="no-data">Heatmap data not available.</p>';return;
+  }}
+  const _inTop=HEATMAP_DATA.rows[circId]!=null;
+  const allIds=Object.keys(HEATMAP_DATA.rows);
+  const tIdx=allIds.indexOf(circId);
+  const samps=HEATMAP_DATA.samples||[];
+  const zMatrix=allIds.map(id=>HEATMAP_DATA.rows[id]);
+  const yLabels=allIds.map(id=>{{
+    const cd=CIRC_DATA[id];
+    return(cd&&cd.info&&cd.info.circbase_id&&cd.info.circbase_id!=='novel')?cd.info.circbase_id:id;
+  }});
+  const conds=HEATMAP_DATA.conditions||{{}};
+  const TUMOR_COL='#d62728', NORMAL_COL='#2c6fad';
+  // merge consecutive samples of same condition into one labelled bar
+  const grps=[];let cur=null;
+  samps.forEach((s,i)=>{{
+    const c=conds[s]||'';
+    const col=c==='{tumor_label}'?TUMOR_COL:c==='{normal_label}'?NORMAL_COL:'#888';
+    if(!cur||cur.c!==c){{cur={{c,col,s:i,e:i}};grps.push(cur);}}
+    else cur.e=i;
+  }});
+  const groupShapes=grps.map(g=>{{
+    return{{type:'rect',xref:'x',yref:'paper',
+      x0:g.s-0.45,x1:g.e+0.45,y0:1.02,y1:1.055,
+      fillcolor:g.col,line:{{width:0}}}};
+  }});
+  const groupAnno=grps.map(g=>{{
+    return{{xref:'x',yref:'paper',x:(g.s+g.e)/2,y:1.0375,
+      yanchor:'middle',xanchor:'center',
+      text:g.c,showarrow:false,
+      font:{{size:9,color:'white',family:'sans-serif'}}}};
+  }});
+  const hlShape=tIdx>=0?[{{
+    type:'rect',x0:-0.5,x1:samps.length-0.5,y0:tIdx-0.5,y1:tIdx+0.5,
+    line:{{color:'#ff8c00',width:2.5}},fillcolor:'rgba(255,140,0,0.07)'
+  }}]:[];
+  const titleText=_inTop?`${{circId}} ← highlighted`:`Top DE Heatmap (${{circId}} not in top set)`;
+  Plotly.newPlot(el,[{{
+    type:'heatmap',z:zMatrix,x:samps,y:yLabels,
+    colorscale:[[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']],
+    zmid:0,showscale:true,
+    colorbar:{{title:'z-score',titlefont:{{size:10}}}},
+    hovertemplate:'<b>%{{y}}</b><br>%{{x}}<br>z: %{{z:.2f}}<extra></extra>',
+  }}],{{
+    height:Math.max(300,allIds.length*20+120),
+    margin:{{t:65,b:60,l:180,r:80}},
+    title:{{text:titleText,font:{{size:11}}}},
+    xaxis:{{tickangle:-35,tickfont:{{size:9}}}},
+    yaxis:{{tickfont:{{size:9}},autorange:'reversed'}},
+    shapes:[...groupShapes,...hlShape],
+    annotations:groupAnno,
+    plot_bgcolor:'white',paper_bgcolor:'white',
+  }},{{responsive:true,displayModeBar:false}});
+  el._plotlyLoaded=true;
+}}
+
+// ── Mini volcano ──────────────────────────────────────────────────────────────
+function _buildMiniVolcano(circId) {{
+  const el=document.getElementById('cm-volcano');
+  if(!circId||typeof Plotly==='undefined'){{el.innerHTML='<p class="no-data">Plotly not available.</p>';return;}}
+  const pt=VOLCANO_DATA.find(d=>d[3]===circId);
+  if(!pt){{el.innerHTML='<p class="no-data">circRNA not found in volcano data.</p>';return;}}
+  const ns_x=[],ns_y=[],up_x=[],up_y=[],dn_x=[],dn_y=[];
+  VOLCANO_DATA.forEach(d=>{{
+    if(d[2]==='N'){{ns_x.push(d[0]);ns_y.push(d[1]);}}
+    else if(d[2]==='U'){{up_x.push(d[0]);up_y.push(d[1]);}}
+    else{{dn_x.push(d[0]);dn_y.push(d[1]);}}
+  }});
+  const thr_y=-Math.log10(_FDR);
+  const yLab=`−log₁₀(${{_SIG_LABEL}})`;
+  Plotly.newPlot(el,[
+    {{x:ns_x,y:ns_y,mode:'markers',name:'NS',marker:{{color:'rgba(150,150,150,0.25)',size:3,line:{{width:0}}}},hoverinfo:'skip'}},
+    {{x:up_x,y:up_y,mode:'markers',name:'Up',marker:{{color:'rgba(214,39,40,0.55)',size:4}},hoverinfo:'skip'}},
+    {{x:dn_x,y:dn_y,mode:'markers',name:'Down',marker:{{color:'rgba(44,160,44,0.55)',size:4}},hoverinfo:'skip'}},
+    {{x:[pt[0]],y:[pt[1]],mode:'markers+text',name:circId,
+      text:[circId.split(':').slice(-1)[0]],textposition:'top center',textfont:{{size:9}},
+      marker:{{color:'#ff8c00',size:16,symbol:'star',line:{{color:'#000',width:1.5}}}},
+      hovertemplate:`<b>${{circId}}</b><br>log₂FC: ${{pt[0].toFixed(3)}}<br>${{yLab}}: ${{pt[1].toFixed(3)}}<extra></extra>`}},
+  ],{{
+    height:320,margin:{{t:36,b:50,l:60,r:20}},
+    title:{{text:'Volcano Plot Position',font:{{size:13}}}},
+    xaxis:{{title:'log₂ Fold Change (Tumor / Normal)',showgrid:true,gridcolor:'#f0f0f0',zeroline:false}},
+    yaxis:{{title:yLab,showgrid:true,gridcolor:'#f0f0f0',zeroline:false}},
+    showlegend:false,plot_bgcolor:'white',paper_bgcolor:'white',
+    shapes:[
+      {{type:'line',x0:_LFC,x1:_LFC,y0:0,y1:1,yref:'paper',line:{{dash:'dot',color:'#bbb',width:1}}}},
+      {{type:'line',x0:-_LFC,x1:-_LFC,y0:0,y1:1,yref:'paper',line:{{dash:'dot',color:'#bbb',width:1}}}},
+      {{type:'line',x0:0,x1:1,xref:'paper',y0:thr_y,y1:thr_y,line:{{dash:'dot',color:'#bbb',width:1}}}},
+    ],
+  }},{{responsive:true,displayModeBar:false}});
+  el._plotlyLoaded=true;
+}}
+
+function _buildInteractionTable(rows,keys,headers) {{
+  if(!rows||!rows.length) return '<p class="no-data">No data available (novel circRNA or source returned no results).</p>';
+  const _srcBadge=s=>{{
+    if(!s)return'—';
+    const col=s==='ENCORI'?'#0077b6':'#6c757d';
+    return`<span style="background:${{col}};color:white;border-radius:3px;padding:1px 5px;font-size:10px">${{s}}</span>`;
+  }};
+  let html='<table class="itable"><thead><tr>';
+  headers.forEach(h=>html+='<th>'+h+'</th>');
+  html+='</tr></thead><tbody>';
+  rows.forEach(r=>{{
+    html+='<tr>';
+    keys.forEach(k=>{{
+      let v=r[k]!==undefined&&r[k]!==''?r[k]:'—';
+      if(k==='source') v=_srcBadge(String(r[k]||''));
+      if(k==='in_circ'){{
+        const ic=r[k];
+        // CI entries have no in_circ field → treat as true
+        if(ic===undefined||ic===true||ic==='true')
+          v='<span style="color:#2ca02c;font-weight:bold">✓</span>';
+        else
+          v='<span style="color:#aaa">✗</span>';
+      }}
+      html+='<td>'+v+'</td>';
+    }});
+    html+='</tr>';
+  }});
+  html+='</tbody></table>';
+  const nCI=rows.filter(r=>r.source==='CircInteractome').length;
+  const nEN=rows.filter(r=>r.source==='ENCORI').length;
+  html+=`<p style="font-size:11px;color:#aaa;margin-top:6px">
+    <span style="background:#6c757d;color:white;border-radius:3px;padding:1px 5px;font-size:10px">CircInteractome</span>
+    ${{nCI}} records · TargetScan predictions · hg19 · Position = 1-based within circRNA
+    &nbsp;&nbsp;
+    <span style="background:#0077b6;color:white;border-radius:3px;padding:1px 5px;font-size:10px">ENCORI</span>
+    ${{nEN}} records · CLIP-seq validated · hg38 · Gene-level
+  </p>`;
+  return html;
+}}
+
+function _toggleBadge(type, num, chip) {{
+  const wrap = document.getElementById('cm-circle-wrap');
+  if (!wrap) return;
+  const badge = wrap.querySelector(`#_${{type}}b_${{num}}`);
+  const arc   = wrap.querySelector(`#_${{type}}arc_${{num}}`);
+  const nowHidden = badge ? (badge.style.display === 'none') : false;
+  if (badge) badge.style.display = nowHidden ? '' : 'none';
+  if (arc)   arc.style.display   = nowHidden ? '' : 'none';
+  if (chip) {{
+    chip.style.opacity        = nowHidden ? '1' : '0.3';
+    chip.style.textDecoration = nowHidden ? '' : 'line-through';
+  }}
+}}
+
+function _toggleAll(type, show, container) {{
+  const wrap = document.getElementById('cm-circle-wrap');
+  if (!wrap) return;
+  wrap.querySelectorAll(`._${{type}}badge`).forEach(el => el.style.display = show ? '' : 'none');
+  wrap.querySelectorAll(`._${{type}}arc`).forEach(el   => el.style.display = show ? '' : 'none');
+  if (container) {{
+    container.querySelectorAll(`[id^="_leg_${{type}}_"]`).forEach(chip => {{
+      chip.style.opacity        = show ? '1' : '0.3';
+      chip.style.textDecoration = show ? '' : 'line-through';
+    }});
+  }}
+}}
+
+document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}});
+</script>"""
+
+    _modal_html = """
+<div id="circ-modal" class="circ-modal" onclick="if(event.target===this)closeCircModal()">
+  <div class="circ-modal-box">
+    <span class="circ-modal-close" onclick="closeCircModal()">&#10005;</span>
+    <div class="circ-modal-title" id="cm-title"></div>
+    <div class="circ-modal-sub" id="cm-sub"></div>
+    <div class="ctab-bar">
+      <button class="ctab-btn active" data-tab="exon"    onclick="_switchTab('exon')"   >&#11835; Circular Structure</button>
+      <button class="ctab-btn"        data-tab="mirna"   onclick="_switchTab('mirna')"  >&#128250; miRNA Sponge</button>
+      <button class="ctab-btn"        data-tab="rbp"     onclick="_switchTab('rbp')"    >&#129520; RBP Binding</button>
+      <button class="ctab-btn"        data-tab="volcano" onclick="_switchTab('volcano')">&#128200; Volcano</button>
+      <button class="ctab-btn" id="cm-tab-heatmap" data-tab="heatmap" onclick="_switchTab('heatmap')">&#128293; Heatmap</button>
+    </div>
+    <div id="cm-exon"    class="ctab-content active"><div id="cm-circle-wrap"></div></div>
+    <div id="cm-mirna"   class="ctab-content"></div>
+    <div id="cm-rbp"     class="ctab-content"></div>
+    <div id="cm-volcano" class="ctab-content" style="min-height:340px"></div>
+    <div id="cm-heatmap" class="ctab-content" style="min-height:340px"></div>
+  </div>
+</div>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -541,12 +1282,20 @@ def build_report(
   <meta charset="UTF-8">
   <title>circRNA Analysis Report – {project_id}</title>
   {_STYLE}
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
 </head>
 <body>
   <h1>circRNA Analysis Report</h1>
   <p><strong>Project:</strong> {project_id} &nbsp;&nbsp;
      <strong>Method:</strong> <span class="method-tag">{de_method}</span> &nbsp;&nbsp;
-     <strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+     <strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}
+     {"&nbsp;&nbsp;<a href='multiqc_report.html' target='_blank' style='background:#2c6fad;color:white;padding:3px 10px;border-radius:4px;text-decoration:none;font-size:13px'>&#128202; QC Report (MultiQC)</a>" if multiqc_file and __import__('os').path.exists(multiqc_file) else ""}
+  </p>
+  {"<p style='font-size:12px;color:#888'>Interaction data pre-fetched for "
+   + str(n_ixn) + " circRNAs (" + str(n_ixn_mirna) + " with miRNA data, from CircInteractome). "
+   + "Click any circ_position to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>" if n_ixn > 0
+   else "<p style='font-size:12px;color:#aaa'>Click any circ_position to view exon diagram "
+        "(interaction data not yet fetched — run predict_interactions rule).</p>"}
 
   <h2>Summary</h2>
   <div>
@@ -564,17 +1313,21 @@ def build_report(
   {isoform_html}
 
   <h2>Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
-  {_de_split_tables(top_table, tumor_label=tumor_label, normal_label=normal_label)}
+  <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_position</strong> to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>
+  {_de_split_tables(top_table, tumor_label=tumor_label, normal_label=normal_label, interactions=interactions)}
 
   <h2>Volcano Plot</h2>
+  <p style="font-size:12px;color:#666">&#9711; Open circles mark circRNAs in the heatmap top {heatmap_top_n} up + {heatmap_top_n} down.</p>
   {volcano_html}
 
   <h2>PCA</h2>
   {pca_html}
 
-  <h2>Heatmap (top 50 DE circRNAs)</h2>
+  <h2>Heatmap (top {heatmap_top_n} up + {heatmap_top_n} down DE circRNAs)</h2>
   {heatmap_html}
 
+{_modal_html}
+{_modal_js}
 </body>
 </html>
 """
@@ -600,9 +1353,12 @@ if "snakemake" in dir():
         biomarker_file = snakemake.input.biomarkers,            # type: ignore[name-defined]
         switching_file = snakemake.input.switching,             # type: ignore[name-defined]
         groups_file    = getattr(snakemake.input, "groups", None),  # type: ignore[name-defined]
-        use_pvalue     = bool(getattr(snakemake.params, "use_pvalue", False)),  # type: ignore[name-defined]
+        de_sig_by      = str(getattr(snakemake.params, "de_sig_by", "auto")),   # type: ignore[name-defined]
         tumor_label    = str(snakemake.params.tumor_label),     # type: ignore[name-defined]
         normal_label   = str(snakemake.params.normal_label),    # type: ignore[name-defined]
         isoform_file   = getattr(snakemake.input, "isoform_groups", None),  # type: ignore[name-defined]
         circbase_file  = getattr(snakemake.input, "circbase_annot", None),  # type: ignore[name-defined]
+        heatmap_top_n      = int(getattr(snakemake.params, "heatmap_top_n", 10)),  # type: ignore[name-defined]
+        interactions_file  = getattr(snakemake.input, "interactions", None),       # type: ignore[name-defined]
+        multiqc_file       = getattr(snakemake.input, "multiqc", None),            # type: ignore[name-defined]
     )

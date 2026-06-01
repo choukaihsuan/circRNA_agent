@@ -120,6 +120,15 @@
     #min-tools-row input { width: 60px; padding: 5px 8px; border: 1px solid var(--border);
                             border-radius: 6px; font-size: 14px; text-align: center; }
 
+    /* ── Launch tabs ── */
+    .launch-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 20px; }
+    .launch-tab  { padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+                   border: none; background: none; color: var(--muted); border-bottom: 2px solid transparent;
+                   margin-bottom: -2px; transition: color 0.15s; }
+    .launch-tab.active  { color: #0f766e; border-bottom-color: #0f766e; }
+    .launch-panel { display: none; }
+    .launch-panel.active { display: block; }
+
     /* ── GEO launch ── */
     .geo-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
     .geo-input { flex: 1; min-width: 160px; max-width: 260px; padding: 10px 12px;
@@ -129,6 +138,53 @@
     .btn-geo { background: #0f766e; color: white; white-space: nowrap; }
     .btn-geo:hover { background: #0d6460; }
     .geo-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+    /* ── Manual SRR ── */
+    .srr-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+    .srr-table th { text-align: left; padding: 6px 10px; background: #f1f5f9;
+                    border-bottom: 2px solid var(--border); font-size: 12px; color: var(--muted); }
+    .srr-table td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; }
+    .srr-table input[type="text"] { width: 100%; padding: 5px 8px; border: 1px solid var(--border);
+                                     border-radius: 6px; font-size: 13px; font-family: monospace; }
+    .srr-table select { width: 100%; padding: 5px 8px; border: 1px solid var(--border);
+                        border-radius: 6px; font-size: 13px; }
+    .srr-table input:focus, .srr-table select:focus { outline: none; border-color: var(--primary); }
+    .btn-add-row { font-size: 12px; padding: 4px 10px; background: #f1f5f9; border: 1px solid var(--border);
+                   border-radius: 6px; cursor: pointer; margin-top: 4px; }
+    .btn-add-row:hover { background: #e2e8f0; }
+    .del-row { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 16px;
+               padding: 0 4px; line-height: 1; }
+    .upload-area { border: 2px dashed var(--border); border-radius: 8px; padding: 16px;
+                   text-align: center; color: var(--muted); font-size: 13px; cursor: pointer;
+                   transition: border-color 0.15s; }
+    .upload-area:hover, .upload-area.dragover { border-color: var(--primary); color: var(--primary); }
+    .upload-area input[type="file"] { display: none; }
+    .upload-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .manual-meta { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+    .manual-meta label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+    .manual-meta input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+    .manual-meta input:focus { outline: none; border-color: var(--primary); }
+    .or-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px;
+                  margin: 16px 0; }
+    .or-divider::before, .or-divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+
+    /* ── Job query ── */
+    .job-input { flex: 1; min-width: 180px; max-width: 320px; padding: 10px 12px;
+                 border: 1px solid var(--border); border-radius: 8px; font-size: 15px;
+                 font-family: monospace; letter-spacing: 0.08em; text-transform: uppercase; }
+    .job-input:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 3px #ede9fe; }
+    .btn-query { background: #7c3aed; color: white; white-space: nowrap; }
+    .btn-query:hover { background: #6d28d9; }
+    .recent-job { display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+                  background: #f8fafc; border-radius: 8px; text-decoration: none;
+                  color: var(--text); margin-bottom: 5px; border: 1px solid var(--border);
+                  transition: border-color 0.15s; }
+    .recent-job:hover { border-color: #7c3aed; background: #faf5ff; }
+    .job-code { font-size: 13px; font-weight: 700; background: #ede9fe; color: #7c3aed;
+                padding: 2px 10px; border-radius: 4px; font-family: monospace;
+                letter-spacing: 0.06em; }
+    .job-gse  { font-size: 13px; font-weight: 600; }
+    .job-time { font-size: 11px; color: var(--muted); margin-left: auto; }
   </style>
 </head>
 <body>
@@ -148,29 +204,150 @@
     {% endif %}
   </div>
 
-  <!-- ── GEO 一鍵啟動 ── -->
-  <div class="section" style="border-color:#99f6e4; background:linear-gradient(135deg,#f0fdfa,#fff);">
-    <div class="section-title">快速入口</div>
-    <h2>GEO 一鍵啟動</h2>
+  <!-- ── 查詢任務進度 ── -->
+  <div class="section" style="border-color:#ddd6fe; background:linear-gradient(135deg,#faf5ff,#fff);">
+    <div class="section-title">查詢進度</div>
+    <h2>輸入任務編號</h2>
     <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
-      輸入 GEO accession，系統自動下載 metadata、分配 tumor/normal 標籤，並執行完整 pipeline 至 HTML 報告。
+      提交分析後系統會分配任務編號（格式：<code>GSE113230-F7X2</code>），輸入編號即可查看進度。
     </p>
-    <form method="POST" action="/run_gse" style="margin:0">
+    <form method="GET" action="/status-query" style="margin:0">
       <div class="geo-row">
-        <input class="geo-input" type="text" name="gse_id" placeholder="GSE113230"
-               value="{{ config.get('project_id', '') }}" required>
-        <input type="number" name="cores" value="{{ config.get('threads', 8) }}"
-               min="1" max="96" style="width:70px;padding:10px 8px;border:1px solid var(--border);
-               border-radius:8px;font-size:14px;text-align:center;" title="CPU cores">
-        <span style="font-size:12px;color:var(--muted)">cores</span>
-        <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %}>
-          🚀 一鍵啟動
-        </button>
-      </div>
-      <div class="geo-hint">
-        ⚙️ 使用目前 Step 1–3 的參數設定執行；啟動後可至「查看執行狀態」追蹤進度。
+        <input class="job-input" type="text" name="job_id"
+               placeholder="GSE113230-F7X2" autocomplete="off" required>
+        <button type="submit" class="btn btn-query">查詢進度 →</button>
       </div>
     </form>
+
+    {% if recent_jobs %}
+    <div style="margin-top:16px">
+      <div style="font-size:12px;font-weight:600;color:var(--muted);
+                  text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">
+        最近任務
+      </div>
+      {% for job_id, job in recent_jobs %}
+      <a href="/status/{{ job_id }}" class="recent-job">
+        <span class="job-code">{{ job_id }}</span>
+        <span class="job-gse">{{ job.gse_id }}</span>
+        <span class="job-time">{{ job.start_time }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── 啟動分析 ── -->
+  <div class="section" style="border-color:#99f6e4; background:linear-gradient(135deg,#f0fdfa,#fff);">
+    <div class="section-title">快速入口</div>
+    <h2>啟動分析</h2>
+
+    <!-- Tab bar -->
+    <div class="launch-tabs">
+      <button class="launch-tab active" onclick="switchTab('gse', this)">🌐 GEO 資料集</button>
+      <button class="launch-tab" onclick="switchTab('manual', this)">✏️ 手動 SRR 清單</button>
+    </div>
+
+    <!-- Panel A: GSE -->
+    <div class="launch-panel active" id="panel-gse">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+        輸入 GEO accession，系統自動下載 metadata、分配 tumor/normal 標籤，並執行完整 pipeline。
+      </p>
+      <form method="POST" action="/run_gse" style="margin:0">
+        <div class="geo-row">
+          <input class="geo-input" type="text" name="gse_id" placeholder="GSE113230"
+                 value="{{ config.get('project_id', '') }}" required>
+          <input type="number" name="cores" value="{{ config.get('threads', 8) }}"
+                 min="1" max="96" style="width:70px;padding:10px 8px;border:1px solid var(--border);
+                 border-radius:8px;font-size:14px;text-align:center;" title="CPU cores">
+          <span style="font-size:12px;color:var(--muted)">cores</span>
+          <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %}>
+            🚀 一鍵啟動
+          </button>
+        </div>
+        <div class="geo-hint">⚙️ 使用目前 Step 1–3 的參數設定執行；啟動後可至「查看執行狀態」追蹤進度。</div>
+      </form>
+    </div>
+
+    <!-- Panel B: Manual SRR -->
+    <div class="launch-panel" id="panel-manual">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+        手動輸入 SRR ID 並指定 condition，或上傳現有的 <code>library_info.csv</code>。
+        適合從大型資料集中選取特定樣本進行分析。
+      </p>
+
+      <form method="POST" action="/run_manual" enctype="multipart/form-data" style="margin:0">
+
+        <!-- Meta: project ID, condition labels, cores -->
+        <div class="manual-meta">
+          <label>Project ID
+            <input type="text" name="project_id" placeholder="CUSTOM" value="{{ config.get('project_id', 'CUSTOM') }}" style="width:140px;">
+          </label>
+          <label>Tumor label
+            <input type="text" name="tumor_label" value="{{ config.get('de', {}).get('tumor_label', 'tumor') }}" style="width:100px;">
+          </label>
+          <label>Normal label
+            <input type="text" name="normal_label" value="{{ config.get('de', {}).get('normal_label', 'normal') }}" style="width:100px;">
+          </label>
+          <label>CPU cores
+            <input type="number" name="cores" value="{{ config.get('threads', 8) }}" min="1" max="96" style="width:70px;text-align:center;">
+          </label>
+        </div>
+        <!-- Notification email -->
+        <div style="margin-bottom:14px;">
+          <label style="font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-weight:600;min-width:100px;">通知 Email</span>
+            <input type="email" name="notify_email"
+                   placeholder="（選填）分析完成後寄送通知"
+                   value="{{ config.get('notify', {}).get('email_to', '') }}"
+                   style="flex:1;min-width:220px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+            <span style="font-size:12px;color:var(--muted);">需 server 已設定 Gmail App Password</span>
+          </label>
+        </div>
+
+        <!-- Option 1: manual table -->
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">方式一：逐筆輸入 SRR</div>
+        <table class="srr-table" id="srr-table">
+          <thead>
+            <tr><th>#</th><th>SRR ID</th><th>Condition</th><th></th></tr>
+          </thead>
+          <tbody id="srr-rows">
+            <tr>
+              <td style="color:var(--muted);font-size:12px">1</td>
+              <td><input type="text" name="srr_id[]" placeholder="SRR7012366" autocomplete="off"></td>
+              <td><select name="condition[]">
+                <option value="tumor">tumor</option>
+                <option value="normal">normal</option>
+              </select></td>
+              <td><button type="button" class="del-row" onclick="delRow(this)">✕</button></td>
+            </tr>
+          </tbody>
+        </table>
+        <button type="button" class="btn-add-row" onclick="addRow()">+ 新增樣本</button>
+
+        <div class="or-divider">或</div>
+
+        <!-- Option 2: CSV upload -->
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">
+          方式二：上傳 CSV（欄位：srr_id, condition）
+        </div>
+        <div class="upload-area" onclick="document.getElementById('csv-upload').click()"
+             ondragover="this.classList.add('dragover');event.preventDefault()"
+             ondragleave="this.classList.remove('dragover')"
+             ondrop="handleDrop(event,this)">
+          <div id="upload-label">📂 點擊或拖拽上傳 CSV 檔案</div>
+          <input type="file" id="csv-upload" name="csv_file" accept=".csv,.tsv,.txt"
+                 onchange="showFileName(this)">
+        </div>
+        <div class="upload-label">CSV 格式範例：<code>srr_id,condition</code>（第一行為 header）</div>
+
+        <div style="margin-top:16px">
+          <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %}>
+            🚀 啟動分析
+          </button>
+        </div>
+
+      </form>
+    </div><!-- /panel-manual -->
   </div>
 
   <form method="POST" action="/update">
@@ -397,7 +574,6 @@
     // Prevent double-toggle: label click changes checkbox, then our handler runs
     document.querySelectorAll('.tool-card').forEach(card => {
       card.addEventListener('click', e => {
-        // If the click came from the checkbox itself, don't re-toggle
         if (e.target.type === 'checkbox') {
           const id = e.target.id.replace('chk-', '');
           document.getElementById('card-' + id)
@@ -407,6 +583,55 @@
       });
     });
   });
+
+  // ── Launch tabs ──────────────────────────────────────────────────────────────
+  function switchTab(name, btn) {
+    document.querySelectorAll('.launch-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.launch-tab').forEach(b => b.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    btn.classList.add('active');
+  }
+
+  // ── Manual SRR table ─────────────────────────────────────────────────────────
+  let rowCount = 1;
+  function addRow() {
+    rowCount++;
+    const tbody = document.getElementById('srr-rows');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="color:var(--muted);font-size:12px">${rowCount}</td>
+      <td><input type="text" name="srr_id[]" placeholder="SRR..." autocomplete="off"></td>
+      <td><select name="condition[]">
+        <option value="tumor">tumor</option>
+        <option value="normal">normal</option>
+      </select></td>
+      <td><button type="button" class="del-row" onclick="delRow(this)">✕</button></td>`;
+    tbody.appendChild(tr);
+  }
+  function delRow(btn) {
+    const rows = document.querySelectorAll('#srr-rows tr');
+    if (rows.length > 1) btn.closest('tr').remove();
+    // re-number
+    document.querySelectorAll('#srr-rows tr').forEach((tr, i) =>
+      tr.querySelector('td').textContent = i + 1);
+  }
+
+  // ── CSV upload ───────────────────────────────────────────────────────────────
+  function showFileName(input) {
+    const lbl = document.getElementById('upload-label');
+    if (input.files.length)
+      lbl.textContent = '✅ ' + input.files[0].name;
+  }
+  function handleDrop(e, area) {
+    e.preventDefault();
+    area.classList.remove('dragover');
+    const dt = e.dataTransfer;
+    if (dt.files.length) {
+      const inp = document.getElementById('csv-upload');
+      inp.files = dt.files;
+      showFileName(inp);
+    }
+  }
 </script>
 </body>
 </html>

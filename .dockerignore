@@ -1,0 +1,28 @@
+# Raw / processed sequencing data
+*.fastq
+*.fastq.gz
+*.bam
+*.bai
+*.fa
+*.fasta
+*.gtf
+
+# Data and result directories
+data/
+results/
+logs/
+metadata/
+
+# Git and Python cache
+.git/
+__pycache__/
+*.pyc
+*.pyo
+
+# Snakemake working files
+.snakemake/
+jobs/
+
+# SRA cache
+sra_cache/
+sra_tmp/

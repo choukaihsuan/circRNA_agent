@@ -1,0 +1,13 @@
+name: hg19
+tools:
+  bwa: bwa
+  hisat2: hisat2
+  samtools: samtools
+  stringtie: stringtie
+  java: /usr/lib/jvm/default-java/bin/java
+  perl: perl
+reference:
+  fasta: /reference/hg19/hg19.fa
+  gtf: /reference/hg19/hg19.gtf
+  bwa_index: /reference/hg19/bwa_index/hg19
+  hisat_index: /reference/hg19/hisat2_index/hg19

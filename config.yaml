@@ -1,4 +1,5 @@
 ciriquant_config: config/ciriquant.yaml
+use_container: false      # set true when running with --use-singularity
 consensus:
   min_bsj_reads: 2
   min_tools: 2
@@ -11,9 +12,13 @@ de:
   method: edgeR_ciriquant
   fdr_cutoff: 0.05
   log2fc_cutoff: 1.0
-  de_sig_by: pvalue         # pvalue = nominal p < fdr_cutoff; padj = BH-adjusted FDR
+  de_sig_by: auto            # auto = q<0.2 (Storey) then p<0.05; pvalue/padj = fixed
   isoform_fdr_cutoff: 0.1   # within-gene FDR for isoform switching (less strict than global)
   delta_iui_cutoff: 0.1     # minimum |ΔIUI| to call switching
+  heatmap_top_n: 10         # top N up + N down circRNAs shown in heatmap
+  interaction_top_n: 50    # top N circRNAs to query ENCORI for interactions
+  encori_clip_exp_num: 1   # min CLIP experiments (1=all, 2=moderate, 3=high confidence)
+  encori_program_num: 2    # min prediction programs agreeing
   normal_label: normal
   tumor_label: tumor
 download:

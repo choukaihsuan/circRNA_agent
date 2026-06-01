@@ -33,13 +33,26 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-# ── 設定（從環境變數讀取）─────────────────────────────────────────────────────
+# ── 設定（環境變數 > config.yaml fallback）────────────────────────────────────
 SMTP_HOST     = os.getenv("NOTIFY_SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.getenv("NOTIFY_SMTP_PORT", "587"))
 SMTP_USER     = os.getenv("NOTIFY_EMAIL_FROM", "")
 SMTP_PASS     = os.getenv("NOTIFY_EMAIL_PASS", "")
-EMAIL_TO      = os.getenv("NOTIFY_EMAIL_TO", "")
 SLACK_WEBHOOK = os.getenv("NOTIFY_SLACK_WEBHOOK", "")
+
+def _email_to_from_config() -> str:
+    """Read notify.email_to from config.yaml as fallback."""
+    try:
+        import yaml
+        cfg_path = Path(__file__).parent.parent / "config.yaml"
+        if cfg_path.exists():
+            cfg = yaml.safe_load(cfg_path.read_text())
+            return cfg.get("notify", {}).get("email_to", "")
+    except Exception:
+        pass
+    return ""
+
+EMAIL_TO = os.getenv("NOTIFY_EMAIL_TO", "") or _email_to_from_config()
 
 _ATTACH_LIMIT_MB = 20  # Gmail attachment size limit
 

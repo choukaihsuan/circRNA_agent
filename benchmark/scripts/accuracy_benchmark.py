@@ -1,13 +1,17 @@
 """
 accuracy_benchmark.py – 偵測準確率比較（對照 RNase R ground truth）
 
-Three detection strategies evaluated:
+Five detection strategies evaluated:
   1. Our adaptive consensus filter
      CIRIquant + DCC, slop=10 bp, BSJ/FSJ pseudo-circ QC
-  2. nf-core/circrna simulation
+  2. CirComPara2 simulation (Gaffo et al. 2022)
+     CIRIquant + DCC, slop=10 bp, NO pseudo-circ QC
+  3. nf-core/circrna simulation (Digby-Bell et al. 2023)
      CIRIquant + DCC, slop=0 (exact coords), no BSJ/FSJ QC
-  3. circRNA-sponging simulation
+  4. circRNA-sponging simulation (Hansen et al. 2023)
      DCC-only, min_bsj=2
+  5. CLEAR simulation (custom 2020)
+     CIRIquant-only, slop=0 (exact coords), no consensus step
 
 Metrics: Precision, Recall, F1, AUC-PR
 Stratification: low BSJ (1–4), mid (5–19), high (≥20 RPM in total RNA)
@@ -230,17 +234,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate circRNA detection accuracy against RNase R ground truth"
     )
-    parser.add_argument("--ground-truth",      required=True)
-    parser.add_argument("--our-bed",           required=True,
+    parser.add_argument("--ground-truth",          required=True)
+    parser.add_argument("--our-bed",               required=True,
                         help="Our consensus filter BED (consensus_filter.py output)")
-    parser.add_argument("--our-summary",       required=True,
+    parser.add_argument("--our-summary",           required=True,
                         help="Consensus summary TSV (contains confidence_score)")
-    parser.add_argument("--nfcore-bed",        required=True,
+    parser.add_argument("--circompara2-bed",        required=True,
+                        help="CirComPara2 sim BED (slop=10, no BSJ/FSJ QC)")
+    parser.add_argument("--circompara2-summary",    required=True,
+                        help="CirComPara2 sim summary TSV")
+    parser.add_argument("--nfcore-bed",            required=True,
                         help="nf-core sim BED (slop=0, no BSJ/FSJ QC)")
-    parser.add_argument("--dcc-coords",        required=True,
+    parser.add_argument("--dcc-coords",            required=True,
                         help="DCC CircCoordinates (circRNA-sponging sim)")
-    parser.add_argument("--output-summary",    required=True)
-    parser.add_argument("--output-stratified", required=True)
+    parser.add_argument("--clear-bed",             required=True,
+                        help="CLEAR sim BED (CIRIquant-only, slop=0)")
+    parser.add_argument("--output-summary",        required=True)
+    parser.add_argument("--output-stratified",     required=True)
     parser.add_argument("--slop",    type=int, default=10)
     parser.add_argument("--min-bsj", type=int, default=2, dest="min_bsj")
     args = parser.parse_args()
@@ -252,20 +262,31 @@ def main() -> None:
           f"(ambiguous excluded)", file=sys.stderr)
 
     # ── Load predictions ──────────────────────────────────────────────────────
-    our_ids       = _load_bed(args.our_bed)
-    our_scores    = _load_summary_scores(args.our_summary)
-    nfcore_ids    = _load_bed(args.nfcore_bed)
+    our_ids           = _load_bed(args.our_bed)
+    our_scores        = _load_summary_scores(args.our_summary)
+    circompara2_ids   = _load_bed(args.circompara2_bed)
+    circompara2_scores= _load_summary_scores(args.circompara2_summary)
+    nfcore_ids        = _load_bed(args.nfcore_bed)
     sponge_ids, sponge_scores = _load_dcc(args.dcc_coords, args.min_bsj)
+    clear_ids         = _load_bed(args.clear_bed)
 
-    print(f"[accuracy] Detected: ours={len(our_ids)}, "
-          f"nfcore_sim={len(nfcore_ids)}, sponging_sim={len(sponge_ids)}",
-          file=sys.stderr)
+    print(
+        f"[accuracy] Detected: ours={len(our_ids)}, "
+        f"circompara2_sim={len(circompara2_ids)}, "
+        f"nfcore_sim={len(nfcore_ids)}, "
+        f"sponging_sim={len(sponge_ids)}, "
+        f"clear_sim={len(clear_ids)}",
+        file=sys.stderr,
+    )
 
     # ── Evaluate each method ──────────────────────────────────────────────────
+    # slop=0 for exact-coordinate methods (nfcore, clear)
     methods = [
-        ("Our_adaptive",   our_ids,    args.slop, our_scores),
-        ("nfcore_fixed",   nfcore_ids, 0,         None),          # exact coords
-        ("sponging_DCC",   sponge_ids, args.slop, sponge_scores),
+        ("Our_adaptive",    our_ids,         args.slop, our_scores),
+        ("CirComPara2_sim", circompara2_ids,  args.slop, circompara2_scores),
+        ("nfcore_fixed",    nfcore_ids,       0,         None),
+        ("sponging_DCC",    sponge_ids,       args.slop, sponge_scores),
+        ("CLEAR_sim",       clear_ids,        0,         None),
     ]
 
     summary_rows = []
@@ -277,7 +298,7 @@ def main() -> None:
         s = stratified_f1(ids, truth, slop)
         strat_rows.append({"Method": name, **s})
         print(
-            f"[accuracy] {name:20s}  "
+            f"[accuracy] {name:22s}  "
             f"Prec={m['Precision']:.3f}  Rec={m['Recall']:.3f}  "
             f"F1={m['F1']:.3f}  AUC-PR={m['AUC_PR']:.3f}",
             file=sys.stderr,

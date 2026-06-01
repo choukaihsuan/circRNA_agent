@@ -12,6 +12,47 @@ import time
 from pathlib import Path
 
 
+def _find_tool(name):
+    """Find a binary, preferring known-working envs over system PATH.
+
+    Priority: sra_env > circrna > base conda > which() > /usr/local
+    sra_env has fasterq-dump that works on CentOS 7 glibc 2.17.
+    circrna has aria2c for fast multi-connection S3 downloads.
+    """
+    import shutil as sh, os, glob
+    home = os.path.expanduser("~")
+    bases = [
+        f"{home}/miniconda3", f"{home}/miniforge3",
+        f"{home}/miniconda",  f"{home}/anaconda3",
+    ]
+    # Check high-priority named envs first
+    for prio_env in ("sra_env", "circrna"):
+        for base in bases:
+            c = f"{base}/envs/{prio_env}/bin/{name}"
+            if os.path.isfile(c) and os.access(c, os.X_OK):
+                return c
+    # Fall back to which() (uses current PATH)
+    found = sh.which(name)
+    if found:
+        return found
+    # Last resort: base conda bins + all envs
+    candidates = []
+    for base in bases:
+        candidates.append(f"{base}/bin/{name}")
+        for d in glob.glob(f"{base}/envs/*/bin/{name}"):
+            candidates.append(d)
+    candidates.append(f"/usr/local/bin/{name}")
+    for c in candidates:
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return name  # best-effort fallback
+
+
+def _find_sra_tool(name):
+    """Alias for SRA-toolkit tools."""
+    return _find_tool(name)
+
+
 def _find_ascp():
     """Return (ascp_path, key_path) or (None, None) if Aspera is not installed."""
     import shutil as sh
@@ -66,34 +107,44 @@ rule download_fastq:
         with open(log_path, "w") as logf:
             downloaded = False
 
-            # ── 1. srapath + aria2c (AWS S3 direct) ─────────────
+            # ── 1. srapath + aria2c/curl (AWS S3 direct) ─────────
             import shutil as sh
-            aria2c = sh.which("aria2c")
-            srapath = sh.which("srapath")
-            if aria2c and srapath and not sra_file.exists():
-                logf.write(f"[aria2c] Getting S3 URL for {srr}\n")
+            aria2c  = _find_tool("aria2c")   # searches miniconda3 + miniforge3 envs
+            srapath = _find_sra_tool("srapath")
+            curl    = _find_tool("curl")
+            if srapath and not sra_file.exists():
+                logf.write(f"[s3] Getting S3 URL for {srr}\n")
                 logf.flush()
                 result = subprocess.run(
-                    [srapath, srr], capture_output=True, text=True
+                    [srapath, "--location", "s3", srr],
+                    capture_output=True, text=True
                 )
                 s3_url = result.stdout.strip()
                 if s3_url.startswith("http"):
-                    logf.write(f"[aria2c] Downloading from {s3_url}\n")
+                    logf.write(f"[s3] URL: {s3_url}\n")
                     logf.flush()
-                    rc = run_cmd([
-                        aria2c,
-                        "-x", "16", "-s", "16", "-k", "10M",
-                        "--file-allocation=none",
-                        "--retry-wait=5", "--max-tries=3",
-                        "-d", str(sra_dir),
-                        "-o", f"{srr}.sra",
-                        s3_url,
-                    ], logf)
+                    if aria2c:
+                        rc = run_cmd([
+                            aria2c,
+                            "-x", "16", "-s", "16", "-k", "10M",
+                            "--file-allocation=none",
+                            "--retry-wait=5", "--max-tries=3",
+                            "-d", str(sra_dir),
+                            "-o", f"{srr}.sra",
+                            s3_url,
+                        ], logf)
+                    elif curl:
+                        rc = run_cmd([
+                            curl, "-L", "--retry", "3", "--retry-delay", "5",
+                            "-o", str(sra_file), s3_url,
+                        ], logf)
+                    else:
+                        rc = 1
                     if rc == 0 and sra_file.exists():
                         downloaded = True
-                        logf.write(f"[aria2c] Download complete\n")
+                        logf.write(f"[s3] Download complete\n")
                     else:
-                        logf.write(f"[WARN] aria2c failed (rc={rc}), trying ascp\n")
+                        logf.write(f"[WARN] S3 download failed (rc={rc}), trying ascp\n")
                 else:
                     logf.write(f"[WARN] srapath returned no S3 URL: {s3_url}\n")
 
@@ -124,26 +175,27 @@ rule download_fastq:
                 for tmp in sra_dir.glob("*.tmp"):
                     tmp.unlink(missing_ok=True)
 
+                prefetch_bin = _find_sra_tool("prefetch")
                 for attempt in range(1, int(params.retry) + 1):
-                    logf.write(f"[prefetch] Attempt {attempt} for {srr}\n")
+                    logf.write(f"[prefetch] Attempt {attempt} for {srr} ({prefetch_bin})\n")
                     logf.flush()
-                    rc = run_cmd(["prefetch", srr, "-O", str(sra_cache)], logf)
+                    rc = run_cmd([prefetch_bin, srr, "-O", str(sra_cache)], logf)
                     if rc == 0:
                         downloaded = True
                         break
-                    if attempt == int(params.retry):
-                        raise RuntimeError(
-                            f"All download methods failed after {params.retry} attempts. "
-                            f"See {log_path}"
-                        )
-                    time.sleep(30)
+                    if attempt < int(params.retry):
+                        time.sleep(30)
+                if not downloaded:
+                    logf.write(f"[WARN] prefetch failed all attempts; "
+                               f"will try fasterq-dump direct download\n")
 
-            # ── fasterq-dump (output to Linux fs to avoid NTFS space check) ──
+            # ── fasterq-dump: use SRA file if available, else direct SRR download ──
             fastq_stage = tmp_dir / "fastq_stage"
             fastq_stage.mkdir(parents=True, exist_ok=True)
             fasterq_input = str(sra_file) if sra_file.exists() else srr
+            fasterq_bin = _find_tool("fasterq-dump")
             rc = run_cmd(
-                ["fasterq-dump", fasterq_input,
+                [fasterq_bin, fasterq_input,
                  "-O", str(fastq_stage),
                  "-t", str(tmp_dir),
                  "--split-files",

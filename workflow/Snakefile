@@ -54,6 +54,17 @@ RAW_DIR     = config["raw_dir"]
 TRIMMED_DIR = config["trimmed_dir"]
 RESULTS_DIR = config["results_dir"]
 
+# ─── Container / CIRIquant config selection ──────────────
+_USE_CONTAINER = config.get("use_container", False)
+CIRIQUANT_CONFIG = (
+    "config/ciriquant_container.yaml"
+    if _USE_CONTAINER
+    else config.get("ciriquant_config", "config/ciriquant.yaml")
+)
+
+# Global Singularity image (only active when --use-singularity is passed)
+singularity: "docker://choukaihsuan/circrna-pipeline:1.0.0"
+
 # ─── Tool selection ───────────────────────────────────────
 _TOOLS        = set(config.get("consensus", {}).get("tools", ["ciriquant", "dcc"]))
 USE_CIRIQUANT = "ciriquant" in _TOOLS
@@ -111,9 +122,21 @@ def _de_stats() -> str:
     try:
         import pandas as _pd
         df  = _pd.read_csv(de_path, sep="\t")
-        fdr = config.get("de", {}).get("fdr_cutoff", 0.05)
-        sig = df[df["FDR"] < fdr]
-        fc_col = next((c for c in df.columns if "logfc" in c.lower() or c == "log2FC"), None)
+        cutoff     = config.get("de", {}).get("fdr_cutoff", 0.05)
+        use_pvalue = config.get("de", {}).get("de_sig_by", "padj") in ("pvalue", "auto")
+        # pick significance column: pvalue > padj > FDR (whichever exists)
+        for candidate in (["pvalue", "padj", "FDR"] if use_pvalue else ["padj", "FDR", "pvalue"]):
+            if candidate in df.columns:
+                sig_col = candidate
+                break
+        else:
+            return "{}"
+        lfc_cutoff = config.get("de", {}).get("log2fc_cutoff", 1.0)
+        fc_col     = next((c for c in df.columns if c == "log2FC" or "logfc" in c.lower()), None)
+        mask = df[sig_col] < cutoff
+        if fc_col:
+            mask &= df[fc_col].abs() >= lfc_cutoff
+        sig    = df[mask]
         n_up   = int((sig[fc_col] > 0).sum()) if fc_col else "?"
         n_down = int((sig[fc_col] < 0).sum()) if fc_col else "?"
         return json.dumps({
@@ -122,7 +145,9 @@ def _de_stats() -> str:
             "n_up":       n_up,
             "n_down":     n_down,
         })
-    except Exception:
+    except Exception as _e:
+        import sys as _sys
+        print(f"[notify] _de_stats error: {_e}", file=_sys.stderr)
         return "{}"
 
 

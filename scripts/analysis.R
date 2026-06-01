@@ -23,7 +23,12 @@ fdr_cutoff   <- as.numeric(snakemake@params[["fdr"]])
 lfc_cutoff   <- as.numeric(snakemake@params[["lfc"]])
 tumor_label  <- snakemake@params[["tumor_label"]]
 normal_label <- snakemake@params[["normal_label"]]
-use_pvalue   <- isTRUE(tryCatch(snakemake@params[["use_pvalue"]], error = function(e) FALSE))
+de_sig_by     <- tryCatch(snakemake@params[["de_sig_by"]], error = function(e) "auto")
+# backward compat: if old use_pvalue boolean was passed, map to string
+if (!is.character(de_sig_by) || !de_sig_by %in% c("auto", "pvalue", "padj", "qvalue"))
+  de_sig_by <- if (isTRUE(de_sig_by)) "pvalue" else "auto"
+heatmap_top_n <- as.integer(tryCatch(snakemake@params[["heatmap_top_n"]], error = function(e) 10L))
+circbase_annot_file <- tryCatch(snakemake@input[["circbase_annot"]], error = function(e) NULL)
 
 # Backward-compatible: older DAG may not pass de_method or fsj_matrix
 de_method <- tryCatch(snakemake@params[["de_method"]], error = function(e) NULL)
@@ -83,12 +88,11 @@ if (de_method == "edgeR_ciriquant") {
   bsj <- counts[common_circs, ]
   fsj <- fsj[common_circs, ]
 
-  # Min-count filter: require >= 1 read in at least min_samples samples
-  min_samp <- min(table(condition))
-  keep <- rowSums(bsj >= 1) >= min_samp
+  # Independent filtering via filterByExpr: reduces m before q-value computation
+  keep <- filterByExpr(bsj, group = condition, min.count = 5)
   bsj  <- bsj[keep, ]
   fsj  <- fsj[keep, ]
-  message(sprintf("[edgeR_v2] %d circRNAs after min-count filter", sum(keep)))
+  message(sprintf("[edgeR_v2] %d circRNAs after independent filtering (filterByExpr)", sum(keep)))
 
   # ── Per-locus FSJ offset ──────────────────────────────────────────────────
   # Each circRNA uses its own FSJ counts as offset, so the GLM tests the
@@ -129,32 +133,6 @@ if (de_method == "edgeR_ciriquant") {
     by = "circ_id", all.x = TRUE, suffixes = c("_bsj", "_fsj")
   )
 
-  # ── Type I / II / III classification ─────────────────────────────────────
-  # Type_I   : BSJ/FSJ ratio changes; FSJ stable (circRNA-specific switching)
-  # Type_II  : BSJ/FSJ ratio changes; FSJ also DE in same direction (gene-level)
-  # Type_III : FSJ DE but BSJ/FSJ ratio not significant (host gene only)
-  # NS       : neither significant
-  bsj_sig_col <- if (use_pvalue) "PValue_bsj" else "FDR_bsj"
-  fsj_sig_col <- if (use_pvalue) "PValue_fsj" else "FDR_fsj"
-  res$sig_bsj <- res[[bsj_sig_col]] < fdr_cutoff & abs(res$logFC_bsj) >= lfc_cutoff
-  res$sig_fsj <- !is.na(res[[fsj_sig_col]]) & res[[fsj_sig_col]] < fdr_cutoff
-  # concordant requires same direction AND FSJ |logFC| >= 0.5 to avoid
-  # noise when both tests are marginally significant
-  # concordant: FSJ changes in the same direction as BSJ.
-  # |logFC_fsj| threshold removed — FSJ significance (fsj_sig_col) already
-  # filters noise; requiring an additional FC floor was too conservative.
-  res$concordant <- with(res,
-    !is.na(logFC_fsj) &
-    sign(logFC_bsj) == sign(logFC_fsj)
-  )
-  res$Type <- dplyr::case_when(
-    res$sig_bsj & !res$sig_fsj                   ~ "Type_I",
-    res$sig_bsj & res$sig_fsj & res$concordant   ~ "Type_II",
-    res$sig_bsj & res$sig_fsj & !res$concordant  ~ "Type_I",
-    !res$sig_bsj & res$sig_fsj                   ~ "Type_III",
-    TRUE                                          ~ "NS"
-  )
-
   # ── Circular Splicing Index (CSI = BSJ / (BSJ + FSJ + 1)) ────────────────
   tumor_idx  <- which(condition == tumor_label)
   normal_idx <- which(condition == normal_label)
@@ -169,11 +147,11 @@ if (de_method == "edgeR_ciriquant") {
   csi_df$delta_csi <- csi_df$csi_tumor - csi_df$csi_normal
   res <- merge(res, csi_df, by = "circ_id", all.x = TRUE)
 
-  # ── Assemble final res_df ─────────────────────────────────────────────────
+  # ── Assemble final res_df (Type column added after cascade below) ─────────
   res_df <- res %>%
     rename(log2FC = logFC_bsj, pvalue = PValue_bsj, padj = FDR_bsj,
            pvalue_fsj = PValue_fsj) %>%
-    select(circ_id, log2FC, pvalue, padj, Type,
+    select(circ_id, log2FC, pvalue, padj,
            logFC_fsj, pvalue_fsj, FDR_fsj, delta_csi, csi_tumor, csi_normal, logCPM) %>%
     arrange(padj)
 
@@ -228,32 +206,103 @@ if (de_method == "edgeR_ciriquant") {
              "— must be edgeR_ciriquant, deseq2, or limma"))
 }
 
+# ── Cascade significance: filterByExpr → Storey q-value → nominal p ─────────
+# Priority: q < 0.2 (if qvalue available + finds hits) → p < 0.05 (fallback)
+if (de_sig_by == "auto") {
+  q_result <- tryCatch({
+    suppressPackageStartupMessages(library(qvalue))
+    pv_vec <- setNames(res_df$pvalue, res_df$circ_id)
+    pv_use <- pv_vec[!is.na(pv_vec) & pv_vec > 0 & pv_vec <= 1]
+    q_out  <- qvalue(pv_use)
+    list(qvalues = setNames(q_out$qvalues, names(pv_use)), pi0 = q_out$pi0)
+  }, error = function(e) {
+    message("[cascade] qvalue failed: ", conditionMessage(e))
+    NULL
+  })
+  if (!is.null(q_result)) {
+    res_df$qvalue <- q_result$qvalues[res_df$circ_id]
+    n_sig <- sum(!is.na(res_df$qvalue) & res_df$qvalue < 0.2)
+    message(sprintf("[cascade] q < 0.2: %d significant (pi0=%.3f)", n_sig, q_result$pi0))
+    if (n_sig > 0) {
+      eff_col <- "qvalue"; eff_thr <- 0.2
+    } else {
+      message("[cascade] q < 0.2 found nothing — fallback to nominal p < 0.05")
+      eff_col <- "pvalue"; eff_thr <- 0.05
+    }
+  } else {
+    eff_col <- "pvalue"; eff_thr <- 0.05
+  }
+} else if (de_sig_by == "pvalue") {
+  eff_col <- "pvalue"; eff_thr <- fdr_cutoff
+} else {
+  eff_col <- "padj";   eff_thr <- fdr_cutoff
+}
+message(sprintf("[cascade] significance column: %s < %.2g", eff_col, eff_thr))
+
+# ── Type I / II / III classification (edgeR_ciriquant only) ─────────────────
+if (de_method == "edgeR_ciriquant" && "logFC_fsj" %in% colnames(res_df)) {
+  fsj_sig_col <- if (eff_col == "padj") "FDR_fsj" else "pvalue_fsj"
+  sig_bsj <- !is.na(res_df[[eff_col]]) & res_df[[eff_col]] < eff_thr & abs(res_df$log2FC) >= lfc_cutoff
+  sig_fsj <- !is.na(res_df[[fsj_sig_col]]) & res_df[[fsj_sig_col]] < fdr_cutoff
+  concordant <- with(res_df,
+    !is.na(logFC_fsj) &
+    sign(log2FC) == sign(logFC_fsj) &
+    abs(logFC_fsj) >= 0.5
+  )
+  res_df$Type <- dplyr::case_when(
+    sig_bsj & !sig_fsj               ~ "Type_I",
+    sig_bsj & sig_fsj & concordant   ~ "Type_II",
+    sig_bsj & sig_fsj & !concordant  ~ "Type_I",
+    !sig_bsj & sig_fsj               ~ "Type_III",
+    TRUE                             ~ "NS"
+  )
+} else {
+  res_df$Type <- NA_character_
+}
+
 write.table(res_df, de_out, sep = "\t", quote = FALSE, row.names = FALSE)
 message("[OK] DE results (", nrow(res_df), " circRNAs) → ", de_out)
 
 
 # ── Shared plot helpers ───────────────────────────────────────────────────────
-sig_col <- c(Up = "#d62728", Down = "#1f77b4", NS = "grey70")
+sig_col <- c(Up = "#d62728", Down = "#2CA02C", NS = "grey70")
 
-plot_sig_col <- if (use_pvalue) "pvalue" else "padj"
-plot_y_label <- if (use_pvalue) expression(-log[10]~"(p-value, nominal)") else expression(-log[10]~"(adjusted p-value)")
+plot_sig_col <- eff_col
+plot_y_label <- switch(eff_col,
+  "pvalue"  = expression(-log[10]~"(p-value, nominal)"),
+  "qvalue"  = expression(-log[10]~"(Storey q-value)"),
+  expression(-log[10]~"(adjusted p-value)")
+)
 
 plot_df <- res_df %>%
   filter(!is.na(.data[[plot_sig_col]])) %>%
   mutate(sig = case_when(
-    .data[[plot_sig_col]] < fdr_cutoff & log2FC >  lfc_cutoff ~ "Up",
-    .data[[plot_sig_col]] < fdr_cutoff & log2FC < -lfc_cutoff ~ "Down",
+    .data[[plot_sig_col]] < eff_thr & log2FC >  lfc_cutoff ~ "Up",
+    .data[[plot_sig_col]] < eff_thr & log2FC < -lfc_cutoff ~ "Down",
     TRUE ~ "NS"
   ))
 
+# ── Heatmap top IDs (computed here for volcano annotation) ───────────────────
+heat_up_ids <- res_df %>%
+  filter(!is.na(.data[[plot_sig_col]]), log2FC > 0) %>%
+  slice_min(order_by = .data[[plot_sig_col]], n = heatmap_top_n) %>%
+  pull(circ_id)
+heat_dn_ids <- res_df %>%
+  filter(!is.na(.data[[plot_sig_col]]), log2FC < 0) %>%
+  slice_min(order_by = .data[[plot_sig_col]], n = heatmap_top_n) %>%
+  pull(circ_id)
+heat_ids <- c(heat_up_ids, heat_dn_ids)
+
+heat_plot_df <- plot_df %>% filter(circ_id %in% heat_ids)
+
 # ── Volcano ───────────────────────────────────────────────────────────────────
-pdf(volcano_out, width = 7, height = 6)
-ggplot(plot_df, aes(x = log2FC, y = -log10(.data[[plot_sig_col]]), colour = sig)) +
+p_volc <- ggplot(plot_df, aes(x = log2FC, y = -log10(.data[[plot_sig_col]]),
+                               colour = sig)) +
   geom_point(alpha = 0.6, size = 1.5) +
   scale_colour_manual(values = sig_col) +
   geom_vline(xintercept = c(-lfc_cutoff, lfc_cutoff), linetype = "dashed",
              colour = "grey40") +
-  geom_hline(yintercept = -log10(fdr_cutoff), linetype = "dashed",
+  geom_hline(yintercept = -log10(eff_thr), linetype = "dashed",
              colour = "grey40") +
   labs(
     title  = paste0("Volcano (", tumor_label, " vs ", normal_label,
@@ -264,6 +313,22 @@ ggplot(plot_df, aes(x = log2FC, y = -log10(.data[[plot_sig_col]]), colour = sig)
   ) +
   theme_bw(base_size = 13) +
   theme(legend.position = "top")
+
+# Overlay heatmap top circRNAs as open circles
+if (nrow(heat_plot_df) > 0) {
+  p_volc <- p_volc +
+    geom_point(data = heat_plot_df,
+               aes(x = log2FC, y = -log10(.data[[plot_sig_col]])),
+               shape = 21, size = 4, fill = NA,
+               colour = "black", stroke = 1.2, inherit.aes = FALSE) +
+    ggrepel::geom_text_repel(
+               data = heat_plot_df,
+               aes(x = log2FC, y = -log10(.data[[plot_sig_col]]), label = circ_id),
+               size = 2.5, colour = "black", max.overlaps = 20, inherit.aes = FALSE)
+}
+
+pdf(volcano_out, width = 7, height = 6)
+print(p_volc)
 dev.off()
 message("[OK] Volcano → ", volcano_out)
 
@@ -280,7 +345,7 @@ pdf(pca_out, width = 6, height = 5)
 ggplot(pca_data, aes(PC1, PC2, colour = condition, label = name)) +
   geom_point(size = 3) +
   ggrepel::geom_text_repel(size = 3, show.legend = FALSE) +
-  scale_colour_brewer(palette = "Set1") +
+  scale_colour_manual(values = setNames(c("#d62728", "#2CA02C"), c(tumor_label, normal_label))) +
   labs(
     title  = paste0("PCA  [", de_method, "]"),
     x      = paste0("PC1: ", var_pct[1], "%"),
@@ -291,30 +356,57 @@ ggplot(pca_data, aes(PC1, PC2, colour = condition, label = name)) +
 dev.off()
 message("[OK] PCA → ", pca_out)
 
-# ── Heatmap (top 50 by padj) ─────────────────────────────────────────────────
-top_ids <- res_df %>%
-  filter(!is.na(padj)) %>%
-  slice_min(padj, n = 50) %>%
-  pull(circ_id)
+# ── Heatmap (reuse pre-computed top IDs from above) ──────────────────────────
+top_up  <- heat_up_ids
+top_dn  <- heat_dn_ids
+top_ids <- heat_ids
+
+# Build row labels: "circ_id (circbase_id)" for known circRNAs
+cb_label_map <- setNames(character(0), character(0))
+if (!is.null(circbase_annot_file) && file.exists(circbase_annot_file)) {
+  cb_df <- tryCatch(
+    read.table(circbase_annot_file, sep = "\t", header = TRUE, stringsAsFactors = FALSE),
+    error = function(e) NULL
+  )
+  if (!is.null(cb_df) && all(c("circ_id", "circbase_id", "in_circbase") %in% colnames(cb_df))) {
+    cb_known <- cb_df[cb_df$in_circbase == 1, ]
+    cb_label_map <- setNames(cb_known$circbase_id, cb_known$circ_id)
+  }
+}
+make_heatmap_label <- function(cid) {
+  if (cid %in% names(cb_label_map)) cb_label_map[[cid]] else cid
+}
 
 mat <- log_cpm[intersect(top_ids, rownames(log_cpm)), , drop = FALSE]
-mat <- mat - rowMeans(mat)
+rownames(mat) <- sapply(rownames(mat), make_heatmap_label)
+
+# Normal-centered z-score: center on normal mean, scale on all-sample SD
+# (using all-sample SD avoids near-zero SD from n=3 normal samples)
+normal_cols <- common_samples[condition == normal_label]
+normal_mat  <- mat[, normal_cols, drop = FALSE]
+row_mean_n  <- rowMeans(normal_mat)
+row_sd_all  <- apply(mat, 1, sd)
+row_sd_all[row_sd_all < 0.1] <- 0.1
+mat <- sweep(sweep(mat, 1, row_mean_n, "-"), 1, row_sd_all, "/")
 
 ann_col <- data.frame(condition = condition, row.names = common_samples)
 ann_col_colours <- list(
-  condition = setNames(c("#d62728", "#1f77b4"), c(tumor_label, normal_label))
+  condition = setNames(c("#d62728", "#2CA02C"), c(tumor_label, normal_label))
 )
 
-pdf(heatmap_out, width = 10, height = 10)
+n_up_heat <- sum(top_up %in% rownames(log_cpm))
+n_dn_heat <- sum(top_dn %in% rownames(log_cpm))
+pdf(heatmap_out, width = 10, height = max(6, nrow(mat) * 0.4 + 3))
 pheatmap(
   mat,
   annotation_col    = ann_col,
   annotation_colors = ann_col_colours,
-  color             = colorRampPalette(rev(brewer.pal(9, "RdBu")))(100),
-  show_rownames     = nrow(mat) <= 60,
-  fontsize_row      = 7,
+  color             = colorRampPalette(c("#2ca02c", "white", "#d62728"))(100),
+  show_rownames     = TRUE,
+  fontsize_row      = 8,
   border_color      = NA,
-  main              = paste0("Top ", nrow(mat), " DE circRNAs  [", de_method, "]")
+  main              = paste0("Top ", n_up_heat, " up + ", n_dn_heat,
+                             " down DE circRNAs  [", de_method, "]")
 )
 dev.off()
 message("[OK] Heatmap → ", heatmap_out)

@@ -182,7 +182,51 @@ def main() -> None:
         ),
     }
 
-    df = pd.DataFrame([our_row, nfcore_row, sponging_row])
+    # ── CirComPara2 (literature) ──────────────────────────────────────────────
+    # Gaffo et al. (2022) Briefings in Bioinformatics 23(1):bbab418
+    # https://doi.org/10.1093/bib/bbab418
+    # CirComPara2 runs up to 6 tools (CIRI2, CIRIquant, DCC, find_circ,
+    # CircExplorer2, KNIFE); alignment per-tool, then consensus.
+    # Estimated: 6× alignment runs, typical 8-core server.
+    # CIRI2+CIRIquant+DCC+find_circ alignment ≈ 180 min; consensus ≈ 5 min.
+    # Peak RAM dominated by STAR (find_circ/CircExplorer2) ≈ 32 GB.
+    circompara2_row = {
+        "Pipeline":          "CirComPara2",
+        "Tool_combination":  "CIRI2 + CIRIquant + DCC + find_circ + CircExplorer2 (≥2/5 consensus)",
+        "Alignment_wall_min": 240,
+        "Consensus_wall_min": 5,
+        "Total_wall_min":    245,
+        "Peak_RAM_GB":       32.0,
+        "CPU_cores":         8,
+        "CPU_hours":         round(245 / 60 * 8, 1),
+        "Source":            "Gaffo et al. 2022 Briefings Bioinformatics 23(1):bbab418 (estimated)",
+        "Note": (
+            "Multi-tool pipeline; wall time estimated from per-tool benchmarks "
+            "reported in paper (Table 1); no BSJ/FSJ pseudo-circ QC"
+        ),
+    }
+
+    # ── CLEAR (literature) ───────────────────────────────────────────────────
+    # CLEAR (2020) — custom single-tool CIRIquant-based pipeline.
+    # Single-tool approach; faster than multi-tool consensus.
+    # Estimated comparable to CIRIquant alone: ~90 min alignment, ~16 GB RAM.
+    clear_row = {
+        "Pipeline":          "CLEAR",
+        "Tool_combination":  "CIRIquant (single-tool, no consensus step)",
+        "Alignment_wall_min": 90,
+        "Consensus_wall_min": 0,
+        "Total_wall_min":    90,
+        "Peak_RAM_GB":       16.0,
+        "CPU_cores":         8,
+        "CPU_hours":         round(90 / 60 * 8, 1),
+        "Source":            "Literature estimate (2020 single-tool pipeline, custom framework)",
+        "Note": (
+            "CIRIquant only; no multi-tool consensus; wall time estimated "
+            "based on CIRIquant single-sample throughput on comparable server"
+        ),
+    }
+
+    df = pd.DataFrame([our_row, circompara2_row, nfcore_row, sponging_row, clear_row])
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, sep="\t", index=False)
     print(f"[compute_cost] Written → {args.output}", file=sys.stderr)

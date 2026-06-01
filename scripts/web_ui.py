@@ -11,17 +11,62 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import random
 import re
+import string
 import subprocess
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import yaml
+import csv
+import io
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 app = Flask(__name__, template_folder="templates")
 BASE_DIR = Path(__file__).parent.parent
 CONFIG_PATH = BASE_DIR / "config.yaml"
 LOG_PATH = BASE_DIR / "logs" / "pipeline_run.log"
+REGISTRY_PATH = BASE_DIR / "jobs" / "registry.json"
+
+
+# ── Job registry ──────────────────────────────────────────────────────────────
+
+def generate_job_id(gse_id: str) -> str:
+    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    return f"{gse_id}-{suffix}"
+
+
+def load_registry() -> dict:
+    if not REGISTRY_PATH.exists():
+        return {}
+    try:
+        return json.loads(REGISTRY_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_registry(registry: dict) -> None:
+    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    REGISTRY_PATH.write_text(json.dumps(registry, ensure_ascii=False, indent=2))
+
+
+def register_job(job_id: str, gse_id: str, log_path: Path, cores: int) -> None:
+    registry = load_registry()
+    registry[job_id] = {
+        "job_id":     job_id,
+        "gse_id":     gse_id,
+        "start_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "log":        str(log_path.relative_to(BASE_DIR)),
+        "cores":      cores,
+    }
+    save_registry(registry)
+
+
+def job_log_path(job_id: str) -> Path:
+    return BASE_DIR / "logs" / f"pipeline_{job_id}.log"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -34,6 +79,90 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     with open(CONFIG_PATH, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def _project_config_path(gse_id: str) -> Path:
+    return BASE_DIR / "config" / "projects" / f"{gse_id}.yaml"
+
+
+def _project_meta_dir(gse_id: str) -> Path:
+    return BASE_DIR / "metadata" / gse_id
+
+
+def _configfile_for(gse_id: str) -> str:
+    """Return configfile path (relative to BASE_DIR) for snakemake --configfile."""
+    p = _project_config_path(gse_id)
+    if p.exists():
+        return str(p.relative_to(BASE_DIR))
+    return "config.yaml"
+
+
+def save_project_snapshot(cfg: dict) -> None:
+    """Write config.yaml AND a per-project snapshot in config/projects/{id}.yaml."""
+    save_config(cfg)
+    gse_id = cfg.get("project_id", "")
+    if gse_id:
+        proj_path = _project_config_path(gse_id)
+        proj_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(proj_path, "w") as f:
+            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def load_project_config(gse_id: str) -> dict:
+    """Load project-specific config if snapshot exists, else fall back to main config."""
+    p = _project_config_path(gse_id)
+    if p.exists():
+        with open(p) as f:
+            return yaml.safe_load(f)
+    return load_config()
+
+
+def _snake_bin() -> str:
+    """Return absolute path to snakemake in the current conda env."""
+    import sys as _sys
+    return str(Path(_sys.executable).parent / "snakemake")
+
+
+def _snake_env() -> dict:
+    """Return os.environ copy with working SRA-tool paths prepended to PATH.
+
+    Priority order (front → back):
+      1. sra_env  — has fasterq-dump that works on CentOS 7 glibc 2.17
+      2. circrna  — has aria2c for fast multi-connection S3 downloads
+      3. base conda bin — has prefetch / srapath
+    """
+    import os, sys as _sys
+    env = dict(os.environ)
+    # envs/ciriquant/bin/python → miniconda3
+    conda_root = Path(_sys.executable).parents[3]
+    prepend = [
+        str(conda_root / "envs" / "sra_env"  / "bin"),
+        str(conda_root / "envs" / "circrna"  / "bin"),
+        str(conda_root / "bin"),
+    ]
+    # Also check miniforge3 if present
+    miniforge = Path(_sys.executable).parents[3].parent / "miniforge3"
+    if miniforge.is_dir():
+        prepend += [
+            str(miniforge / "envs" / "circrna" / "bin"),
+            str(miniforge / "bin"),
+        ]
+    path = env.get("PATH", "")
+    extra = ":".join(p for p in prepend if p not in path)
+    if extra:
+        env["PATH"] = extra + ":" + path
+    return env
+
+
+def _update_paths_for_project(cfg: dict, new_pid: str) -> dict:
+    """Replace the old project_id embedded in raw/trimmed/results paths."""
+    old_pid = cfg.get("project_id", "")
+    if not old_pid or old_pid == new_pid:
+        return cfg
+    for key in ("raw_dir", "trimmed_dir", "results_dir"):
+        if key in cfg and old_pid in cfg[key]:
+            cfg[key] = cfg[key].replace(old_pid, new_pid)
+    return cfg
 
 
 PIPELINE_STAGES = [
@@ -133,22 +262,43 @@ def parse_log_progress(log_text: str) -> dict:
     }
 
 
-def tail_log(n: int = 80) -> str:
-    if not LOG_PATH.exists():
+def tail_log(n: int = 80, path: Optional[Path] = None) -> str:
+    p = path or LOG_PATH
+    if not p.exists():
         return "（尚無 log 檔）"
-    lines = LOG_PATH.read_text(errors="replace").splitlines()
+    lines = p.read_text(errors="replace").splitlines()
     return "\n".join(lines[-n:])
 
 
 def pipeline_is_running() -> bool:
+    """Check if snakemake is actually running the pipeline (not monitoring scripts)."""
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "snakemake.*circRNA_agent"],
+            ["pgrep", "-f", "snakemake.*--snakefile.*workflow/Snakefile"],
             capture_output=True, text=True,
         )
         return result.returncode == 0
     except FileNotFoundError:
         return False
+
+
+def kill_pipeline() -> None:
+    """Kill all snakemake-related processes robustly using pgrep + kill -9."""
+    import signal
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "snakemake.*workflow/Snakefile"],
+            capture_output=True, text=True,
+        )
+        pids = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
+        for pid in pids:
+            try:
+                import os
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    except Exception:
+        pass
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -158,12 +308,15 @@ def index():
     cfg = load_config()
     tools = cfg.get("consensus", {}).get("tools", ["ciriquant", "dcc"])
     de_method = cfg.get("de", {}).get("method", "deseq2")
+    registry = load_registry()
+    recent_jobs = list(reversed(list(registry.items())))[:5]
     return render_template(
         "index.html",
         config=cfg,
         selected_tools=tools,
         de_method=de_method,
         running=pipeline_is_running(),
+        recent_jobs=recent_jobs,
     )
 
 
@@ -191,17 +344,21 @@ def update():
     cfg["de"]["log2fc_cutoff"]           = float(request.form.get("log2fc", 1.0))
     cfg["threads"]                       = int(request.form.get("threads", 8))
 
-    save_config(cfg)
+    save_project_snapshot(cfg)
 
     if request.form.get("action") == "run":
+        kill_pipeline()
         cores = cfg["threads"] * 4
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(LOG_PATH, "w") as log_f:
+        gse_id = cfg.get("project_id", "pipeline")
+        job_id = generate_job_id(gse_id)
+        log_path = job_log_path(job_id)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "w") as log_f:
             subprocess.Popen(
                 [
-                    "snakemake",
+                    _snake_bin(),
                     "--snakefile", "workflow/Snakefile",
-                    "--configfile", "config.yaml",
+                    "--configfile", _configfile_for(gse_id),
                     "--cores", str(cores),
                     "--resources", f"mem_gb={cfg.get('resources', {}).get('mem_gb', 300)}",
                     "--keep-going",
@@ -210,8 +367,10 @@ def update():
                 cwd=str(BASE_DIR),
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
+                env=_snake_env(),
             )
-        return redirect(url_for("status"))
+        register_job(job_id, gse_id, log_path, cores)
+        return redirect(url_for("status_job", job_id=job_id))
 
     return redirect(url_for("index"))
 
@@ -223,39 +382,196 @@ def run_gse():
     if not gse_id:
         return redirect(url_for("index"))
 
-    cfg = load_config()
+    job_id = generate_job_id(gse_id)
+    log_path = job_log_path(job_id)
+
+    cfg = load_project_config(gse_id)
     cfg["project_id"] = gse_id
     cfg["threads"]    = cores
-    save_config(cfg)
+    cfg = _update_paths_for_project(cfg, gse_id)
+    save_project_snapshot(cfg)
 
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOG_PATH, "w") as log_f:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w") as log_f:
         subprocess.Popen(
             ["python", "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)],
             cwd=str(BASE_DIR),
             stdout=log_f,
             stderr=subprocess.STDOUT,
         )
-    return redirect(url_for("status"))
+    register_job(job_id, gse_id, log_path, cores)
+    return redirect(url_for("status_job", job_id=job_id))
+
+
+@app.route("/run_manual", methods=["POST"])
+def run_manual():
+    """Start pipeline from manual SRR list or uploaded CSV."""
+    cores      = int(request.form.get("cores", 8))
+    project_id = request.form.get("project_id", "CUSTOM").strip() or "CUSTOM"
+    tumor_label  = request.form.get("tumor_label",  "tumor").strip()  or "tumor"
+    normal_label = request.form.get("normal_label", "normal").strip() or "normal"
+
+    # ── Build library_info rows ────────────────────────────────────────────────
+    rows: list[dict] = []
+
+    # Option A: uploaded CSV file
+    csv_file = request.files.get("csv_file")
+    if csv_file and csv_file.filename:
+        content = csv_file.read().decode("utf-8-sig")
+        reader  = csv.DictReader(io.StringIO(content))
+        for r in reader:
+            srr = (r.get("srr_id") or r.get("SRR_ID") or r.get("run") or "").strip()
+            if srr:
+                rows.append({
+                    "srr_id":    srr,
+                    "condition": (r.get("condition") or r.get("group") or "tumor").strip(),
+                    "paired":    (r.get("paired") or "true").strip(),
+                })
+    else:
+        # Option B: manual SRR entries from the form
+        srr_ids    = request.form.getlist("srr_id[]")
+        conditions = request.form.getlist("condition[]")
+        for srr, cond in zip(srr_ids, conditions):
+            srr  = srr.strip()
+            cond = cond.strip()
+            if srr:
+                rows.append({"srr_id": srr, "condition": cond, "paired": "true"})
+
+    if not rows:
+        return redirect(url_for("index"))
+
+    # ── Write metadata files (shared + per-project copy) ──────────────────────
+    meta_dir     = BASE_DIR / "metadata"
+    proj_meta    = _project_meta_dir(project_id)
+    meta_dir.mkdir(exist_ok=True)
+    proj_meta.mkdir(parents=True, exist_ok=True)
+
+    lib_path      = meta_dir     / "library_info.csv"
+    grp_path      = meta_dir     / "sample_groups.csv"
+    proj_lib_path = proj_meta    / "library_info.csv"
+    proj_grp_path = proj_meta    / "sample_groups.csv"
+
+    for lp in (lib_path, proj_lib_path):
+        with open(lp, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["srr_id", "paired"])
+            w.writeheader()
+            for r in rows:
+                w.writerow({"srr_id": r["srr_id"], "paired": r.get("paired", "true")})
+
+    for gp in (grp_path, proj_grp_path):
+        with open(gp, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["srr_id", "condition"])
+            w.writeheader()
+            for r in rows:
+                w.writerow({"srr_id": r["srr_id"], "condition": r["condition"]})
+
+    # ── Update config ───────────────────────────────────────────────────────────
+    cfg = load_project_config(project_id)
+    cfg = _update_paths_for_project(cfg, project_id)
+    cfg["project_id"]          = project_id
+    cfg["threads"]             = cores
+    cfg["metadata"]            = str(proj_lib_path.relative_to(BASE_DIR))
+    cfg["groups"]              = str(proj_grp_path.relative_to(BASE_DIR))
+    cfg["de"]["tumor_label"]   = tumor_label
+    cfg["de"]["normal_label"]  = normal_label
+    notify_email = request.form.get("notify_email", "").strip()
+    if notify_email:
+        cfg.setdefault("notify", {})["email_to"] = notify_email
+    save_project_snapshot(cfg)
+
+    # ── Kill any leftover pipeline before launching ────────────────────────────
+    kill_pipeline()
+
+    # ── Launch Snakemake via same Python env as web_ui ──────────────────────────
+    _snake = _snake_bin()
+
+    job_id   = generate_job_id(project_id)
+    log_path = job_log_path(job_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w") as log_f:
+        subprocess.Popen(
+            [_snake,
+             "--snakefile", "workflow/Snakefile",
+             "--configfile", _configfile_for(project_id),
+             "--cores", str(cores),
+             "--keep-going", "--rerun-incomplete"],
+            cwd=str(BASE_DIR),
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            env=_snake_env(),
+        )
+    register_job(job_id, project_id, log_path, cores)
+    return redirect(url_for("status_job", job_id=job_id))
 
 
 @app.route("/status")
 def status():
+    registry = load_registry()
+    if registry:
+        latest = list(registry.keys())[-1]
+        return redirect(url_for("status_job", job_id=latest))
     return render_template(
         "status.html",
         log=tail_log(),
         running=pipeline_is_running(),
+        job=None,
+        job_id=None,
     )
+
+
+@app.route("/status/<job_id>")
+def status_job(job_id: str):
+    registry = load_registry()
+    job = registry.get(job_id)
+    if job is None:
+        return render_template(
+            "status.html",
+            log=f"找不到任務編號：{job_id}",
+            running=False,
+            job=None,
+            job_id=job_id,
+        ), 404
+    log_path = BASE_DIR / job["log"]
+    return render_template(
+        "status.html",
+        log=tail_log(path=log_path),
+        running=pipeline_is_running(),
+        job=job,
+        job_id=job_id,
+    )
+
+
+@app.route("/status-query")
+def status_query():
+    job_id = request.args.get("job_id", "").strip()
+    if not job_id:
+        return redirect(url_for("index"))
+    return redirect(url_for("status_job", job_id=job_id))
 
 
 @app.route("/api/log")
 def api_log():
-    return jsonify({"log": tail_log(50), "running": pipeline_is_running()})
+    job_id = request.args.get("job")
+    path: Optional[Path] = None
+    if job_id:
+        registry = load_registry()
+        job = registry.get(job_id)
+        if job:
+            path = BASE_DIR / job["log"]
+    return jsonify({"log": tail_log(50, path=path), "running": pipeline_is_running()})
 
 
 @app.route("/api/progress")
 def api_progress():
-    log_text = LOG_PATH.read_text(errors="replace") if LOG_PATH.exists() else ""
+    job_id = request.args.get("job")
+    path: Optional[Path] = None
+    if job_id:
+        registry = load_registry()
+        job = registry.get(job_id)
+        if job:
+            path = BASE_DIR / job["log"]
+    log_text = (path or LOG_PATH).read_text(errors="replace") \
+               if (path or LOG_PATH).exists() else ""
     data = parse_log_progress(log_text)
     data["running"] = pipeline_is_running()
     return jsonify(data)

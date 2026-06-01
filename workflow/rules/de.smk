@@ -7,21 +7,23 @@ Skipped automatically when HAS_GROUPS is False (see Snakefile).
 rule de_analysis:
     """circRNA DE analysis; method = edgeR_ciriquant / deseq2 / limma (config de.method)."""
     input:
-        matrix     = RESULTS_DIR + "/circRNA/count_matrix.tsv",
-        fsj_matrix = RESULTS_DIR + "/circRNA/fsj_count_matrix.tsv",
-        groups     = config["groups"],
+        matrix         = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        fsj_matrix     = RESULTS_DIR + "/circRNA/fsj_count_matrix.tsv",
+        groups         = config["groups"],
+        circbase_annot = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
     output:
         de      = RESULTS_DIR + "/de/de_results.tsv",
         volcano = RESULTS_DIR + "/plots/volcano.pdf",
         heatmap = RESULTS_DIR + "/plots/heatmap.pdf",
         pca     = RESULTS_DIR + "/plots/pca.pdf",
     params:
-        de_method    = DE_METHOD,
-        fdr          = config["de"]["fdr_cutoff"],
-        lfc          = config["de"]["log2fc_cutoff"],
-        tumor_label  = config["de"]["tumor_label"],
-        normal_label = config["de"]["normal_label"],
-        use_pvalue   = config["de"].get("de_sig_by", "padj") == "pvalue",
+        de_method     = DE_METHOD,
+        fdr           = config["de"]["fdr_cutoff"],
+        lfc           = config["de"]["log2fc_cutoff"],
+        tumor_label   = config["de"]["tumor_label"],
+        normal_label  = config["de"]["normal_label"],
+        de_sig_by     = config["de"].get("de_sig_by", "auto"),
+        heatmap_top_n = config["de"].get("heatmap_top_n", 10),
     log: "logs/de_analysis.log"
     script:
         "../../scripts/analysis.R"
@@ -54,27 +56,29 @@ rule annotate_circbase:
 
 
 rule rank_biomarkers:
-    """Rank DE circRNAs by composite biomarker score."""
+    """Rank DE circRNAs by composite biomarker score (6D when interactions available)."""
     input:
-        de      = RESULTS_DIR + "/de/de_results.tsv",
-        annot   = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
-        summary = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        de           = RESULTS_DIR + "/de/de_results.tsv",
+        annot        = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
+        summary      = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        interactions = RESULTS_DIR + "/de/interactions.json",
     output:
         RESULTS_DIR + "/de/biomarker_candidates.tsv",
     params:
         fdr             = config["de"]["fdr_cutoff"],
         lfc             = config["de"]["log2fc_cutoff"],
-        use_pvalue_flag = "--use-pvalue" if config["de"].get("de_sig_by", "padj") == "pvalue" else "",
+        de_sig_by       = config["de"].get("de_sig_by", "auto"),
     log: "logs/rank_biomarkers.log"
     shell:
         """
         python scripts/rank_biomarkers.py \
-            --de      {input.de} \
-            --annot   {input.annot} \
-            --output  {output} \
+            --de           {input.de} \
+            --annot        {input.annot} \
+            --output       {output} \
+            --interactions {input.interactions} \
             --fdr     {params.fdr} \
             --lfc     {params.lfc} \
-            {params.use_pvalue_flag} \
+            --de-sig-by {params.de_sig_by} \
             2>&1 | tee {log}
         """
 
@@ -117,6 +121,35 @@ rule isoform_switching:
         "../../scripts/isoform_switching.R"
 
 
+rule predict_interactions:
+    """Query CircInteractome for miRNA/RBP binding sites of top DE circRNAs."""
+    input:
+        de       = RESULTS_DIR + "/de/de_results.tsv",
+        iso      = RESULTS_DIR + "/circRNA/isoform_groups.tsv",
+        circbase = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
+    output:
+        RESULTS_DIR + "/de/interactions.json",
+    params:
+        top_n        = config["de"].get("interaction_top_n", 50),
+        clip_exp_num = config["de"].get("encori_clip_exp_num", 1),
+        program_num  = config["de"].get("encori_program_num", 2),
+        gtf          = config["genome"]["gtf"],
+    log: "logs/predict_interactions.log"
+    shell:
+        """
+        python scripts/predict_interactions.py \
+            --de           {input.de} \
+            --iso          {input.iso} \
+            --circbase     {input.circbase} \
+            --out          {output} \
+            --gtf          {params.gtf} \
+            --top-n        {params.top_n} \
+            --clip-exp-num {params.clip_exp_num} \
+            --program-num  {params.program_num} \
+            2>&1 | tee {log}
+        """
+
+
 rule generate_report:
     """Build a self-contained HTML summary report."""
     input:
@@ -131,6 +164,7 @@ rule generate_report:
         groups         = config["groups"],
         isoform_groups = RESULTS_DIR + "/circRNA/isoform_groups.tsv",
         circbase_annot = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
+        interactions   = RESULTS_DIR + "/de/interactions.json",
     output:
         RESULTS_DIR + "/report.html",
     params:
@@ -138,9 +172,10 @@ rule generate_report:
         fdr          = config["de"]["fdr_cutoff"],
         lfc          = config["de"]["log2fc_cutoff"],
         de_method    = DE_METHOD,
-        use_pvalue   = config["de"].get("de_sig_by", "padj") == "pvalue",
-        tumor_label  = config["de"]["tumor_label"],
-        normal_label = config["de"]["normal_label"],
+        de_sig_by     = config["de"].get("de_sig_by", "auto"),
+        tumor_label   = config["de"]["tumor_label"],
+        normal_label  = config["de"]["normal_label"],
+        heatmap_top_n = config["de"].get("heatmap_top_n", 10),
     log: "logs/generate_report.log"
     script:
         "../../scripts/generate_report.py"

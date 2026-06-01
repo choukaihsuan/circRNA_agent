@@ -45,7 +45,8 @@ RNASER_SRRS = GS55["rnaser"]                 # [SRR444974, SRR445016]
 ALL_GSE55   = [TOTAL_SRR] + RNASER_SRRS
 
 RESULTS    = BENCH["output_dir"]
-AGENT_DIR  = os.path.dirname(os.path.abspath(workflow.snakefile))
+# workflow.snakefile is benchmark/Snakefile; go up one level to get circRNA_agent root
+AGENT_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(workflow.snakefile)))
 
 # Derived from config
 DE_FDR          = config.get("de_fdr",          0.05)
@@ -70,29 +71,33 @@ rule all:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 rule bench_download:
-    """Download GSE55872 SRR via prefetch + fasterq-dump."""
+    """Download GSE55872 SRR FASTQ.gz directly from EBI (faster than NCBI prefetch)."""
     output:
         r1 = RAW_DIR + "/{srr}_1.fastq.gz",
         r2 = RAW_DIR + "/{srr}_2.fastq.gz",
     params:
         raw_dir = RAW_DIR,
         srr     = "{srr}",
-    threads: 4
+        # EBI URL pattern: first 6 chars of SRR as subdirectory
+        ebi_base = lambda w: (
+            f"https://ftp.sra.ebi.ac.uk/vol1/fastq/"
+            f"{w.srr[:6]}/{w.srr}"
+        ),
+    threads: 2
     resources:
-        mem_gb = 4
+        mem_gb = 2
     log: "logs/bench/download_{srr}.log"
     shell:
         """
         mkdir -p {params.raw_dir}
-        prefetch {params.srr} --output-directory {params.raw_dir} >> {log} 2>&1
-        fasterq-dump {params.srr} \
-            --split-files \
-            --threads {threads} \
-            --outdir {params.raw_dir} \
+        wget -q \
+            -O {output.r1} \
+            "{params.ebi_base}/{params.srr}_1.fastq.gz" \
             >> {log} 2>&1
-        pigz -p {threads} {params.raw_dir}/{params.srr}_1.fastq \
-                           {params.raw_dir}/{params.srr}_2.fastq >> {log} 2>&1
-        rm -rf {params.raw_dir}/{params.srr}
+        wget -q \
+            -O {output.r2} \
+            "{params.ebi_base}/{params.srr}_2.fastq.gz" \
+            >> {log} 2>&1
         """
 
 
@@ -349,9 +354,40 @@ rule our_filter:
         """
 
 
+rule circompara2_sim_filter:
+    """
+    CirComPara2 simulation (Gaffo et al. 2022, Briefings Bioinformatics):
+    CIRIquant + DCC, slop=10 bp, BSJ/FSJ QC DISABLED.
+    Isolates the contribution of our pseudo-circ QC step.
+    """
+    input:
+        cirique = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
+        dcc     = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+    output:
+        bed     = RESULTS + "/detection/circompara2_sim.bed",
+        summary = RESULTS + "/detection/circompara2_sim_summary.tsv",
+    params:
+        slop    = BENCH.get("slop", 10),
+        min_bsj = BENCH.get("min_bsj", 2),
+    log: "logs/bench/circompara2_sim_filter.log"
+    shell:
+        """
+        python {AGENT_DIR}/scripts/consensus_filter.py \
+            --cirique {input.cirique} \
+            --dcc     {input.dcc} \
+            --output  {output.bed} \
+            --summary {output.summary} \
+            --min-tools 2 \
+            --slop {params.slop} \
+            --min-bsj {params.min_bsj} \
+            --max-junction-ratio 999 \
+            2>&1 | tee {log}
+        """
+
+
 rule nfcore_sim_filter:
     """
-    nf-core/circrna simulation:
+    nf-core/circrna simulation (Digby-Bell et al. 2023, BMC Bioinformatics):
     CIRIquant + DCC, slop=0 (exact coordinate match), BSJ/FSJ QC disabled.
     Replicates nf-core's fixed min_tools=2 consensus behaviour.
     """
@@ -379,16 +415,47 @@ rule nfcore_sim_filter:
         """
 
 
+rule clear_sim_filter:
+    """
+    CLEAR simulation (Custom 2020 single-tool pipeline):
+    CIRIquant only, slop=0 (exact coordinates), no consensus step.
+    Represents single-tool pipelines that skip multi-tool validation.
+    """
+    input:
+        cirique = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
+    output:
+        bed     = RESULTS + "/detection/clear_sim.bed",
+        summary = RESULTS + "/detection/clear_sim_summary.tsv",
+    params:
+        min_bsj = BENCH.get("min_bsj", 2),
+    log: "logs/bench/clear_sim_filter.log"
+    shell:
+        """
+        python {AGENT_DIR}/scripts/consensus_filter.py \
+            --cirique {input.cirique} \
+            --output  {output.bed} \
+            --summary {output.summary} \
+            --min-tools 1 \
+            --slop 0 \
+            --min-bsj {params.min_bsj} \
+            --max-junction-ratio 999 \
+            2>&1 | tee {log}
+        """
+
+
 # ─── Accuracy benchmark ───────────────────────────────────────────────────────
 
 rule accuracy_benchmark:
-    """Compute Precision/Recall/F1/AUC-PR for the three detection strategies."""
+    """Compute Precision/Recall/F1/AUC-PR for five detection strategies."""
     input:
-        ground_truth = RESULTS + "/rnaser/ground_truth.tsv",
-        our_bed      = RESULTS + "/detection/our_method.bed",
-        our_summary  = RESULTS + "/detection/our_method_summary.tsv",
-        nfcore_bed   = RESULTS + "/detection/nfcore_sim.bed",
-        dcc_coords   = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+        ground_truth        = RESULTS + "/rnaser/ground_truth.tsv",
+        our_bed             = RESULTS + "/detection/our_method.bed",
+        our_summary         = RESULTS + "/detection/our_method_summary.tsv",
+        circompara2_bed     = RESULTS + "/detection/circompara2_sim.bed",
+        circompara2_summary = RESULTS + "/detection/circompara2_sim_summary.tsv",
+        nfcore_bed          = RESULTS + "/detection/nfcore_sim.bed",
+        dcc_coords          = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+        clear_bed           = RESULTS + "/detection/clear_sim.bed",
     output:
         summary    = RESULTS + "/accuracy_summary.tsv",
         stratified = RESULTS + "/stratified_f1.tsv",
@@ -399,13 +466,16 @@ rule accuracy_benchmark:
     shell:
         """
         python {AGENT_DIR}/benchmark/scripts/accuracy_benchmark.py \
-            --ground-truth      {input.ground_truth} \
-            --our-bed           {input.our_bed} \
-            --our-summary       {input.our_summary} \
-            --nfcore-bed        {input.nfcore_bed} \
-            --dcc-coords        {input.dcc_coords} \
-            --output-summary    {output.summary} \
-            --output-stratified {output.stratified} \
+            --ground-truth          {input.ground_truth} \
+            --our-bed               {input.our_bed} \
+            --our-summary           {input.our_summary} \
+            --circompara2-bed       {input.circompara2_bed} \
+            --circompara2-summary   {input.circompara2_summary} \
+            --nfcore-bed            {input.nfcore_bed} \
+            --dcc-coords            {input.dcc_coords} \
+            --clear-bed             {input.clear_bed} \
+            --output-summary        {output.summary} \
+            --output-stratified     {output.stratified} \
             --slop    {params.slop} \
             --min-bsj {params.min_bsj} \
             2>&1 | tee {log}
@@ -444,7 +514,7 @@ rule compute_cost:
 
 rule de_deseq2_baseline:
     """
-    Run DESeq2 on GSE113230 BSJ counts to simulate nf-core/circrna's DE step.
+    Run DESeq2 on GSE113230 BSJ counts — shared baseline for nf-core / CirComPara2 / CLEAR sims.
     Uses the same count matrix as our edgeR_ciriquant run; only the method differs.
     """
     input:
@@ -467,7 +537,7 @@ rule de_deseq2_baseline:
 
 
 rule de_quality_benchmark:
-    """Compare DE analysis quality across the three pipeline simulations."""
+    """Compare DE analysis quality across the five pipeline simulations."""
     input:
         our_de    = GS113["de_results"],
         nfcore_de = RESULTS + "/de/nfcore_deseq2_results.tsv",
@@ -487,8 +557,10 @@ rule de_quality_benchmark:
     shell:
         """
         python {AGENT_DIR}/benchmark/scripts/de_quality_benchmark.py \
-            --our-de        {input.our_de} \
-            --nfcore-de     {input.nfcore_de} \
+            --our-de         {input.our_de} \
+            --nfcore-de      {input.nfcore_de} \
+            --circompara2-de {input.nfcore_de} \
+            --clear-de       {input.nfcore_de} \
             --output-summary {output.summary} \
             --output-jaccard {output.jaccard} \
             --fdr {params.fdr} \

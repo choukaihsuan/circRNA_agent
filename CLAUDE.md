@@ -5,11 +5,12 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（肝癌 tumor vs. normal，6 個 sample）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 個 sample）；GSE58135（乳癌，進行中）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
-- **本機開發**：Windows 11 + WSL2（Ubuntu），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
+- **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
 - **Server 路徑**：`~/circRNA_agent/`（即 `/home3/choukaihsuan/circRNA_agent/`，`/home/choukaihsuan` 是 symlink）
+- **Container**：Docker image `choukaihsuan/circrna-pipeline:1.0.0`；HPC 用 Singularity 拉取
 
 ---
 
@@ -18,12 +19,21 @@
 ```
 circRNA_agent/
 ├── config.yaml                  # 主設定檔（路徑、參數、工具選擇）
+├── Dockerfile                   # 容器化環境定義（mamba + conda env circrna.yaml）
+├── .dockerignore                # Docker 建置排除清單
 ├── config/
 │   ├── ciriquant.yaml           # CIRIquant 工具路徑設定（server 版本另存在 server 上）
-│   └── .ciriquant_ready         # touch 檔，驗證 ciriquant.yaml 存在後建立
+│   ├── .ciriquant_ready         # touch 檔，驗證 ciriquant.yaml 存在後建立
+│   └── projects/                # 各 GSE 專案獨立設定快照（由 web_ui.py 自動建立）
+│       └── {GSE_ID}.yaml
+├── containers/
+│   └── build_and_deploy.sh      # Docker image 建置與推送腳本
 ├── metadata/
-│   ├── library_info.csv         # SRR ID、配對資訊（srr_id 欄位為必要）
-│   └── sample_groups.csv        # 樣本分組（srr_id, condition 欄位）tumor/normal
+│   ├── library_info.csv         # 目前啟用專案的 SRR/配對資訊
+│   ├── sample_groups.csv        # 目前啟用專案的分組
+│   └── {GSE_ID}/                # 各 GSE 專屬 metadata 目錄（由 web_ui.py 自動建立）
+│       ├── library_info.csv
+│       └── sample_groups.csv
 ├── workflow/
 │   ├── Snakefile                # 主 Snakefile，載入 rules，設定 target
 │   └── rules/
@@ -43,6 +53,7 @@ circRNA_agent/
 │   ├── isoform_switching.R      # 計算 IUI、Wilcoxon rank-sum 測試 isoform switching
 │   ├── analysis.R               # DE 分析（edgeR_ciriquant / deseq2 / limma）
 │   ├── generate_report.py       # 輸出 HTML 報告（互動式 Plotly + Type I/II + biomarker）
+│   ├── predict_interactions.py  # CircInteractome miRNA/RBP interaction 查詢
 │   ├── notify.py                # 通知模組（Email/Slack，Snakemake hook 呼叫）
 │   ├── utils.py                 # 共用工具函數
 │   ├── web_ui.py                # Flask Web UI（GEO 一鍵啟動 + 進度視覺化）
@@ -50,7 +61,7 @@ circRNA_agent/
 │       ├── index.html           # 主設定頁面（GEO 入口 + Step 1-3）
 │       └── status.html          # Pipeline 狀態頁（進度條 + rule 狀態格 + log）
 ├── envs/
-│   └── circrna.yaml             # Conda 環境定義
+│   └── circrna.yaml             # Conda 環境定義（mamba 建置；已移除 defaults channel）
 └── logs/                        # Snakemake 各 rule 的 log 檔
 ```
 
@@ -386,6 +397,76 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 
 ---
 
+## Container 部署（Docker + Singularity HPC）
+
+### Docker image
+
+```bash
+# 本機建置並推送（WSL2）
+cd /mnt/c/Users/User/develop/circRNA_agent
+bash containers/build_and_deploy.sh   # 自動執行 docker build + docker push
+```
+
+image name：`choukaihsuan/circrna-pipeline:1.0.0`
+`Dockerfile` 使用 `mamba env create --yes`（非互動式），比 conda 快 3–5×。
+
+### `envs/circrna.yaml` 重要設定
+
+- channels：`bioconda`, `conda-forge`（**已移除 `defaults`**，Anaconda 商業授權問題）
+- `bioconductor-edger>=3.40`（不鎖定 patch 版本，避免 PackagesNotFoundError）
+- `bioconductor-deseq2>=1.40`
+- `bioconductor-qvalue`（Storey q-value，analysis.R 需要）
+- `dcc=0.5.0` 在 conda 依賴中（bioconda），**不在 pip**（PyPI 的 DCC 是另一個無關套件，版本 0.7+）
+
+### Singularity（HPC server）
+
+```bash
+# server 上拉取 Docker image 轉換為 SIF
+singularity pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.0
+
+# Snakemake 自動使用（workflow/Snakefile 已設定）
+snakemake --use-singularity --singularity-args "--bind /home3:/home3"
+```
+
+`workflow/Snakefile` 頂部已設定：`singularity: "docker://choukaihsuan/circrna-pipeline:1.0.0"`
+
+---
+
+## Per-project Config 系統
+
+每個 GSE 分析自動使用獨立設定，避免多個分析互蓋 `config.yaml` 和 `metadata/`。
+
+### 機制
+
+- **`save_project_snapshot(cfg)`**（`web_ui.py`）：每次儲存設定時，同時寫入：
+  1. `config.yaml`（全域啟用，目前執行的專案）
+  2. `config/projects/{GSE_ID}.yaml`（該專案的永久快照）
+- **`_configfile_for(gse_id)`**：若 `config/projects/{GSE_ID}.yaml` 存在，Snakemake 的 `--configfile` 自動指向它；否則 fallback 到 `config.yaml`
+- **`run_manual()`**（手動填入 SRR 啟動）：metadata 同時儲存到 `metadata/library_info.csv` 和 `metadata/{GSE_ID}/library_info.csv`；config 的 `metadata`/`groups` 欄位更新為專案路徑
+
+### 切換專案
+
+```bash
+# Web UI 輸入新 GSE ID → run_gse 自動載入對應 config/projects/{GSE_ID}.yaml
+# 若要手動切換：
+cp config/projects/GSE113230.yaml config.yaml
+```
+
+### `/tmp/run_generate_report.py`（Server 端獨立重跑報告）
+
+當 server 上 config.yaml 已切換到其他專案、但需重跑 GSE113230 的報告時，
+使用此 wrapper 繞過 Snakemake DAG，直接呼叫 `generate_report.py`：
+
+```bash
+# server 上
+python /tmp/run_generate_report.py
+```
+
+wrapper mock 了 `snakemake` 物件（`_NamedList` + `_Params`），hardcode GSE113230 的 input/output/params。
+此模式可複用於任何需要獨立重跑 terminal rule 的情境。
+
+---
+
 ## 已知問題與解決方法
 
 | 問題 | 原因 | 解決方法 |
@@ -413,7 +494,13 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 | Snakemake hook `notify.py` 路徑錯誤（找到 conda env 的 Python runner） | `onstart`/`onsuccess`/`onerror` 中 `__file__` 指向 conda env 的腳本執行器，非專案目錄 | 改用 `workflow.snakefile` 推算專案根目錄路徑 |
 | benchmark `MissingInputException`（hg19.gtf） | benchmark config 路徑是 `hg19.gtf`，但 server 實際檔名是 `genes.gtf` | 更新 `benchmark/config_benchmark.yaml` GTF 路徑 |
 | isoform switching 找到 0 個 significant events | Global BH 校正跨 ~7,360 isoform，min padj = 0.937 | 改用 within-gene BH（`padj_within_gene`）；結果：66 events（FDR < 0.1, \|ΔIUI\| > 0.1） |
-| DE analysis 0 個 significant circRNA（padj 校正） | n=3 vs 3，BH 校正後 min padj = 0.432 | 改用 nominal p-value（`de_sig_by: pvalue`）；結果：831 個 significant circRNA |
+| DE analysis 0 個 significant circRNA（padj 校正） | n=3 vs 3，BH 校正後 min padj = 0.432 | 改用 nominal p-value（`de_sig_by: pvalue`）；結果：482 個 significant circRNA |
+| `bioconductor-edger=3.44.0` PackagesNotFoundError | conda bioconductor channel 無此 patch 版本 | 改為 `bioconductor-edger>=3.40`（不鎖 patch） |
+| `DCC==0.5.0` pip install 失敗 | PyPI 上的 DCC 是不相干套件（版本 0.7+）；circRNA DCC 在 bioconda | 移至 conda 依賴 `dcc=0.5.0`，從 pip section 移除 |
+| Docker build `mamba env create` 等待確認 | `mamba env create` 預設互動式 `[Y/n]` | 加 `--yes` flag：`mamba env create --yes` |
+| Anaconda `repo.anaconda.com` 商業授權警告 | `defaults` channel 要求商業許可 | 移除 `defaults`，僅保留 `bioconda` + `conda-forge` |
+| `generate_report` 重跑觸發上游 rules（download/align） | server config.yaml 指向其他專案，`--forcerun` 重建整個 DAG | 改用 `/tmp/run_generate_report.py` mock snakemake 物件直接執行 |
+| SVG badge 距離弧段過遠（舊 angular de-overlap） | `deOverlap` 只往順時針推移，多個 badge 連鎖推移後遠離原弧段 | 改為 radial staggering：badge 固定在弧段正上方角度，僅在 angular gap < 0.14 rad 時改變半徑（`MI_R0=+7` vs `MI_R1=+19`）；虛線放在 `<g>` 內隨 badge 隱藏 |
 
 ---
 
@@ -485,11 +572,20 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 | Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down；顯著標準依 `de_sig_by` 顯示 `p<0.05` 或 `FDR<0.05` |
 | **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量 |
 | **Biomarker 候選表** | top 30，欄位：rank, circ_id, log2FC, padj, biomarker_score, in_circbase, circbase_id, circbase_gene, Type |
-| **Top DE table（分兩表）** | 上調（tumor 高）和下調（tumor 低）分開顯示；欄位含 gene_name / strand / region / exon_span / circbase_id / log2FC / pvalue / padj / Type |
+| **Top DE table（分兩表）** | 上調（tumor 高）和下調（tumor 低）分開顯示；欄位含 gene_name / strand / region / exon_span / circbase_id / log2FC / pvalue / Type（**padj 已移除**） |
 | Volcano plot | **Plotly 互動式**（hover 顯示 circ_id / log2FC / p-value / Type）；Y 軸標題依 `de_sig_by` 動態切換；fallback to PDF embed if Plotly unavailable |
 | PCA | **Plotly 互動式**（hover 顯示 SRR ID / condition，tumor/normal 顏色區分）；numpy SVD |
 | Heatmap | **Plotly 互動式**（top 50 DE，hover 顯示 circRNA ID，RdBu_r colorscale，z-score 標準化）；fallback to PDF embed |
 | Isoform Switching | Plotly 長條圖（top 10 switching genes 的 IUI tumor vs normal）+ 顯著 switching 表格 |
+| **SVG Circular Diagram** | 每個 circRNA 的環狀圖（exon 結構 + miRNA/RBP binding site 弧段 + 流水號 badge）|
+
+**SVG Circular Diagram — Badge 放置邏輯（radial staggering）**：
+
+- miRNA badge（外圈）：預設放在弧段外 `+7` px（`MI_R0`）；若與前一 badge 角度差 < 0.14 rad，改放 `+19` px（`MI_R1`）
+- RBP badge（內圈）：同邏輯，往內 `−8` px（`RBP_R0`）或 `−20` px（`RBP_R1`）
+- **不做 angular de-overlap**：badge 角度永遠等於弧段中心角，只在徑向上交錯
+- 虛線 connector（`stroke-dasharray="2,2"`）放在 `<g id="_mib_N">` 內，toggle 時隨 badge 一起隱藏
+- 虛線只在 badge 在外圈（`MI_R1`）時才畫，距離弧段緊貼時不畫
 
 **DE table 資料來源合併**：
 - `de_results.tsv`（主表）
@@ -501,7 +597,11 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-05-27）
+## 目前執行進度（2026-06-01）
+
+### GSE113230（三陰性乳癌）
+
+**所有步驟已完成。** 報告位置：`~/GSE113230_results/report.html`（server）
 
 | 步驟 | 狀態 |
 |------|------|
@@ -513,13 +613,38 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | STAR mate2 | ✅ 6/6 完成 |
 | DCC | ✅ 6/6 完成 |
 | consensus_filter | ✅ 6/6 完成（1,594–3,728 circRNAs / sample） |
-| merge_counts | ✅ 完成（9,349 circRNAs） |
+| merge_counts | ✅ 完成（9,349 circRNAs；filterByExpr 後 4,630） |
 | assign_isoforms | ✅ 完成（含 strand / exon_span / region） |
 | annotate_circbase | ✅ 完成 |
-| DE analysis | ✅ 完成（nominal p < 0.05；831 significant circRNAs） |
+| DE analysis | ✅ 完成（cascade: Storey q 失敗 → nominal p < 0.05；482 significant circRNAs） |
+| predict_interactions | ✅ 完成（top 50；CircInteractome；interactions.json） |
 | isoform switching | ✅ 完成（66 events，within-gene FDR < 0.1） |
-| rank_biomarkers | ✅ 完成（831 candidates） |
-| report | ✅ 完成（含 gene / strand / region / exon_span / circbase_id 欄位） |
+| rank_biomarkers | ✅ 完成（482 candidates；**6D score**：sig+FC+conf+circbase+miRNA+RBP） |
+| report | ✅ 完成（Plotly 互動；Type I/II；SVG exon diagram；miRNA/RBP badge） |
+
+**主要數值結果**：
+- 偵測：9,349 consensus circRNAs → filterByExpr 後 4,630 tested
+- DE：482 significant（nominal p < 0.05，|log2FC| > 1）；min Storey q = 0.384（underpowered）
+- Isoform switching：66 events（within-gene FDR < 0.1，|ΔIUI| > 0.1）
+- Biomarker score：6D（sig, FC, confidence, circBase, #miRNA, #RBP），50 circRNAs 有 interaction data
+- Top 1 biomarker：chr8:116631359|116635985（score=0.7126，51 miRNA，8 RBP binders）
+
+**Biomarker score 公式（6D）**：
+```
+score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) / 6
+  sig_norm   = −log10(pvalue), 上限 10，min-max 標準化
+  fc_norm    = |log2FC|, 上限 5，min-max 標準化
+  conf_norm  = confidence_score, min-max 標準化
+  known_bonus = 1 若 in_circbase，否則 0（不標準化）
+  mirna_norm = distinct miRNA binders 數，min-max 標準化（無 interaction data 者為 0）
+  rbp_norm   = distinct RBP binders 數，min-max 標準化（無 interaction data 者為 0）
+```
+
+**Cascade 顯著性邏輯（de_sig_by: auto）**：
+1. filterByExpr(min.count=5) → 4,630 tests（原 9,349）
+2. Storey q-value < 0.2（bioconductor-qvalue，已安裝）
+3. min q = 0.384 → fallback to nominal p < 0.05
+4. 482 significant circRNAs（論文 Methods 需說明樣本量限制）
 
 **GSE113230 各工具偵測數量**：
 
@@ -531,3 +656,21 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | SRR7012369 | Normal 1 | 27,105 | 9,397 | 3,157 |
 | SRR7012370 | Normal 2 | 39,211 | 9,349 | 2,790 |
 | SRR7012371 | Normal 3 | 12,985 | 5,788 | 1,594 |
+
+---
+
+### GSE58135（乳癌）
+
+**進行中。** SRA 下載中（10 個 SRR）；fasterq-dump 完成後繼續跑 QC → circRNA 偵測。
+
+| 步驟 | 狀態 |
+|------|------|
+| prefetch + fasterq-dump | 🔄 進行中（10/10 SRR 已 prefetch） |
+| fastp QC/trim | ⏳ 待執行 |
+| CIRIquant | ⏳ 待執行 |
+| STAR / DCC | ⏳ 待執行 |
+| consensus → DE → report | ⏳ 待執行 |
+
+**Server config**（`config/projects/GSE58135.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE58135/raw`
+- `results_dir: /home3/choukaihsuan/GSE58135_results`

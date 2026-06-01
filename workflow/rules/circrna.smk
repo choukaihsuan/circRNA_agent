@@ -15,7 +15,7 @@ rule check_ciriquant_config:
     output:
         touch("config/.ciriquant_ready"),
     run:
-        cfg = config["ciriquant_config"]
+        cfg = CIRIQUANT_CONFIG
         if not os.path.exists(cfg):
             raise ValueError(
                 f"CIRIquant config not found: {cfg}\n"
@@ -28,7 +28,7 @@ rule ciriquant:
     input:
         r1  = TRIMMED_DIR + "/{srr}_1.fastq.gz",
         r2  = TRIMMED_DIR + "/{srr}_2.fastq.gz",
-        cfg = config["ciriquant_config"],
+        cfg = CIRIQUANT_CONFIG,
         _   = "config/.ciriquant_ready",
     output:
         gtf = RESULTS_DIR + "/circRNA/{srr}/{srr}.gtf",
