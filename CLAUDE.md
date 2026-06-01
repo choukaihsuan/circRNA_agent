@@ -418,17 +418,39 @@ image name：`choukaihsuan/circrna-pipeline:1.0.0`
 - `bioconductor-qvalue`（Storey q-value，analysis.R 需要）
 - `dcc=0.5.0` 在 conda 依賴中（bioconda），**不在 pip**（PyPI 的 DCC 是另一個無關套件，版本 0.7+）
 
-### Singularity（HPC server）
+### Singularity / Apptainer（HPC server）
+
+Docker image 已上傳至 Docker Hub，任何有 Singularity 或 Apptainer 且開啟 user namespace 的 HPC server，執行以下一行即可取得完整環境：
 
 ```bash
-# server 上拉取 Docker image 轉換為 SIF
 singularity pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.0
+```
 
-# Snakemake 自動使用（workflow/Snakefile 已設定）
-snakemake --use-singularity --singularity-args "--bind /home3:/home3"
+或使用 Apptainer（語法相同）：
+
+```bash
+apptainer pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.0
+```
+
+拉取後用容器執行 pipeline：
+
+```bash
+snakemake \
+    --snakefile workflow/Snakefile \
+    --configfile config.yaml \
+    --cores 36 \
+    --use-singularity \
+    --singularity-args "--bind /home3/choukaihsuan:/home3/choukaihsuan" \
+    --keep-going --rerun-incomplete
 ```
 
 `workflow/Snakefile` 頂部已設定：`singularity: "docker://choukaihsuan/circrna-pipeline:1.0.0"`
+
+**注意**：目前使用的 server（172.16.0.178，CentOS 7）預設關閉 user namespace，conda 版 apptainer 無法執行。需請管理員執行：
+```bash
+echo 10000 > /proc/sys/user/max_user_namespaces
+```
+或安裝 setuid 版本的 Singularity。在此之前繼續使用 conda env `ciriquant`。
 
 ---
 
