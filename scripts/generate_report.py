@@ -562,6 +562,7 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
                 x=heat_df["log2FC"].tolist(), y=heat_df["nlp"].tolist(),
                 mode="markers+text",
                 name="Heatmap top",
+                visible="legendonly",
                 marker=dict(symbol="circle-open", size=13, color="black",
                             line=dict(width=2, color="black")),
                 text=heat_df["circ_id"].tolist(),
@@ -575,13 +576,34 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
     fig.add_vline(x=lfc,   line_dash="dot", line_color="#aaa", line_width=1)
     fig.add_vline(x=-lfc,  line_dash="dot", line_color="#aaa", line_width=1)
     fig.add_hline(y=-math.log10(sig_thr), line_dash="dot", line_color="#aaa", line_width=1)
+
+    # toggle button for heatmap top circles (only when trace exists)
+    heatmap_trace_idx = len(traces) - 1 if heatmap_ids else None
+    updatemenus = []
+    if heatmap_trace_idx is not None:
+        updatemenus = [dict(
+            type="buttons", direction="left", showactive=True,
+            x=1.0, y=1.13, xanchor="right", yanchor="top",
+            bgcolor="#f4f8ff", bordercolor="#99c2f0", borderwidth=1,
+            font=dict(size=11),
+            buttons=[
+                dict(label="○ Heatmap circles: OFF",
+                     method="restyle",
+                     args=[{"visible": "legendonly"}, [heatmap_trace_idx]]),
+                dict(label="◉ Heatmap circles: ON",
+                     method="restyle",
+                     args=[{"visible": True}, [heatmap_trace_idx]]),
+            ],
+        )]
+
     fig.update_layout(
         title=dict(text=f"Volcano Plot [{de_method}]", font_size=14),
         xaxis_title="log₂ Fold Change (Tumor / Normal)",
         yaxis_title=f"−log₁₀({p_label})",
         height=500, plot_bgcolor="white", paper_bgcolor="white",
         legend=dict(title="", orientation="h", y=1.02, x=0),
-        margin=dict(t=60),
+        margin=dict(t=80),
+        updatemenus=updatemenus,
     )
     fig.update_xaxes(showgrid=True, gridcolor="#f0f0f0", zeroline=False)
     fig.update_yaxes(showgrid=True, gridcolor="#f0f0f0", zeroline=False)
@@ -1435,10 +1457,10 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
     return chrom+':'+a.toLocaleString()+'-'+b.toLocaleString();
   }};
 
-  const priTitle='Priority score (click to sort):\n'
+  const priTitle='Priority score (click to sort):\\n'
     +(tableType==='mirna'
-      ?'8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1'
-      :'bindingSites log2×2 (max+3), internal=+2\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1');
+      ?'8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1\\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1'
+      :'bindingSites log2×2 (max+3), internal=+2\\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1');
   let html='<table class="itable"><thead><tr>';
   headers.forEach((h,i)=>{{
     const tip=i===0?` title="${{priTitle}}"`:' title="Click to sort"';
@@ -1688,7 +1710,7 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
   {_de_split_tables(top_table, tumor_label=tumor_label, normal_label=normal_label, interactions=interactions)}
 
   <h2>Volcano Plot</h2>
-  <p style="font-size:12px;color:#666">&#9711; Open circles mark circRNAs in the heatmap top {heatmap_top_n} up + {heatmap_top_n} down.</p>
+  <p style="font-size:12px;color:#888">&#9711; Heatmap top {heatmap_top_n} up + {heatmap_top_n} down markers: use the toggle button in the chart to show/hide.</p>
   {volcano_html}
 
   <h2>PCA</h2>
