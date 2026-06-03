@@ -46,6 +46,15 @@ def _fmt_floats(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _dl_wrap(table_html: str, table_id: str, csv_filename: str) -> str:
+    """Inject an id into the first <table> tag and prepend a CSV download button."""
+    html = table_html.replace('<table', f'<table id="{table_id}"', 1)
+    btn  = (f'<div class="tbl-dl-bar no-print">'
+            f'<button class="dl-btn" onclick="dlCSV(\'{table_id}\',\'{csv_filename}\')">'
+            f'⬇ CSV</button></div>')
+    return btn + html
+
+
 def _df_to_html(df: pd.DataFrame, max_rows: int = 50) -> str:
     return (
         _fmt_floats(df.head(max_rows))
@@ -131,13 +140,15 @@ def _de_split_tables(sig: pd.DataFrame, tumor_label: str = "tumor",
             f'<h3 style="color:#d62728">&#8593; Up-regulated in {tumor_label} '
             f'(log₂FC &gt; 0) — {len(up)} circRNAs</h3>'
         )
-        html_parts.append(_de_table_clickable(up, ixn))
+        html_parts.append(_dl_wrap(_de_table_clickable(up, ixn),
+                                   "tbl_de_up", "de_upregulated.csv"))
     if not down.empty:
         html_parts.append(
             f'<h3 style="color:#2CA02C">&#8595; Down-regulated in {tumor_label} / '
             f'Up-regulated in {normal_label} (log₂FC &lt; 0) — {len(down)} circRNAs</h3>'
         )
-        html_parts.append(_de_table_clickable(down, ixn))
+        html_parts.append(_dl_wrap(_de_table_clickable(down, ixn),
+                                   "tbl_de_dn", "de_downregulated.csv"))
     return "\n".join(html_parts) if html_parts else _df_to_html(sig)
 
 
@@ -199,7 +210,59 @@ _STYLE = """
   .itable tr:hover td { background:#f8faff; }
   .no-data { color:#aaa; font-size:13px; font-style:italic; padding:8px 0; }
   .conf-high { color:#2c6fad; font-weight:bold; }
+
+  /* Download / print toolbar */
+  .dl-btn { display:inline-block; margin:4px 4px 4px 0; padding:4px 10px;
+            font-size:11px; font-weight:bold; border:1px solid #2c6fad;
+            border-radius:4px; color:#2c6fad; background:#fff; cursor:pointer;
+            text-decoration:none; transition:background .15s; }
+  .dl-btn:hover { background:#eaf3ff; }
+  .tbl-dl-bar { text-align:right; margin-bottom:2px; }
+  .print-bar  { position:sticky; top:0; z-index:99; background:#2c6fad; color:#fff;
+                padding:8px 24px; display:flex; align-items:center; gap:12px;
+                flex-wrap:wrap; }
+  .print-bar span { font-size:13px; font-weight:bold; flex:1; }
+  .print-btn  { padding:5px 14px; border:2px solid #fff; border-radius:4px;
+                background:transparent; color:#fff; font-size:13px;
+                font-weight:bold; cursor:pointer; }
+  .print-btn:hover { background:rgba(255,255,255,.15); }
+
+  @media print {
+    .print-bar, .dl-btn, .no-print { display:none !important; }
+    body { max-width:100%; margin:0; padding:0 12px; }
+    .table th { background:#2c6fad !important; -webkit-print-color-adjust:exact;
+                print-color-adjust:exact; }
+    .table { page-break-inside:avoid; font-size:11px; }
+    h1, h2 { color:#2c6fad !important; -webkit-print-color-adjust:exact;
+             print-color-adjust:exact; }
+  }
 </style>
+"""
+
+_SCRIPT = """
+<script>
+function dlCSV(tid, fname) {
+  var tbl = document.getElementById(tid);
+  if (!tbl) return;
+  var rows = tbl.querySelectorAll('tr');
+  var lines = [];
+  rows.forEach(function(r) {
+    var cells = r.querySelectorAll('th,td');
+    var cols = [];
+    cells.forEach(function(c) {
+      cols.push('"' + c.innerText.replace(/"/g,'""') + '"');
+    });
+    lines.push(cols.join(','));
+  });
+  var blob = new Blob([lines.join('\\n')], {type:'text/csv;charset=utf-8;'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+</script>
 """
 
 
@@ -320,7 +383,8 @@ def _isoform_section(switching_file: Optional[str]) -> str:
                  if c in sig.columns]
     sort_keys = [c for c in ["gene_name", "p_value"] if c in sig.columns]
     table_html = (
-        _df_to_html(sig.sort_values(sort_keys)[show_cols], max_rows=40)
+        _dl_wrap(_df_to_html(sig.sort_values(sort_keys)[show_cols], max_rows=40),
+                 "tbl_isoform", "isoform_switching.csv")
         if show_cols and sort_keys else ""
     )
 
@@ -378,7 +442,10 @@ def _biomarker_section(biomarker_file: Optional[str],
                     f'title="{tip}">{v}</a>')
         disp["circ_id"] = disp["circ_id"].astype(str).apply(_link)
 
-    table_html = disp.to_html(index=False, classes="table", border=0, na_rep="—", escape=False)
+    table_html = _dl_wrap(
+        disp.to_html(index=False, classes="table", border=0, na_rep="—", escape=False),
+        "tbl_biomarker", "biomarker_candidates.csv"
+    )
 
     return f"""
   <h2>Biomarker Candidates (top {min(len(bm), 30)} by composite score)</h2>
@@ -1282,9 +1349,16 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
   <meta charset="UTF-8">
   <title>circRNA Analysis Report – {project_id}</title>
   {_STYLE}
+  {_SCRIPT}
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
 </head>
 <body>
+
+<div class="print-bar no-print">
+  <span>circRNA Analysis Report — {project_id}</span>
+  <button class="print-btn" onclick="window.print()">🖨 列印 / 存為 PDF</button>
+</div>
+
   <h1>circRNA Analysis Report</h1>
   <p><strong>Project:</strong> {project_id} &nbsp;&nbsp;
      <strong>Method:</strong> <span class="method-tag">{de_method}</span> &nbsp;&nbsp;
