@@ -926,11 +926,11 @@ function showCircDetail(circId) {{
   circEl.innerHTML = '';
   _drawCircleRNA(circId, circEl);
   document.getElementById('cm-mirna').innerHTML = _buildInteractionTable(
-    d.mirna||[], ['miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source','in_circ'],
-    ['miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source','In circRNA'], circId);
+    d.mirna||[], ['_priority','miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source','in_circ'],
+    ['Priority','miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'mirna');
   document.getElementById('cm-rbp').innerHTML = _buildInteractionTable(
-    d.rbp||[], ['RBPName','bindingSites','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
-    ['RBP','Sites','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId);
+    d.rbp||[], ['_priority','RBPName','bindingSites','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
+    ['Priority','RBP','Sites','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
   _fetchSeqsInTable('cm-mirna');
   _fetchSeqsInTable('cm-rbp');
   const vEl = document.getElementById('cm-volcano');
@@ -1366,8 +1366,52 @@ function _buildMiniVolcano(circId) {{
   el._plotlyLoaded=true;
 }}
 
-function _buildInteractionTable(rows, keys, headers, circId) {{
+function _calcPriority(r, type) {{
+  let s=0;
+  if(type==='mirna') {{
+    const st=(r.siteType||'').toLowerCase();
+    if(st.includes('8mer')) s+=4;
+    else if(st.includes('7mer-m8')) s+=3;
+    else if(st.includes('7mer-1a')) s+=2;
+    else if(st.includes('6mer')) s+=1;
+  }} else {{
+    const n=parseInt(r.bindingSites||0);
+    s+=Math.min(3, Math.log2(n+1));
+    if((r.location||'').toLowerCase().includes('internal')) s+=2;
+  }}
+  if(parseInt(r.clipExpNum||0)>0) s+=3;
+  if(r.source==='ENCORI') s+=2;
+  const ic=r.in_circ;
+  if(ic===true||ic==='true') s+=1;
+  return Math.round(s*10)/10;
+}}
+
+function _sortITable(th) {{
+  const tbl=th.closest('table');
+  const col=th.cellIndex;
+  const asc=th.dataset.asc!=='true';
+  th.dataset.asc=asc;
+  th.closest('tr').querySelectorAll('th').forEach(h=>{{
+    h.textContent=h.textContent.replace(' ▲','').replace(' ▼','');
+  }});
+  th.textContent+=(asc?' ▲':' ▼');
+  const tbody=tbl.querySelector('tbody');
+  Array.from(tbody.querySelectorAll('tr'))
+    .sort((a,b)=>{{
+      const av=a.cells[col].dataset.val!==undefined?parseFloat(a.cells[col].dataset.val):a.cells[col].innerText.trim();
+      const bv=b.cells[col].dataset.val!==undefined?parseFloat(b.cells[col].dataset.val):b.cells[col].innerText.trim();
+      if(typeof av==='number'&&typeof bv==='number') return asc?av-bv:bv-av;
+      return asc?String(av).localeCompare(String(bv)):String(bv).localeCompare(String(av));
+    }})
+    .forEach(r=>tbody.appendChild(r));
+}}
+
+function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
   if(!rows||!rows.length) return '<p class="no-data">No data available (novel circRNA or source returned no results).</p>';
+
+  // compute priority and pre-sort descending
+  rows=rows.map(r=>Object.assign({{}},r,{{_priority:_calcPriority(r,tableType||'mirna')}}));
+  rows.sort((a,b)=>b._priority-a._priority);
 
   // parse chr and genomic start from circId (e.g. "chr2:56813056|56820808")
   let chrom='', chromStart=0;
@@ -1391,13 +1435,28 @@ function _buildInteractionTable(rows, keys, headers, circId) {{
     return chrom+':'+a.toLocaleString()+'-'+b.toLocaleString();
   }};
 
+  const priTitle='Priority score (click to sort):\n'
+    +(tableType==='mirna'
+      ?'8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1'
+      :'bindingSites log2×2 (max+3), internal=+2\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1');
   let html='<table class="itable"><thead><tr>';
-  headers.forEach(h=>html+='<th>'+h+'</th>');
+  headers.forEach((h,i)=>{{
+    const tip=i===0?` title="${{priTitle}}"`:' title="Click to sort"';
+    html+=`<th style="cursor:pointer;user-select:none" onclick="_sortITable(this)"${{tip}}>${{h}}${{i===0?' ▼':''}}</th>`;
+  }});
   html+='</tr></thead><tbody>';
   rows.forEach(r=>{{
     html+='<tr>';
     keys.forEach(k=>{{
       let v=r[k]!==undefined&&r[k]!==''?r[k]:'—';
+      if(k==='_priority') {{
+        const sc=r._priority;
+        const col=sc>=7?'#2ca02c':sc>=4?'#e07b39':'#aaa';
+        html+=`<td data-val="${{sc}}" style="white-space:nowrap">`
+             +`<span style="background:${{col}};color:#fff;font-weight:bold;border-radius:4px;`
+             +`padding:2px 7px;font-size:11px">${{sc.toFixed(1)}}</span></td>`;
+        return;
+      }}
       if(k==='circ_pos') v=_absPos(v);
       if(k==='_seq_logo') {{
         const rawPos=String(r.circ_pos||'');
@@ -1430,12 +1489,20 @@ function _buildInteractionTable(rows, keys, headers, circId) {{
   const nEN=rows.filter(r=>r.source==='ENCORI').length;
   html+=`<p style="font-size:11px;color:#aaa;margin-top:6px">
     <span style="background:#6c757d;color:white;border-radius:3px;padding:1px 5px;font-size:10px">CircInteractome</span>
-    ${{nCI}} records · TargetScan predictions · hg19 · Chr Position = circRNA start + 1-based offset
+    ${{nCI}} records · TargetScan predictions · hg19
     &nbsp;&nbsp;
     <span style="background:#0077b6;color:white;border-radius:3px;padding:1px 5px;font-size:10px">ENCORI</span>
-    ${{nEN}} records · CLIP-seq validated · hg38 · Gene-level
+    ${{nEN}} records · CLIP-seq validated · hg38
     &nbsp;&nbsp; Binding Seq: hg19 UCSC (⟳ = loading)
-  </p>`;
+    &nbsp;&nbsp;
+    <strong>Priority</strong>: `
+    +(tableType==='mirna'
+      ?'seed strength (8mer=4…6mer=1) + CLIP>0(+3) + ENCORI(+2) + in_circ(+1)'
+      :'sites log₂×2 max3 + internal(+2) + CLIP>0(+3) + ENCORI(+2) + in_circ(+1)')
+    +(` · <span style="background:#2ca02c;color:#fff;border-radius:3px;padding:1px 5px;font-size:10px">≥7 high</span>`
+    +` <span style="background:#e07b39;color:#fff;border-radius:3px;padding:1px 5px;font-size:10px">4–7 medium</span>`
+    +` <span style="background:#aaa;color:#fff;border-radius:3px;padding:1px 5px;font-size:10px">&lt;4 low</span>`)
+    +`</p>`;
   return html;
 }}
 
