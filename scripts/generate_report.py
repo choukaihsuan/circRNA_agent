@@ -96,6 +96,161 @@ def _eff_sig(de: pd.DataFrame, de_sig_by: str, fdr: float):
     return "padj", fdr, "adjusted p-value"
 
 
+def _sig_ids_from_de(de: pd.DataFrame, p_col: str, sig_thr: float, lfc: float) -> set:
+    """Return set of significant circRNA IDs."""
+    if p_col not in de.columns or "log2FC" not in de.columns or "circ_id" not in de.columns:
+        return set()
+    mask = (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
+    return set(de.loc[mask, "circ_id"].dropna().astype(str))
+
+
+def _venn_3_svg(sig_sets: dict, lfc: float) -> str:
+    """Generate a 3-circle (or 2-circle) Venn SVG for DE method overlap."""
+    methods = [k for k in ("edgeR_ciriquant", "deseq2", "limma") if k in sig_sets]
+    if len(methods) < 2:
+        return ""
+    sets = [sig_sets[m] for m in methods]
+    # 7-region computation
+    A, B = sets[0], sets[1]
+    C = sets[2] if len(sets) > 2 else set()
+    ab = A & B; ac = A & C; bc = B & C; abc = A & B & C
+    counts = {
+        "A":   len(A - B - C),  "B":  len(B - A - C),  "C":   len(C - A - B),
+        "AB":  len(ab - C),     "AC": len(ac - B),      "BC":  len(bc - A),
+        "ABC": len(abc),
+    }
+    total_union = len(A | B | C) if len(sets) > 2 else len(A | B)
+    # SVG layout (3-circle)
+    W, H = 460, 295
+    cx = [150, 310, 230]; cy = [128, 128, 218]; r = 90
+    colors = ["rgba(214,39,40,0.20)", "rgba(44,160,44,0.20)", "rgba(44,119,214,0.20)"]
+    strokes = ["#d62728", "#2CA02C", "#2c6fad"]
+    labels  = {"edgeR_ciriquant": "edgeR (FSJ offset)", "deseq2": "DESeq2", "limma": "limma-voom"}
+    # Label anchor positions (outside each circle)
+    lpos = [(cx[0]-r-2, cy[0]-r+5), (cx[1]+r+2, cy[1]-r+5), (cx[2], cy[2]+r+14)]
+    # Region count positions
+    rpos = {
+        "A":  (cx[0]-46, cy[0]),     "B":  (cx[1]+46, cy[1]),    "C":  (cx[2], cy[2]+46),
+        "AB": (230, cy[0]-20),        "AC": (165, cy[0]+62),      "BC": (295, cy[1]+62),
+        "ABC":(230, 178),
+    }
+    svg_parts = [f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
+                 f'xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;max-width:480px">']
+    # Circles
+    for i in range(min(len(methods), 3)):
+        svg_parts.append(f'<circle cx="{cx[i]}" cy="{cy[i]}" r="{r}" '
+                         f'fill="{colors[i]}" stroke="{strokes[i]}" stroke-width="2.5"/>')
+    # Method labels
+    for i, m in enumerate(methods[:3]):
+        lx, ly = lpos[i]
+        anc = "end" if i == 0 else ("start" if i == 1 else "middle")
+        svg_parts.append(f'<text x="{lx}" y="{ly}" font-size="11" font-weight="bold" '
+                         f'fill="{strokes[i]}" text-anchor="{anc}">'
+                         f'{labels.get(m, m)}</text>')
+        svg_parts.append(f'<text x="{lx}" y="{ly+14}" font-size="10" '
+                         f'fill="{strokes[i]}" text-anchor="{anc}">'
+                         f'(n={len(sig_sets[m])})</text>')
+    # Region counts
+    for region, (rx, ry) in rpos.items():
+        if len(methods) < 3 and region in ("C", "AC", "BC", "ABC"):
+            continue
+        v = counts[region]
+        if v == 0:
+            continue
+        svg_parts.append(f'<text x="{rx}" y="{ry}" font-size="13" font-weight="bold" '
+                         f'text-anchor="middle" dominant-baseline="middle" fill="#333">{v}</text>')
+    svg_parts.append('</svg>')
+    note = (f'<p style="font-size:12px;color:#666;margin:4px 0 0">数字 = 各區域顯著 circRNA 數量'
+            f'（閾值：|log₂FC| &gt; {lfc}）；三方法聯集共 {total_union} 個。</p>')
+    return f'<div style="text-align:center">{"".join(svg_parts)}</div>{note}'
+
+
+def _build_method_js_data(
+    de: pd.DataFrame,
+    matrix: pd.DataFrame,
+    p_col: str,
+    sig_thr: float,
+    lfc: float,
+    groups_file: Optional[str],
+    normal_label: str,
+    hm_pool: int = 50,
+) -> dict:
+    """Build {stats, volcano, heatmap} for one DE method (for ALL_DE_METHODS JS)."""
+    import json as _json
+    # Stats
+    n_sig = n_up = n_dn = 0
+    if p_col in de.columns and "log2FC" in de.columns:
+        mask = (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
+        sig  = de[mask]
+        n_sig = len(sig)
+        n_up  = int((sig["log2FC"] > 0).sum()) if n_sig else 0
+        n_dn  = int((sig["log2FC"] < 0).sum()) if n_sig else 0
+    # Volcano rows
+    vol_rows = []
+    if "circ_id" in de.columns and p_col in de.columns and "log2FC" in de.columns:
+        for _, r in de.iterrows():
+            if pd.isna(r["log2FC"]) or pd.isna(r.get(p_col)):
+                continue
+            x  = round(float(r["log2FC"]), 3)
+            pv = float(r[p_col])
+            y  = round(-math.log10(max(pv, 1e-300)), 3)
+            s  = ("U" if pv < sig_thr and r["log2FC"] > lfc else
+                  "D" if pv < sig_thr and r["log2FC"] < -lfc else "N")
+            vol_rows.append([x, y, s, str(r["circ_id"])])
+    # Heatmap data (mirrors FULL_HEATMAP_DATA logic)
+    hm_data = None
+    if not de.empty and not matrix.empty:
+        try:
+            if {"circ_id", "log2FC", p_col}.issubset(de.columns):
+                up_p = de[de["log2FC"] > 0].dropna(subset=[p_col]).sort_values(p_col).head(hm_pool)
+                dn_p = de[de["log2FC"] < 0].dropna(subset=[p_col]).sort_values(p_col).head(hm_pool)
+                hm_ids  = list(up_p["circ_id"]) + list(dn_p["circ_id"])
+                hm_avail = [i for i in hm_ids if i in matrix.index]
+                if hm_avail:
+                    samps  = matrix.columns.tolist()
+                    sub    = matrix.loc[hm_avail].astype(float)
+                    log_s  = (sub + 1).apply(lambda col: col.apply(lambda v: math.log2(v) if v > 0 else 0.0))
+                    cmap   = {}
+                    if groups_file and Path(groups_file).exists():
+                        try:
+                            grp_df = pd.read_csv(groups_file)
+                            cmap   = dict(zip(grp_df["srr_id"].astype(str), grp_df["condition"].astype(str)))
+                        except Exception:
+                            pass
+                    ncols  = [c for c in samps if cmap.get(c, "") == normal_label]
+                    rcols  = ncols if ncols else samps
+                    rmean  = log_s[rcols].mean(axis=1)
+                    rstd   = log_s.std(axis=1).clip(lower=0.1)
+                    z_hm   = log_s.sub(rmean, axis=0).div(rstd, axis=0)
+                    cb_map = {}
+                    if "circbase_id" in de.columns and "in_circbase" in de.columns:
+                        kn = de[de["in_circbase"] == 1].dropna(subset=["circbase_id"])
+                        cb_map = dict(zip(kn["circ_id"].astype(str), kn["circbase_id"].astype(str)))
+                    pv_map = dict(zip(de["circ_id"].astype(str), de[p_col]))
+                    lf_map = dict(zip(de["circ_id"].astype(str), de["log2FC"]))
+                    rows_hm = {}
+                    for cid in hm_avail:
+                        cb  = cb_map.get(cid, "")
+                        lbl = cb if cb and cb not in ("", "novel") else cid
+                        rows_hm[cid] = {
+                            "z":      [round(v, 3) for v in z_hm.loc[cid].tolist()],
+                            "pval":   float(pv_map.get(cid, 1.0)),
+                            "log2fc": float(lf_map.get(cid, 0.0)),
+                            "label":  lbl,
+                        }
+                    hm_data = {
+                        "samples":    samps,
+                        "conditions": cmap,
+                        "up_order":   [i for i in up_p["circ_id"] if i in set(hm_avail)],
+                        "dn_order":   [i for i in dn_p["circ_id"] if i in set(hm_avail)],
+                        "rows":       rows_hm,
+                    }
+        except Exception:
+            pass
+    return {"stats": {"n_sig": n_sig, "n_up": n_up, "n_dn": n_dn},
+            "volcano": vol_rows, "heatmap": hm_data}
+
+
 def _load_interactions(json_file: Optional[str]) -> dict:
     """Load pre-fetched ENCORI interactions JSON, return {} on any error."""
     if not json_file:
@@ -226,6 +381,13 @@ _STYLE = """
                 background:transparent; color:#fff; font-size:13px;
                 font-weight:bold; cursor:pointer; }
   .print-btn:hover { background:rgba(255,255,255,.15); }
+
+  /* DE method switcher */
+  .msw-btn { padding:5px 14px; border:1px solid #2c6fad; border-radius:4px;
+             background:white; color:#2c6fad; cursor:pointer; font-size:13px;
+             margin-right:6px; transition:all 0.15s; }
+  .msw-btn.active { background:#2c6fad; color:white; }
+  .msw-btn:hover:not(.active) { background:#eaf3ff; }
 
   @media print {
     .print-bar, .dl-btn, .no-print { display:none !important; }
@@ -497,7 +659,8 @@ def _biomarker_section(biomarker_file: Optional[str],
 
 def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
                     p_col: str = "padj", sig_thr: float = 0.05, p_label: str = "adjusted p-value",
-                    heatmap_ids: Optional[set] = None) -> str:
+                    heatmap_ids: Optional[set] = None,
+                    div_id: str = "main-volcano-plot") -> str:
     """Interactive Plotly volcano; returns '' when plotly is unavailable or DE is empty."""
     if not _PLOTLY:
         return ""
@@ -607,7 +770,7 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
     )
     fig.update_xaxes(showgrid=True, gridcolor="#f0f0f0", zeroline=False)
     fig.update_yaxes(showgrid=True, gridcolor="#f0f0f0", zeroline=False)
-    return fig.to_html(include_plotlyjs="cdn", full_html=False)
+    return fig.to_html(include_plotlyjs="cdn", full_html=False, div_id=div_id)
 
 
 def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
@@ -786,6 +949,7 @@ def build_report(
     heatmap_top_n:     int   = 10,
     interactions_file: Optional[str] = None,
     multiqc_file:      Optional[str] = None,
+    de_files:          dict  = {},
 ) -> None:
     de     = pd.read_csv(de_file, sep="\t")
     matrix = pd.read_csv(matrix_file, sep="\t", index_col=0)
@@ -910,6 +1074,50 @@ def build_report(
             .sort_values(p_col).head(heatmap_top_n)["circ_id"].tolist()
         )
 
+    # ── Build ALL_DE_METHODS data (method switcher + Venn diagram) ──────────────
+    all_de_data: dict = {}
+    sig_sets_venn: dict = {}
+    for _mkey, _mfile in (de_files or {}).items():
+        if not _mfile or not Path(_mfile).exists():
+            continue
+        try:
+            _m_de = pd.read_csv(_mfile, sep="\t")
+            if "log2FC" not in _m_de.columns and "log2FoldChange" in _m_de.columns:
+                _m_de = _m_de.rename(columns={"log2FoldChange": "log2FC"})
+            _m_de = _enrich_de(_m_de, isoform_file, circbase_file)
+            _m_pcol, _m_thr, _m_lbl = _eff_sig(_m_de, de_sig_by, fdr)
+            all_de_data[_mkey] = _build_method_js_data(
+                _m_de, matrix, _m_pcol, _m_thr, lfc, groups_file, normal_label
+            )
+            sig_sets_venn[_mkey] = _sig_ids_from_de(_m_de, _m_pcol, _m_thr, lfc)
+        except Exception as _exc:
+            import sys as _sys
+            print(f"[report] DE file for {_mkey} failed: {_exc}", file=_sys.stderr)
+
+    # Ensure primary method is in venn sets
+    if de_method not in sig_sets_venn:
+        sig_sets_venn[de_method] = _sig_ids_from_de(de, p_col, sig_thr, lfc)
+
+    all_de_methods_js = _json.dumps(all_de_data, ensure_ascii=False)
+    venn_html = _venn_3_svg(sig_sets_venn, lfc) if len(sig_sets_venn) >= 2 else ""
+
+    # Build method switcher HTML
+    _msw_methods = [de_method] + [m for m in all_de_data if m != de_method]
+    _msw_labels  = {"edgeR_ciriquant": "edgeR (FSJ offset)", "deseq2": "DESeq2", "limma": "limma-voom"}
+    _msw_btns    = [
+        f'<button class="msw-btn{" active" if m == de_method else ""}" '
+        f'onclick="switchDEMethod(\'{m}\')">{_msw_labels.get(m, m)}</button>'
+        for m in _msw_methods if m in all_de_data or m == de_method
+    ]
+    _msw_html = (
+        '<div style="margin:10px 0 8px;padding:8px 14px;background:#f8f9fa;'
+        'border:1px solid #e0e8f0;border-radius:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+        '<span style="font-size:13px;color:#555;margin-right:6px">分析方法：</span>'
+        + "".join(_msw_btns)
+        + '<span style="font-size:11px;color:#999;margin-left:8px">切換後 Volcano / Heatmap / 統計即時更新</span>'
+        + '</div>'
+    ) if len(_msw_btns) > 1 else ""
+
     type_html      = _type_section(sig)
     biomarker_html = _biomarker_section(biomarker_file, interactions=interactions)
     isoform_html   = _isoform_section(switching_file,
@@ -933,40 +1141,52 @@ def build_report(
 <script>
 const CIRC_DATA         = {interactions_js};
 const VOLCANO_DATA      = {volcano_data_js};
-const FULL_HEATMAP_DATA = {full_heatmap_data_js};
+const FULL_HEATMAP_DATA  = {full_heatmap_data_js};
+const ALL_DE_METHODS     = {all_de_methods_js};
 const _FDR = {_fdr_js};
+let _HEATMAP_DATA_CACHE  = FULL_HEATMAP_DATA;
+let _CURRENT_VOLCANO_DATA = VOLCANO_DATA;
 const _LFC = {_lfc_js};
 const _SIG_LABEL = "{_sig_label_js}";
 
 function showCircDetail(circId) {{
-  const d    = CIRC_DATA[circId] || {{}};
-  const info = d.info || {{}};
-  document.getElementById('cm-title').textContent = circId;
-  document.getElementById('cm-sub').innerHTML =
-    [info.gene_name, info.strand, info.region, info.exon_span].filter(Boolean).join(' &nbsp;|&nbsp; ');
-  const circEl = document.getElementById('cm-circle-wrap');
-  circEl.innerHTML = '';
-  _drawCircleRNA(circId, circEl);
-  document.getElementById('cm-mirna').innerHTML = _buildInteractionTable(
-    d.mirna||[], ['_priority','miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source','in_circ'],
-    ['Priority','miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'mirna');
-  document.getElementById('cm-rbp').innerHTML = _buildInteractionTable(
-    d.rbp||[], ['_priority','RBPName','bindingSites','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
-    ['Priority','RBP','Sites','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
-  _fetchSeqsInTable('cm-mirna');
-  _fetchSeqsInTable('cm-rbp');
-  const vEl = document.getElementById('cm-volcano');
-  vEl.dataset.circId = circId;
-  vEl.innerHTML = '<p style="color:#aaa;font-size:12px;padding:8px">Click tab to load volcano.</p>';
-  vEl._plotlyLoaded = false;
-  const hEl = document.getElementById('cm-heatmap');
-  hEl.dataset.circId = circId;
-  hEl.innerHTML = '<p style="color:#aaa;font-size:12px;padding:8px">Click tab to load heatmap.</p>';
-  hEl._plotlyLoaded = false;
-  document.getElementById('cm-tab-heatmap').style.display = '';
-  _switchTab('exon');
-  _updateDlBar('exon');
-  document.getElementById('circ-modal').style.display = 'flex';
+  try {{
+    const d    = CIRC_DATA[circId] || {{}};
+    const info = d.info || {{}};
+    document.getElementById('cm-title').textContent = circId;
+    document.getElementById('cm-sub').innerHTML =
+      [info.gene_name, info.strand, info.region, info.exon_span].filter(Boolean).join(' &nbsp;|&nbsp; ');
+    const circEl = document.getElementById('cm-circle-wrap');
+    circEl.innerHTML = '';
+    _drawCircleRNA(circId, circEl);
+    document.getElementById('cm-mirna').innerHTML = _buildInteractionTable(
+      d.mirna||[], ['_priority','miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source','in_circ'],
+      ['Priority','miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'mirna');
+    document.getElementById('cm-rbp').innerHTML = _buildInteractionTable(
+      d.rbp||[], ['_priority','RBPName','bindingSites','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
+      ['Priority','RBP','Sites','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
+    _fetchSeqsInTable('cm-mirna');
+    _fetchSeqsInTable('cm-rbp');
+    const vEl = document.getElementById('cm-volcano');
+    vEl.dataset.circId = circId;
+    vEl.innerHTML = '<p style="color:#aaa;font-size:12px;padding:8px">Click tab to load volcano.</p>';
+    vEl._plotlyLoaded = false;
+    const hEl = document.getElementById('cm-heatmap');
+    hEl.dataset.circId = circId;
+    hEl.innerHTML = '<p style="color:#aaa;font-size:12px;padding:8px">Click tab to load heatmap.</p>';
+    hEl._plotlyLoaded = false;
+    document.getElementById('cm-tab-heatmap').style.display = '';
+    _switchTab('exon');
+    _updateDlBar('exon');
+    document.getElementById('circ-modal').style.display = 'flex';
+  }} catch(err) {{
+    console.error('[showCircDetail]', err);
+    document.getElementById('cm-title').textContent = circId;
+    document.getElementById('cm-circle-wrap').innerHTML =
+      '<p style="color:#c0392b;padding:12px"><b>JS Error:</b> '+err.message+'<br>'
+      +'<small style="color:#888">Check browser console (F12) for details.</small></p>';
+    document.getElementById('circ-modal').style.display = 'flex';
+  }}
 }}
 
 function closeCircModal() {{
@@ -1297,16 +1517,17 @@ function _buildMiniHeatmap(circId) {{
   const el=document.getElementById('cm-heatmap');
   if(!el)return;
   if(typeof Plotly==='undefined'){{el.innerHTML='<p class="no-data">Plotly not available.</p>';return;}}
-  if(!FULL_HEATMAP_DATA||!FULL_HEATMAP_DATA.rows||Object.keys(FULL_HEATMAP_DATA.rows).length===0){{
+  const _hmd=_HEATMAP_DATA_CACHE||FULL_HEATMAP_DATA;
+  if(!_hmd||!_hmd.rows||Object.keys(_hmd.rows).length===0){{
     el.innerHTML='<p class="no-data">Heatmap data not available.</p>';return;
   }}
-  const _inTop=FULL_HEATMAP_DATA.rows[circId]!=null;
-  const allIds=Object.keys(FULL_HEATMAP_DATA.rows);
+  const _inTop=_hmd.rows[circId]!=null;
+  const allIds=Object.keys(_hmd.rows);
   const tIdx=allIds.indexOf(circId);
-  const samps=FULL_HEATMAP_DATA.samples||[];
-  const zMatrix=allIds.map(id=>FULL_HEATMAP_DATA.rows[id].z);
-  const yLabels=allIds.map(id=>FULL_HEATMAP_DATA.rows[id].label||id);
-  const conds=FULL_HEATMAP_DATA.conditions||{{}};
+  const samps=_hmd.samples||[];
+  const zMatrix=allIds.map(id=>_hmd.rows[id].z);
+  const yLabels=allIds.map(id=>_hmd.rows[id].label||id);
+  const conds=_hmd.conditions||{{}};
   const TUMOR_COL='#d62728', NORMAL_COL='#2c6fad';
   // merge consecutive samples of same condition into one labelled bar
   const grps=[];let cur=null;
@@ -1355,10 +1576,11 @@ function _buildMiniHeatmap(circId) {{
 function _buildMiniVolcano(circId) {{
   const el=document.getElementById('cm-volcano');
   if(!circId||typeof Plotly==='undefined'){{el.innerHTML='<p class="no-data">Plotly not available.</p>';return;}}
-  const pt=VOLCANO_DATA.find(d=>d[3]===circId);
+  const _vd=_CURRENT_VOLCANO_DATA||VOLCANO_DATA;
+  const pt=_vd.find(d=>d[3]===circId);
   if(!pt){{el.innerHTML='<p class="no-data">circRNA not found in volcano data.</p>';return;}}
   const ns_x=[],ns_y=[],up_x=[],up_y=[],dn_x=[],dn_y=[];
-  VOLCANO_DATA.forEach(d=>{{
+  _vd.forEach(d=>{{
     if(d[2]==='N'){{ns_x.push(d[0]);ns_y.push(d[1]);}}
     else if(d[2]==='U'){{up_x.push(d[0]);up_y.push(d[1]);}}
     else{{dn_x.push(d[0]);dn_y.push(d[1]);}}
@@ -1588,16 +1810,17 @@ function _toggleAll(type, show, container) {{
 
 // ── Main heatmap dynamic update ───────────────────────────────────────────────
 function updateMainHeatmap() {{
-  if(!FULL_HEATMAP_DATA||typeof Plotly==='undefined')return;
+  const _hmData=_HEATMAP_DATA_CACHE||FULL_HEATMAP_DATA;
+  if(!_hmData||typeof Plotly==='undefined')return;
   const n=Math.max(1,Math.min(50,parseInt(document.getElementById('heatmap-n-input').value)||10));
   document.getElementById('heatmap-n-input').value=n;
-  const upIds=(FULL_HEATMAP_DATA.up_order||[]).slice(0,n);
-  const dnIds=(FULL_HEATMAP_DATA.dn_order||[]).slice(0,n);
+  const upIds=(_hmData.up_order||[]).slice(0,n);
+  const dnIds=(_hmData.dn_order||[]).slice(0,n);
   const allIds=[...upIds,...dnIds];
   if(allIds.length<2)return;
-  const samps=FULL_HEATMAP_DATA.samples||[];
-  const conds=FULL_HEATMAP_DATA.conditions||{{}};
-  const rows=FULL_HEATMAP_DATA.rows||{{}};
+  const samps=_hmData.samples||[];
+  const conds=_hmData.conditions||{{}};
+  const rows=_hmData.rows||{{}};
   const validIds=allIds.filter(id=>rows[id]);
   const zMatrix=validIds.map(id=>rows[id].z);
   const yLabels=validIds.map(id=>rows[id].label||id);
@@ -1631,10 +1854,66 @@ function updateMainHeatmap() {{
   }});
   const titleEl=document.getElementById('heatmap-section-title');
   if(titleEl)titleEl.textContent=`Heatmap (top ${{nUp}} up + ${{nDn}} down DE circRNAs)`;
-  const maxUp=(FULL_HEATMAP_DATA.up_order||[]).length;
-  const maxDn=(FULL_HEATMAP_DATA.dn_order||[]).length;
+  const maxUp=(_hmData.up_order||[]).length;
+  const maxDn=(_hmData.dn_order||[]).length;
   const statusEl=document.getElementById('heatmap-status');
   if(statusEl)statusEl.textContent=`（已顯示 ${{validIds.length}} 筆；資料庫最多 ${{maxUp}} up + ${{maxDn}} down）`;
+}}
+
+// ── DE method switcher ────────────────────────────────────────────────────────
+function switchDEMethod(method) {{
+  const md=ALL_DE_METHODS&&ALL_DE_METHODS[method];
+  if(!md)return;
+  // Update stat boxes
+  const s=md.stats||{{}};
+  const sigEl=document.getElementById('stat-n-sig');
+  const upEl=document.getElementById('stat-n-up');
+  const dnEl=document.getElementById('stat-n-dn');
+  if(sigEl)sigEl.textContent=s.n_sig!=null?s.n_sig:'—';
+  if(upEl) upEl.textContent =s.n_up !=null?s.n_up :'—';
+  if(dnEl) dnEl.textContent =s.n_dn !=null?s.n_dn :'—';
+  // Update switcher button state
+  document.querySelectorAll('.msw-btn').forEach(b=>{{
+    const m=b.getAttribute('onclick')||'';
+    b.classList.toggle('active',m.includes("'"+method+"'"));
+  }});
+  // Update volcano via Plotly.react
+  const volData=md.volcano||[];
+  _CURRENT_VOLCANO_DATA=volData;
+  const ns_x=[],ns_y=[],up_x=[],up_y=[],dn_x=[],dn_y=[];
+  volData.forEach(d=>{{
+    if(d[2]==='N'){{ns_x.push(d[0]);ns_y.push(d[1]);}}
+    else if(d[2]==='U'){{up_x.push(d[0]);up_y.push(d[1]);}}
+    else{{dn_x.push(d[0]);dn_y.push(d[1]);}}
+  }});
+  if(typeof Plotly!=='undefined'&&document.getElementById('main-volcano-plot')){{
+    const mLabels={{'edgeR_ciriquant':'edgeR (FSJ offset)','deseq2':'DESeq2','limma':'limma-voom'}};
+    Plotly.react('main-volcano-plot',[
+      {{x:ns_x,y:ns_y,mode:'markers',name:'NS',
+        marker:{{color:'rgba(150,150,150,0.35)',size:4,line:{{width:0}}}},hoverinfo:'skip'}},
+      {{x:up_x,y:up_y,mode:'markers',name:'Up',
+        marker:{{color:'#d62728',size:6,opacity:0.8}}}},
+      {{x:dn_x,y:dn_y,mode:'markers',name:'Down',
+        marker:{{color:'#2CA02C',size:6,opacity:0.8}}}},
+    ],{{
+      title:{{text:'Volcano Plot ['+(mLabels[method]||method)+']',font:{{size:14}}}},
+      xaxis_title:'log₂ Fold Change (Tumor / Normal)',
+      yaxis_title:'−log₁₀('+_SIG_LABEL+')',
+      height:500,plot_bgcolor:'white',paper_bgcolor:'white',
+      legend:{{title:'',orientation:'h',y:1.02,x:0}},
+      margin:{{t:60}},
+      shapes:[
+        {{type:'line',x0:_LFC,x1:_LFC,y0:0,y1:1,yref:'paper',line:{{dash:'dot',color:'#aaa',width:1}}}},
+        {{type:'line',x0:-_LFC,x1:-_LFC,y0:0,y1:1,yref:'paper',line:{{dash:'dot',color:'#aaa',width:1}}}},
+        {{type:'line',x0:0,x1:1,xref:'paper',y0:-Math.log10(_FDR),y1:-Math.log10(_FDR),line:{{dash:'dot',color:'#aaa',width:1}}}},
+      ],
+    }});
+  }}
+  // Update heatmap data cache and re-render
+  if(md.heatmap){{
+    _HEATMAP_DATA_CACHE=md.heatmap;
+    updateMainHeatmap();
+  }}
 }}
 
 document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}});
@@ -1691,12 +1970,13 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
         "(interaction data not yet fetched — run predict_interactions rule).</p>"}
 
   <h2>Summary</h2>
+  {_msw_html}
   <div>
     <div class="stat-box"><div class="num">{n_sample}</div><div class="lbl">Samples</div></div>
     <div class="stat-box"><div class="num">{n_total}</div><div class="lbl">Total circRNAs</div></div>
-    <div class="stat-box"><div class="num">{n_sig}</div><div class="lbl">Significant ({sig_label}, |log2FC|&gt;{lfc})</div></div>
-    <div class="stat-box"><div class="num">{n_up}</div><div class="lbl">Up-regulated</div></div>
-    <div class="stat-box"><div class="num">{n_dn}</div><div class="lbl">Down-regulated</div></div>
+    <div class="stat-box"><div class="num" id="stat-n-sig">{n_sig}</div><div class="lbl">Significant ({sig_label}, |log2FC|&gt;{lfc})</div></div>
+    <div class="stat-box"><div class="num" id="stat-n-up">{n_up}</div><div class="lbl">Up-regulated</div></div>
+    <div class="stat-box"><div class="num" id="stat-n-dn">{n_dn}</div><div class="lbl">Down-regulated</div></div>
   </div>
 
   {type_html}
@@ -1704,6 +1984,8 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
   {biomarker_html}
 
   {isoform_html}
+
+  {"<h2>三方法 DE 結果 Venn Diagram</h2><p style='font-size:13px;color:#555'>比較三種方法（edgeR FSJ offset、DESeq2、limma-voom）在相同閾值下的顯著 DE circRNA 交集。</p>" + venn_html if venn_html else ""}
 
   <h2>Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
   <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_position</strong> to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>
@@ -1764,4 +2046,9 @@ if "snakemake" in dir():
         heatmap_top_n      = int(getattr(snakemake.params, "heatmap_top_n", 10)),  # type: ignore[name-defined]
         interactions_file  = getattr(snakemake.input, "interactions", None),       # type: ignore[name-defined]
         multiqc_file       = getattr(snakemake.input, "multiqc", None),            # type: ignore[name-defined]
+        de_files           = {m: getattr(snakemake.input, a, None)                 # type: ignore[name-defined]
+                              for m, a in [("edgeR_ciriquant","de_edger"),
+                                           ("deseq2","de_deseq"),
+                                           ("limma","de_limma")]
+                              if getattr(snakemake.input, a, None)},               # type: ignore[name-defined]
     )
