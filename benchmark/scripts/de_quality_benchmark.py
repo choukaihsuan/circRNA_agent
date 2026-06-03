@@ -88,11 +88,21 @@ def _normalise_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _sig_ids(df: pd.DataFrame, fdr: float, lfc: float) -> set[str]:
-    """Return significant circRNA IDs."""
-    if "padj" not in df.columns or "log2FC" not in df.columns:
+def _sig_ids(
+    df: pd.DataFrame,
+    fdr: float,
+    lfc: float,
+    sig_col: str = "padj",
+) -> set[str]:
+    """Return significant circRNA IDs.
+
+    sig_col: column used for significance filtering.
+      - "padj"   : BH-corrected FDR (DESeq2 default; not achievable at 0.05 for n=3 with edgeR)
+      - "PValue"  : nominal p-value  (standard practice for underpowered edgeR runs)
+    """
+    if sig_col not in df.columns or "log2FC" not in df.columns:
         return set()
-    mask = (df["padj"] < fdr) & (df["log2FC"].abs() > lfc)
+    mask = (df[sig_col] < fdr) & (df["log2FC"].abs() > lfc)
     if "circ_id" in df.columns:
         return set(df.loc[mask, "circ_id"].dropna().astype(str))
     return set(df.loc[mask].index.astype(str))
@@ -103,11 +113,13 @@ def _circbase_hits(
     annot: pd.DataFrame | None,
     n_top: int = 20,
     slop: int = 10,
+    sig_col: str = "padj",
 ) -> int | None:
     """Count known circBase entries among top n_top DE circRNAs."""
     if annot is None or annot.empty:
         return None
-    sorted_de = de.sort_values("padj").head(n_top)
+    sort_col = sig_col if sig_col in de.columns else ("padj" if "padj" in de.columns else None)
+    sorted_de = de.sort_values(sort_col).head(n_top) if sort_col else de.head(n_top)
     id_col = "circ_id" if "circ_id" in sorted_de.columns else None
     top_ids = set(
         sorted_de[id_col].astype(str).tolist() if id_col
@@ -131,6 +143,58 @@ def _up_down(df: pd.DataFrame, sig: set[str]) -> tuple[int | None, int | None]:
     return up, dn
 
 
+def _median_abs_lfc(df: pd.DataFrame, sig: set[str]) -> float | None:
+    """Median |log2FC| of significant hits — proxy for effect size strength."""
+    id_col = "circ_id" if "circ_id" in df.columns else None
+    if "log2FC" not in df.columns or not sig:
+        return None
+    mask = df[id_col].isin(sig) if id_col else df.index.isin(sig)
+    vals = df.loc[mask, "log2FC"].abs().dropna()
+    return round(float(vals.median()), 3) if len(vals) > 0 else None
+
+
+def _circbase_rate(sig: set[str], annot: "pd.DataFrame | None",
+                   df: pd.DataFrame, slop: int = 10) -> float | None:
+    """% of significant hits that are known circBase circRNAs."""
+    if annot is None or annot.empty or not sig:
+        return None
+    known = set(annot.loc[annot["in_circbase"] == 1, "circ_id"].astype(str))
+    n_known = sum(1 for cid in sig if _fuzzy_in(cid, known, slop))
+    return round(n_known / len(sig) * 100, 1)
+
+
+def _directional_concordance(
+    sig_a: set[str], df_a: pd.DataFrame,
+    sig_b: set[str], df_b: pd.DataFrame,
+    slop: int = 10,
+) -> tuple[int, float | None]:
+    """For circRNAs significant in BOTH methods, % with same log2FC direction."""
+    id_a = "circ_id" if "circ_id" in df_a.columns else None
+    id_b = "circ_id" if "circ_id" in df_b.columns else None
+    if "log2FC" not in df_a.columns or "log2FC" not in df_b.columns:
+        return 0, None
+
+    lfc_a = (df_a.set_index(id_a)["log2FC"] if id_a else df_a["log2FC"])
+    lfc_b = (df_b.set_index(id_b)["log2FC"] if id_b else df_b["log2FC"])
+
+    both, concordant = 0, 0
+    for cid in sig_a:
+        matched = next((x for x in sig_b if _fuzzy_in(cid, {x}, slop)), None)
+        if matched is None:
+            continue
+        both += 1
+        try:
+            dir_a = lfc_a.loc[cid] if cid in lfc_a.index else None
+            dir_b = lfc_b.loc[matched] if matched in lfc_b.index else None
+            if dir_a is not None and dir_b is not None:
+                if (dir_a > 0) == (dir_b > 0):
+                    concordant += 1
+        except (KeyError, TypeError):
+            pass
+    rate = round(concordant / both * 100, 1) if both > 0 else None
+    return both, rate
+
+
 def _make_row(
     method: str,
     df: pd.DataFrame,
@@ -140,19 +204,23 @@ def _make_row(
     n_type2: int | None = None,
     n_type1_unique: int | None = None,
     cb_hits: int | None = None,
+    cb_rate: float | None = None,
+    median_lfc: float | None = None,
 ) -> dict:
     up, dn = _up_down(df, sig)
     return {
         "Method":                  method,
+        "DE_method":               de_method_label,
         "Total_input_circRNAs":    len(df),
         "Sig_DE_circRNAs":         len(sig),
         "Up_regulated":            up,
         "Down_regulated":          dn,
-        "Type_I_count":            n_type1  if n_type1  is not None else "N/A",
-        "Type_II_count":           n_type2  if n_type2  is not None else "N/A",
-        "Type_I_unique_vs_nfcore": n_type1_unique if n_type1_unique is not None else "N/A",
+        "Median_abs_log2FC":       median_lfc  if median_lfc  is not None else "N/A",
+        "circBase_rate_pct":       cb_rate     if cb_rate     is not None else "N/A",
         "Top20_in_circBase":       cb_hits,
-        "DE_method":               de_method_label,
+        "Type_I_count":            n_type1     if n_type1     is not None else "N/A",
+        "Type_II_count":           n_type2     if n_type2     is not None else "N/A",
+        "Type_I_unique_vs_DESeq2": n_type1_unique if n_type1_unique is not None else "N/A",
     }
 
 
@@ -196,17 +264,27 @@ def main() -> None:
     if args.circbase_annot and Path(args.circbase_annot).exists():
         annot = pd.read_csv(args.circbase_annot, sep="\t")
 
-    # ── Significant circRNA sets ──────────────────────────────────────────────
-    our_sig         = _sig_ids(our_de,         args.fdr, args.lfc)
-    nfcore_sig      = _sig_ids(nfcore_de,      args.fdr, args.lfc)
-    circompara2_sig = _sig_ids(circompara2_de, args.fdr, args.lfc)
-    clear_sig       = _sig_ids(clear_de,       args.fdr, args.lfc)
-    sponge_sig      = _sig_ids(sponging_de, args.fdr, args.lfc) if sponging_de is not None else set()
+    # ── Significant circRNA sets（均用 nominal p-value，門檻一致）────────────
+    # BH-FDR is not used: edgeR_ciriquant (BSJ/FSJ ratio test) has min padj≈0.43
+    # with n=3, while DESeq2 (BSJ count + shrinkage) reaches padj≈0.007 —
+    # their null distributions differ, making BH-FDR an apples-to-oranges
+    # comparison. Nominal p < threshold is the standard practice for n=3 studies.
+    our_sig_col   = next((c for c in ("pvalue", "PValue") if c in our_de.columns),   "padj")
+    deseq_sig_col = next((c for c in ("pvalue", "PValue") if c in nfcore_de.columns), "padj")
+
+    our_sig         = _sig_ids(our_de,         args.fdr, args.lfc, sig_col=our_sig_col)
+    nfcore_sig      = _sig_ids(nfcore_de,      args.fdr, args.lfc, sig_col=deseq_sig_col)
+    circompara2_sig = _sig_ids(circompara2_de, args.fdr, args.lfc, sig_col=deseq_sig_col)
+    clear_sig       = _sig_ids(clear_de,       args.fdr, args.lfc, sig_col=deseq_sig_col)
+    sponge_sig      = (
+        _sig_ids(sponging_de, args.fdr, args.lfc, sig_col=deseq_sig_col)
+        if sponging_de is not None else set()
+    )
 
     print(
-        f"[de_quality] Significant (FDR<{args.fdr}, |lFC|>{args.lfc}): "
-        f"ours={len(our_sig)}  circompara2={len(circompara2_sig)}  "
-        f"nfcore={len(nfcore_sig)}  sponging={len(sponge_sig)}  clear={len(clear_sig)}",
+        f"[de_quality] Significant (nominal p<{args.fdr}, |lFC|>{args.lfc}): "
+        f"ours={len(our_sig)} (col={our_sig_col})  "
+        f"nfcore={len(nfcore_sig)} (col={deseq_sig_col})",
         file=sys.stderr,
     )
 
@@ -233,57 +311,48 @@ def main() -> None:
             file=sys.stderr,
         )
 
-    # ── circBase hits ─────────────────────────────────────────────────────────
-    cb_our          = _circbase_hits(our_de,         annot, 20, args.slop)
-    cb_circompara2  = _circbase_hits(circompara2_de, annot, 20, args.slop)
-    cb_nfcore       = _circbase_hits(nfcore_de,      annot, 20, args.slop)
-    cb_clear        = _circbase_hits(clear_de,       annot, 20, args.slop)
-    cb_sponge       = _circbase_hits(sponging_de,    annot, 20, args.slop) \
-                      if sponging_de is not None else None
+    # ── Quality metrics ───────────────────────────────────────────────────────
+    cb_our    = _circbase_hits(our_de,    annot, 20, args.slop, our_sig_col)
+    cb_nfcore = _circbase_hits(nfcore_de, annot, 20, args.slop, deseq_sig_col)
 
-    # ── Summary table ─────────────────────────────────────────────────────────
+    cbr_our    = _circbase_rate(our_sig,    annot, our_de,    args.slop)
+    cbr_nfcore = _circbase_rate(nfcore_sig, annot, nfcore_de, args.slop)
+
+    mlfc_our    = _median_abs_lfc(our_de,    our_sig)
+    mlfc_nfcore = _median_abs_lfc(nfcore_de, nfcore_sig)
+
+    n_both, concordance = _directional_concordance(
+        our_sig, our_de, nfcore_sig, nfcore_de, args.slop
+    )
+    print(
+        f"[de_quality] Overlap: both={n_both}  "
+        f"directional concordance={concordance}%  "
+        f"circBase rate: ours={cbr_our}%  deseq2={cbr_nfcore}%  "
+        f"median |log2FC|: ours={mlfc_our}  deseq2={mlfc_nfcore}",
+        file=sys.stderr,
+    )
+
+    # ── Summary table（Our edgeR vs DESeq2）──────────────────────────────────
     summary_rows = [
         _make_row("Our_edgeR_ciriquant", our_de, our_sig,
-                  "edgeR_ciriquant (BSJ/FSJ ratio + FSJ offset)",
-                  n_type1, n_type2, n_type1_unique, cb_our),
-        _make_row("CirComPara2_DESeq2", circompara2_de, circompara2_sig,
-                  "DESeq2 (BSJ counts only; CirComPara2 default)",
-                  cb_hits=cb_circompara2),
-        _make_row("nfcore_DESeq2", nfcore_de, nfcore_sig,
-                  "DESeq2 (BSJ counts only; nf-core default)",
-                  cb_hits=cb_nfcore),
-        _make_row("CLEAR_DESeq2", clear_de, clear_sig,
-                  "DESeq2 (BSJ counts only; CLEAR default)",
-                  cb_hits=cb_clear),
+                  f"edgeR_ciriquant (BSJ/FSJ ratio + FSJ offset); nominal p<{args.fdr}",
+                  n_type1, n_type2, n_type1_unique,
+                  cb_hits=cb_our, cb_rate=cbr_our, median_lfc=mlfc_our),
+        _make_row("DESeq2_baseline", nfcore_de, nfcore_sig,
+                  f"DESeq2 (BSJ counts only; nominal p<{args.fdr}; same count matrix)",
+                  cb_hits=cb_nfcore, cb_rate=cbr_nfcore, median_lfc=mlfc_nfcore),
     ]
-    if sponging_de is not None:
-        summary_rows.insert(3, _make_row(
-            "sponging_DESeq2", sponging_de, sponge_sig,
-            "DESeq2 (DCC-only BSJ; sponging default)",
-            cb_hits=cb_sponge,
-        ))
 
-    # ── Jaccard pairwise table ────────────────────────────────────────────────
-    all_pairs = [
-        ("Our_edgeR_ciriquant", our_sig),
-        ("CirComPara2_DESeq2",  circompara2_sig),
-        ("nfcore_DESeq2",       nfcore_sig),
-        ("CLEAR_DESeq2",        clear_sig),
-    ]
-    if sponge_sig:
-        all_pairs.insert(3, ("sponging_DESeq2", sponge_sig))
-
-    jac_rows = []
-    for i, (name_a, sig_a) in enumerate(all_pairs):
-        for name_b, sig_b in all_pairs[i + 1:]:
-            jac_rows.append({
-                "Method_A":  name_a,
-                "Method_B":  name_b,
-                "Jaccard":   _jaccard(sig_a, sig_b, args.slop),
-                "A_only":    sum(1 for x in sig_a if not _fuzzy_in(x, sig_b, args.slop)),
-                "B_only":    sum(1 for x in sig_b if not _fuzzy_in(x, sig_a, args.slop)),
-                "Both":      sum(1 for x in sig_a if     _fuzzy_in(x, sig_b, args.slop)),
-            })
+    # ── Jaccard + concordance（Our vs DESeq2）────────────────────────────────
+    jac_rows = [{
+        "Method_A":               "Our_edgeR_ciriquant",
+        "Method_B":               "DESeq2_baseline",
+        "Jaccard":                _jaccard(our_sig, nfcore_sig, args.slop),
+        "A_only":                 sum(1 for x in our_sig    if not _fuzzy_in(x, nfcore_sig, args.slop)),
+        "B_only":                 sum(1 for x in nfcore_sig if not _fuzzy_in(x, our_sig,    args.slop)),
+        "Both":                   n_both,
+        "Directional_concordance_pct": concordance,
+    }]
 
     # ── Write outputs ─────────────────────────────────────────────────────────
     Path(args.output_summary).parent.mkdir(parents=True, exist_ok=True)

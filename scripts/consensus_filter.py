@@ -217,6 +217,14 @@ def main() -> None:
     parser.add_argument("--max-junction-ratio", type=float, default=1.0,
                         dest="max_junction_ratio",
                         help="Max BSJ/FSJ ratio for CIRIquant pseudo-circ QC (default: 1.0)")
+    parser.add_argument("--adaptive", action="store_true", default=False,
+                        help="Enable adaptive fallback: if one tool detects far fewer "
+                             "circRNAs than another (< --adaptive-ratio), automatically "
+                             "lower min_tools to 1 to avoid near-zero recall")
+    parser.add_argument("--adaptive-ratio", type=float, default=0.1,
+                        dest="adaptive_ratio",
+                        help="Threshold for adaptive fallback: if min(tool_counts) / "
+                             "max(tool_counts) < ratio, trigger single-tool mode (default: 0.1)")
     args = parser.parse_args()
 
     if not args.cirique and not args.dcc:
@@ -252,6 +260,20 @@ def main() -> None:
             f"[consensus] min_tools 調整為 {effective_min_tools}（只有 {len(tool_maps)} 個工具）",
             file=sys.stderr,
         )
+
+    # ── Adaptive fallback: if tool detection counts are severely imbalanced ───
+    if args.adaptive and effective_min_tools > 1 and len(tool_maps) >= 2:
+        counts = [len(m) for m in tool_maps]
+        imbalance = min(counts) / max(counts) if max(counts) > 0 else 0.0
+        if imbalance < args.adaptive_ratio:
+            print(
+                f"[consensus] ⚠ Adaptive fallback triggered: "
+                f"tool counts = {dict(zip(tool_names, counts))} "
+                f"(imbalance ratio = {imbalance:.3f} < {args.adaptive_ratio}). "
+                f"Lowering min_tools 2 → 1 to prevent near-zero recall.",
+                file=sys.stderr,
+            )
+            effective_min_tools = 1
 
     all_count = len(set().union(*[set(m.keys()) for m in tool_maps]))
     results = vote(tool_maps, effective_min_tools, args.slop)

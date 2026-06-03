@@ -194,6 +194,11 @@ DCC {paired_junction} \
    - 分母是**實際支持該 circRNA 的工具數**（非所有工具數），代表「各支持工具的平均每工具信心」
    - 論文應標明此為 weighted scoring heuristic，**非機率值**，引用 CirComPara2 + Hansen (2018) 作為 consensus 正當性基礎
 
+**Adaptive fallback**（`--adaptive` flag）：
+若兩工具偵測數量嚴重失衡（`min(counts) / max(counts) < --adaptive-ratio`，預設 0.1），
+自動將 `min_tools` 從 2 降為 1，避免共識過濾後近乎零回收率。
+失衡時在 stderr 印出警告。新 sample 類型的探索性分析時建議開啟。
+
 ### circBase 注釋（`annotate_circbase.py`）
 
 - 從 `http://www.circbase.org/download/hsa_hg19_circRNA.txt` 自動下載（或讀 `--circbase-file` 本地檔案，預設快取於 `/tmp/circbase_hg19.txt`）
@@ -217,18 +222,21 @@ GSE113230 結果：9,349 circRNA 中 8,046 exonic（86%）、1,089 intronic（12
 
 ### Biomarker 排序（`rank_biomarkers.py`）
 
-四維 composite score，每維度在 significant set 內 min-max 標準化後平均：
+六維 composite score，每維度在 significant set 內 min-max 標準化後平均：
 
 ```
-biomarker_score = (sig_norm + fc_norm + conf_norm + known_bonus) / 4
-  sig_norm  = -log10(pvalue 或 padj),  上限 10，標準化  ← 依 de_sig_by 切換
-  fc_norm   = |log2FC|,                上限 5，標準化
-  conf_norm = confidence_score 標準化
-  known_bonus = 1 若 in_circbase，否則 0（不做標準化）
+biomarker_score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) / 6
+  sig_norm   = −log10(pvalue 或 padj), 上限 10，標準化  ← 依 de_sig_by 切換
+  fc_norm    = |log2FC|,               上限 5，標準化
+  conf_norm  = confidence_score 標準化
+  known_bonus = 1 若 in_circbase，否則 0（不標準化）
+  mirna_norm = distinct miRNA binders 數，min-max 標準化（無 interaction data 者為 0）
+  rbp_norm   = distinct RBP binders 數，min-max 標準化（無 interaction data 者為 0）
 ```
 
 - 顯著閾值欄位依 `de_sig_by` 而定：`pvalue`（nominal）或 `padj`（BH 校正）
 - CLI 參數：`--use-pvalue` 對應 `de_sig_by: pvalue`
+- miRNA/RBP interaction 資料來自 `predict_interactions.py`（CircInteractome 查詢，top 50 circRNA）
 
 ### DE 分析方法（`config de.method`）
 
@@ -523,6 +531,8 @@ wrapper mock 了 `snakemake` 物件（`_NamedList` + `_Params`），hardcode GSE
 | Anaconda `repo.anaconda.com` 商業授權警告 | `defaults` channel 要求商業許可 | 移除 `defaults`，僅保留 `bioconda` + `conda-forge` |
 | `generate_report` 重跑觸發上游 rules（download/align） | server config.yaml 指向其他專案，`--forcerun` 重建整個 DAG | 改用 `/tmp/run_generate_report.py` mock snakemake 物件直接執行 |
 | SVG badge 距離弧段過遠（舊 angular de-overlap） | `deOverlap` 只往順時針推移，多個 badge 連鎖推移後遠離原弧段 | 改為 radial staggering：badge 固定在弧段正上方角度，僅在 angular gap < 0.14 rad 時改變半徑（`MI_R0=+7` vs `MI_R1=+19`）；虛線放在 `<g>` 內隨 badge 隱藏 |
+| `analysis.R` heatmap 錯誤（`pheatmap` 少於 2 行） | DE circRNA 數量太少時 `pheatmap` 會報錯 | 加 `if (nrow(mat) >= 2)` 判斷，否則 `plot.new()` 顯示提示文字 |
+| `analysis.R` `slice_min` 版本警告 | dplyr 新版棄用 `slice_min` 的部分用法 | 改為 `arrange(.data[[col]]) %>% head(n)` |
 
 ---
 

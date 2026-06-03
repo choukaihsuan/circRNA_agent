@@ -189,8 +189,9 @@ rule bench_star_paired:
              --outSAMtype BAM SortedByCoordinate \
              --outFileNamePrefix {params.prefix} \
              --outTmpDir {params.tmp}/_STARtmp \
-             --chimSegmentMin 10 --chimOutType Junctions \
-             --alignSJDBoverhangMin 10 \
+             --chimSegmentMin 5 --chimOutType Junctions \
+             --chimJunctionOverhangMin 5 \
+             --alignSJDBoverhangMin 5 \
              --outSAMattributes NH HI NM MD AS \
              > {log} 2>&1
         samtools index {output.bam}
@@ -221,8 +222,9 @@ rule bench_star_mate1:
              --outSAMtype BAM Unsorted \
              --outFileNamePrefix {params.prefix} \
              --outTmpDir {params.tmp}/_STARtmp \
-             --chimSegmentMin 10 --chimOutType Junctions \
-             --alignSJDBoverhangMin 10 \
+             --chimSegmentMin 5 --chimOutType Junctions \
+             --chimJunctionOverhangMin 5 \
+             --alignSJDBoverhangMin 5 \
              > {log} 2>&1
         rm -rf {params.tmp}
         """
@@ -251,8 +253,9 @@ rule bench_star_mate2:
              --outSAMtype BAM Unsorted \
              --outFileNamePrefix {params.prefix} \
              --outTmpDir {params.tmp}/_STARtmp \
-             --chimSegmentMin 10 --chimOutType Junctions \
-             --alignSJDBoverhangMin 10 \
+             --chimSegmentMin 5 --chimOutType Junctions \
+             --chimJunctionOverhangMin 5 \
+             --alignSJDBoverhangMin 5 \
              > {log} 2>&1
         rm -rf {params.tmp}
         """
@@ -279,7 +282,7 @@ rule bench_dcc:
               -mt1 {input.junc1} \
               -mt2 {input.junc2} \
               -D -an {input.gtf} \
-              -Pi -F -M -Nr 5 1 \
+              -Pi -F -M -Nr 2 1 \
               -G -B {input.bam} \
               -O {params.outdir} \
               -T {threads} ) \
@@ -350,6 +353,7 @@ rule our_filter:
             --slop {params.slop} \
             --min-bsj {params.min_bsj} \
             --max-junction-ratio {params.max_junction_ratio} \
+            --adaptive --adaptive-ratio 0.1 \
             2>&1 | tee {log}
         """
 

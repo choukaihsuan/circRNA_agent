@@ -49,8 +49,8 @@ def _parse_gtf(path: str) -> dict[str, dict]:
             start = int(parts[3])
             end   = int(parts[4])
             attrs = parts[8]
-            bsj_m = re.search(r'BSJ\s+([\d.]+)', attrs)
-            fsj_m = re.search(r'FSJ\s+([\d.]+)', attrs)
+            bsj_m = re.search(r'BSJ\s+([\d.]+)', attrs, re.IGNORECASE)
+            fsj_m = re.search(r'FSJ\s+([\d.]+)', attrs, re.IGNORECASE)
             if not bsj_m:
                 continue
             bsj = float(bsj_m.group(1))
@@ -63,37 +63,44 @@ def _parse_gtf(path: str) -> dict[str, dict]:
     return records
 
 
-def _total_bsj(records: dict) -> float:
-    return max(sum(v["bsj"] for v in records.values()), 1.0)
-
-
 def _bsj_rpm(records: dict) -> dict[str, float]:
-    """Convert BSJ raw counts to RPM (per million total BSJ reads)."""
-    total = _total_bsj(records)
-    return {k: v["bsj"] / total * 1_000_000 for k, v in records.items()}
+    """Return raw BSJ counts for cross-sample ER comparison.
+
+    Per-sample total-BSJ normalization is NOT used here because RNase R treatment
+    depletes linear RNA, causing ~25× more total BSJ reads in RNase R samples.
+    Using per-sample RPM would inflate the RNase R denominator 25×, suppressing
+    all ER values → ~94% false TN rate. Raw counts avoid this bias; the ER ratio
+    (RNase_BSJ / total_BSJ) remains meaningful as long as library sizes are
+    comparable across samples (typical for matched Illumina runs).
+    """
+    return {k: v["bsj"] for k, v in records.items()}
 
 
 # ── Fuzzy coordinate matching ─────────────────────────────────────────────────
 
-def _coord_match(circ_id: str, pool: dict[str, float], slop: int) -> float:
-    """
-    Find the best-matching entry in pool for circ_id within slop bp.
-    Returns the matched RPM value, or 0.0 if no match.
-    """
+def _build_index(rpm_map):
+    """Pre-parse RPM map keys into {chrom: [(start, end, val), ...]} for O(N) lookup."""
+    idx = {}
+    for key, val in rpm_map.items():
+        m = re.match(r'^(.+):(\d+)\|(\d+)$', key)
+        if m:
+            chrom = m.group(1)
+            idx.setdefault(chrom, []).append((int(m.group(2)), int(m.group(3)), val))
+    return idx
+
+
+def _coord_match(circ_id, index, slop):
+    """Find best-matching RPM value within slop bp using pre-built chromosome index."""
     m = re.match(r'^(.+):(\d+)\|(\d+)$', circ_id)
     if not m:
         return 0.0
     chrom, start, end = m.group(1), int(m.group(2)), int(m.group(3))
 
     best_val, best_dist = 0.0, float("inf")
-    for key, val in pool.items():
-        km = re.match(r'^(.+):(\d+)\|(\d+)$', key)
-        if not km or km.group(1) != chrom:
-            continue
-        dist = max(abs(int(km.group(2)) - start), abs(int(km.group(3)) - end))
+    for s, e, val in index.get(chrom, []):
+        dist = max(abs(s - start), abs(e - end))
         if dist <= slop and dist < best_dist:
-            best_dist = dist
-            best_val = val
+            best_dist, best_val = dist, val
     return best_val
 
 
@@ -139,17 +146,23 @@ def main() -> None:
         print(f"[ground_truth] RNase R  ({Path(path).stem}): "
               f"{len(recs)} circRNAs", file=sys.stderr)
 
-    # ── Union of all detected circRNAs ────────────────────────────────────────
+    # ── Evaluation universe: total RNA only ───────────────────────────────────
+    # RNase R samples provide TP/TN labels via enrichment ratio, but the
+    # evaluation universe is restricted to circRNAs detectable in total RNA.
+    # RNase R-only detections cannot be found by any total-RNA-based method,
+    # so including them would inflate FN and collapse Recall toward 0.
     all_ids: set[str] = set(total_recs.keys())
-    for rpm_map in rnaser_rpms:
-        all_ids.update(rpm_map.keys())
+
+    # ── Pre-build chromosome indices (avoids O(N²) regex in inner loop) ──────
+    total_index    = _build_index(total_rpm)
+    rnaser_indices = [_build_index(rpm) for rpm in rnaser_rpms]
 
     # ── Compute enrichment ratios ─────────────────────────────────────────────
     rows = []
     for circ_id in sorted(all_ids):
-        bsj_total  = _coord_match(circ_id, total_rpm, args.slop)
+        bsj_total  = _coord_match(circ_id, total_index, args.slop)
         bsj_rnaser_vals = [
-            _coord_match(circ_id, rpm_map, args.slop) for rpm_map in rnaser_rpms
+            _coord_match(circ_id, idx, args.slop) for idx in rnaser_indices
         ]
         bsj_rnaser_mean = sum(bsj_rnaser_vals) / len(bsj_rnaser_vals)
 

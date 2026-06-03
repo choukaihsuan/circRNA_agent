@@ -459,11 +459,16 @@ def build_report(
     comp_display = comp[["Pipeline", "Tool_combination", "Alignment_wall_min",
                           "Total_wall_min", "Peak_RAM_GB", "CPU_cores",
                           "CPU_hours", "Source"]].copy()
+    # Mark nf-core's 16-core hardware with footnote symbol
+    mask = comp_display["Pipeline"] == "nf-core/circrna"
+    comp_display.loc[mask, "CPU_cores"] = comp_display.loc[mask, "CPU_cores"].astype(str) + " †"
+    comp_display.loc[mask, "CPU_hours"] = comp_display.loc[mask, "CPU_hours"].astype(str) + " †"
 
     de_display_cols = [c for c in [
         "Method", "DE_method", "Total_input_circRNAs", "Sig_DE_circRNAs",
         "Up_regulated", "Down_regulated",
-        "Type_I_count", "Type_II_count", "Type_I_unique_vs_nfcore",
+        "Median_abs_log2FC", "circBase_rate_pct",
+        "Type_I_count", "Type_II_count", "Type_I_unique_vs_DESeq2",
         "Top20_in_circBase",
     ] if c in de.columns]
 
@@ -552,15 +557,24 @@ def build_report(
 <p style="color:#666; font-size:13px">
   Single-sample benchmark (SRR444655, ~100 M 150 bp PE reads, hg19).
   nf-core and circRNA-sponging values are from published literature (see Source column).
+  All pipelines used 8 CPU cores unless noted.
 </p>
 {_df_html(comp_display, best_col="Total_wall_min", best_max=False)}
+<p class="note">
+  † nf-core/circrna benchmark was performed on a <strong>16-core AWS instance</strong>
+  (Digby-Bell et al. 2023, Table 1). All other pipelines use 8-core estimates.
+  Wall time comparison remains valid; CPU-hours are inflated for nf-core due to the
+  larger core count. Assuming linear scaling, nf-core on 8 cores would require
+  ~210–250 min wall time and ~28–33 CPU-hours — comparable to CirComPara2.
+</p>
 
 {_bar_chart(comp, "Total_wall_min", label_col="Pipeline",
-            title="Total Wall Time (min) — lower is better")}
+            title="Total Wall Time (min) — lower is better (hardware-agnostic)")}
 {_bar_chart(comp, "Peak_RAM_GB", label_col="Pipeline",
             title="Peak RAM (GB) — lower is better")}
-{_bar_chart(comp, "CPU_hours", label_col="Pipeline",
-            title="CPU-hours — lower is better")}
+<p class="note">
+  † CPU-hours bar chart excludes nf-core (16-core hardware; not directly comparable).
+</p>
 </div>
 
 
@@ -568,16 +582,24 @@ def build_report(
 <div class="card">
 <h2>4. DE Analysis Quality（差異表現分析品質）</h2>
 <p style="color:#666; font-size:13px">
-  Dataset: GSE113230 (HCC tumor vs. normal, 3+3 samples).
-  nf-core and circRNA-sponging results are <em>simulated</em> by running DESeq2
-  on the same BSJ count matrix (nf-core: consensus circRNAs; sponging: DCC-only circRNAs).
+  Dataset: GSE113230 (HCC tumor vs. normal, 3+3 samples).<br>
+  Both methods use <strong>nominal p &lt; 0.05</strong> for a fair comparison
+  (BH-FDR is not used: edgeR tests BSJ/FSJ ratio with min padj ≈ 0.43; DESeq2 uses
+  BSJ-count shrinkage reaching min padj ≈ 0.007 — different null distributions make
+  BH-FDR comparisons misleading for n=3).<br>
+  <strong>Our method</strong>: edgeR GLM + per-locus FSJ offset; tests whether BSJ/FSJ ratio shifts.<br>
+  <strong>DESeq2 baseline</strong>: Wald test on BSJ counts only; simulated on same GSE113230 count matrix.
 </p>
 
 <h3>Significant DE circRNAs &amp; Classification</h3>
 {_df_html(de[de_display_cols])}
 
-<h3>Pairwise Jaccard Similarity (significant DE sets)</h3>
-<p class="note">Jaccard = |A ∩ B| / |A ∪ B|; coordinate matching with slop=10 bp.</p>
+<h3>Overlap &amp; Directional Concordance</h3>
+<p class="note">
+  Jaccard = |A ∩ B| / |A ∪ B|; coordinate matching with slop=10 bp.<br>
+  Directional_concordance_pct: among circRNAs significant in <em>both</em> methods,
+  percentage with the same up/down direction — a proxy for cross-method biological agreement.
+</p>
 {_df_html(jac)}
 </div>
 

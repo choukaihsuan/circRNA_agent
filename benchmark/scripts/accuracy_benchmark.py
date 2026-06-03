@@ -203,16 +203,33 @@ def _load_summary_scores(path: str) -> dict[str, float]:
 
 
 def _load_dcc(path: str, min_bsj: int) -> tuple[set[str], dict[str, float]]:
-    """Returns (set of circ_ids, {circ_id: count}) from DCC CircCoordinates."""
-    ids: set[str]          = set()
+    """Returns (set of circ_ids, {circ_id: count}) from DCC output.
+
+    DCC 0.5.0 produces two files:
+      CircCoordinates – annotation (Chr/Start/End/Gene/…), NO count column
+      CircRNACount    – counts (Chr/Start/End/Chimeric.out.junction)
+    CircCoordinates column "c" does not exist → cnt_i falls back to index 3
+    (= Gene, a string) → float() fails → 0 detections.
+    Fix: prefer CircRNACount (same directory) which has the actual BSJ counts.
+    """
+    from pathlib import Path as _Path
+    count_file = _Path(path).parent / "CircRNACount"
+    read_path  = str(count_file) if count_file.exists() else path
+
+    ids: set[str]            = set()
     scores: dict[str, float] = {}
-    with open(path) as fh:
+    with open(read_path) as fh:
         raw_hdr = fh.readline().strip().split("\t")
         hdr     = [h.lower().strip() for h in raw_hdr]
         chr_i   = next((i for i, h in enumerate(hdr) if h == "chr"),   0)
         start_i = next((i for i, h in enumerate(hdr) if h == "start"), 1)
         end_i   = next((i for i, h in enumerate(hdr) if h == "end"),   2)
-        cnt_i   = next((i for i, h in enumerate(hdr) if h == "c"),     3)
+        # Accept "c", "chimeric.out.junction", or any 4th column as count
+        cnt_i   = next(
+            (i for i, h in enumerate(hdr)
+             if h not in ("chr", "start", "end") and i >= 3),
+            3,
+        )
         for line in fh:
             p = line.strip().split("\t")
             if len(p) <= max(chr_i, start_i, end_i, cnt_i):

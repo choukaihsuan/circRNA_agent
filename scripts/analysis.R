@@ -27,7 +27,8 @@ de_sig_by     <- tryCatch(snakemake@params[["de_sig_by"]], error = function(e) "
 # backward compat: if old use_pvalue boolean was passed, map to string
 if (!is.character(de_sig_by) || !de_sig_by %in% c("auto", "pvalue", "padj", "qvalue"))
   de_sig_by <- if (isTRUE(de_sig_by)) "pvalue" else "auto"
-heatmap_top_n <- as.integer(tryCatch(snakemake@params[["heatmap_top_n"]], error = function(e) 10L))
+heatmap_top_n_raw <- tryCatch(snakemake@params[["heatmap_top_n"]], error = function(e) 10L)
+heatmap_top_n <- if (length(heatmap_top_n_raw) == 0 || is.null(heatmap_top_n_raw)) 10L else as.integer(heatmap_top_n_raw)
 circbase_annot_file <- tryCatch(snakemake@input[["circbase_annot"]], error = function(e) NULL)
 
 # Backward-compatible: older DAG may not pass de_method or fsj_matrix
@@ -169,9 +170,10 @@ if (de_method == "edgeR_ciriquant") {
                                  design = ~ condition)
   dds <- DESeq(dds)
   res <- results(dds, contrast = c("condition", tumor_label, normal_label))
-  res_df <- as.data.frame(res) %>%
+  res_df <- as.data.frame(res)
+  names(res_df)[names(res_df) == "log2FoldChange"] <- "log2FC"
+  res_df <- res_df %>%
     tibble::rownames_to_column("circ_id") %>%
-    rename(log2FC = log2FoldChange) %>%
     arrange(padj)
 
   vsd     <- vst(dds, blind = FALSE)
@@ -285,11 +287,13 @@ plot_df <- res_df %>%
 # ── Heatmap top IDs (computed here for volcano annotation) ───────────────────
 heat_up_ids <- res_df %>%
   filter(!is.na(.data[[plot_sig_col]]), log2FC > 0) %>%
-  slice_min(order_by = .data[[plot_sig_col]], n = heatmap_top_n) %>%
+  arrange(.data[[plot_sig_col]]) %>%
+  head(heatmap_top_n) %>%
   pull(circ_id)
 heat_dn_ids <- res_df %>%
   filter(!is.na(.data[[plot_sig_col]]), log2FC < 0) %>%
-  slice_min(order_by = .data[[plot_sig_col]], n = heatmap_top_n) %>%
+  arrange(.data[[plot_sig_col]]) %>%
+  head(heatmap_top_n) %>%
   pull(circ_id)
 heat_ids <- c(heat_up_ids, heat_dn_ids)
 
@@ -397,16 +401,21 @@ ann_col_colours <- list(
 n_up_heat <- sum(top_up %in% rownames(log_cpm))
 n_dn_heat <- sum(top_dn %in% rownames(log_cpm))
 pdf(heatmap_out, width = 10, height = max(6, nrow(mat) * 0.4 + 3))
-pheatmap(
-  mat,
-  annotation_col    = ann_col,
-  annotation_colors = ann_col_colours,
-  color             = colorRampPalette(c("#2ca02c", "white", "#d62728"))(100),
-  show_rownames     = TRUE,
-  fontsize_row      = 8,
-  border_color      = NA,
-  main              = paste0("Top ", n_up_heat, " up + ", n_dn_heat,
-                             " down DE circRNAs  [", de_method, "]")
-)
+if (nrow(mat) >= 2) {
+  pheatmap(
+    mat,
+    annotation_col    = ann_col,
+    annotation_colors = ann_col_colours,
+    color             = colorRampPalette(c("#2ca02c", "white", "#d62728"))(100),
+    show_rownames     = TRUE,
+    fontsize_row      = 8,
+    border_color      = NA,
+    main              = paste0("Top ", n_up_heat, " up + ", n_dn_heat,
+                               " down DE circRNAs  [", de_method, "]")
+  )
+} else {
+  plot.new()
+  text(0.5, 0.5, paste0("Too few DE circRNAs for heatmap (n=", nrow(mat), ")"), cex = 1.2)
+}
 dev.off()
 message("[OK] Heatmap → ", heatmap_out)
