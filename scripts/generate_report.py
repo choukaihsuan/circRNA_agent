@@ -502,7 +502,7 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
             short = str(row["circ_id"]).split(":")[-1]
             fig.add_trace(go.Bar(
                 name        = f"{gene} | {short}",
-                x           = [f"{gene}<br>Normal", f"{gene}<br>Tumor"],
+                x           = [[gene, gene], ["Normal", "Tumor"]],
                 y           = [row.get("iui_normal", 0), row.get("iui_tumor", 0)],
                 marker_color= colors[int(i) % len(colors)],
                 legendgroup = gene,
@@ -512,11 +512,12 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
         barmode       = "stack",
         title         = "Isoform Usage Index — Tumor vs Normal (significant switching only)",
         yaxis_title   = "Isoform Usage Index (IUI)",
-        xaxis_tickangle = -30,
-        height        = 480,
+        height        = 500,
         legend_title  = "Gene | BSJ coords",
         plot_bgcolor  = "white",
         paper_bgcolor = "white",
+        margin        = dict(b=80, t=60),
+        xaxis         = dict(tickfont=dict(size=11)),
     )
     return fig.to_html(include_plotlyjs="cdn", full_html=False)
 
