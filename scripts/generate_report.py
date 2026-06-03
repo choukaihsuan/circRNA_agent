@@ -885,10 +885,10 @@ function showCircDetail(circId) {{
   _drawCircleRNA(circId, circEl);
   document.getElementById('cm-mirna').innerHTML = _buildInteractionTable(
     d.mirna||[], ['miRNAName','siteType','circ_pos','clipExpNum','cellType','source','in_circ'],
-    ['miRNA','Site Type','Position','CLIP Exp.','Cell Type','Source','In circRNA']);
+    ['miRNA','Site Type','Chr Position','CLIP Exp.','Cell Type','Source','In circRNA'], circId);
   document.getElementById('cm-rbp').innerHTML = _buildInteractionTable(
     d.rbp||[], ['RBPName','bindingSites','circ_pos','location','clipExpNum','cellType','source','in_circ'],
-    ['RBP','Sites','Position','Location','CLIP Exp.','Cell Type','Source','In circRNA']);
+    ['RBP','Sites','Chr Position','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId);
   const vEl = document.getElementById('cm-volcano');
   vEl.dataset.circId = circId;
   vEl.innerHTML = '<p style="color:#aaa;font-size:12px;padding:8px">Click tab to load volcano.</p>';
@@ -1322,13 +1322,31 @@ function _buildMiniVolcano(circId) {{
   el._plotlyLoaded=true;
 }}
 
-function _buildInteractionTable(rows,keys,headers) {{
+function _buildInteractionTable(rows, keys, headers, circId) {{
   if(!rows||!rows.length) return '<p class="no-data">No data available (novel circRNA or source returned no results).</p>';
+
+  // parse chr and genomic start from circId (e.g. "chr2:56813056|56820808")
+  let chrom='', chromStart=0;
+  if(circId) {{
+    const cm=circId.match(/^(.+):(\d+)\|(\d+)$/);
+    if(cm) {{ chrom=cm[1]; chromStart=parseInt(cm[2]); }}
+  }}
+
   const _srcBadge=s=>{{
     if(!s)return'—';
     const col=s==='ENCORI'?'#0077b6':'#6c757d';
     return`<span style="background:${{col}};color:white;border-radius:3px;padding:1px 5px;font-size:10px">${{s}}</span>`;
   }};
+
+  const _absPos=v=>{{
+    if(!chrom||!v||v==='—') return v;
+    const pm=String(v).match(/(\d+)[–\-](\d+)/);
+    if(!pm) return v;
+    const a=chromStart+parseInt(pm[1])-1;
+    const b=chromStart+parseInt(pm[2])-1;
+    return chrom+':'+a.toLocaleString()+'-'+b.toLocaleString();
+  }};
+
   let html='<table class="itable"><thead><tr>';
   headers.forEach(h=>html+='<th>'+h+'</th>');
   html+='</tr></thead><tbody>';
@@ -1336,10 +1354,10 @@ function _buildInteractionTable(rows,keys,headers) {{
     html+='<tr>';
     keys.forEach(k=>{{
       let v=r[k]!==undefined&&r[k]!==''?r[k]:'—';
+      if(k==='circ_pos') v=_absPos(v);
       if(k==='source') v=_srcBadge(String(r[k]||''));
       if(k==='in_circ'){{
         const ic=r[k];
-        // CI entries have no in_circ field → treat as true
         if(ic===undefined||ic===true||ic==='true')
           v='<span style="color:#2ca02c;font-weight:bold">✓</span>';
         else
@@ -1354,7 +1372,7 @@ function _buildInteractionTable(rows,keys,headers) {{
   const nEN=rows.filter(r=>r.source==='ENCORI').length;
   html+=`<p style="font-size:11px;color:#aaa;margin-top:6px">
     <span style="background:#6c757d;color:white;border-radius:3px;padding:1px 5px;font-size:10px">CircInteractome</span>
-    ${{nCI}} records · TargetScan predictions · hg19 · Position = 1-based within circRNA
+    ${{nCI}} records · TargetScan predictions · hg19 · Chr Position = circRNA start + 1-based offset
     &nbsp;&nbsp;
     <span style="background:#0077b6;color:white;border-radius:3px;padding:1px 5px;font-size:10px">ENCORI</span>
     ${{nEN}} records · CLIP-seq validated · hg38 · Gene-level
