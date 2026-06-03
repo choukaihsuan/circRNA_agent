@@ -238,6 +238,8 @@ def main() -> None:
                         help="DESeq2 DE results (CLEAR sim; defaults to nfcore-de if same matrix)")
     parser.add_argument("--sponging-de",     default=None,
                         help="DESeq2 DE results (sponging sim; optional)")
+    parser.add_argument("--limma-de",        default=None,
+                        help="limma-voom DE results TSV (optional)")
     parser.add_argument("--circbase-annot",  default=None,
                         help="circbase_annotated.tsv from annotate_circbase.py")
     parser.add_argument("--output-summary",  required=True)
@@ -260,6 +262,10 @@ def main() -> None:
     if args.sponging_de and Path(args.sponging_de).exists():
         sponging_de = _normalise_cols(pd.read_csv(args.sponging_de, sep="\t"))
 
+    limma_de: pd.DataFrame | None = None
+    if args.limma_de and Path(args.limma_de).exists():
+        limma_de = _normalise_cols(pd.read_csv(args.limma_de, sep="\t"))
+
     annot: pd.DataFrame | None = None
     if args.circbase_annot and Path(args.circbase_annot).exists():
         annot = pd.read_csv(args.circbase_annot, sep="\t")
@@ -276,6 +282,15 @@ def main() -> None:
     nfcore_sig      = _sig_ids(nfcore_de,      args.fdr, args.lfc, sig_col=deseq_sig_col)
     circompara2_sig = _sig_ids(circompara2_de, args.fdr, args.lfc, sig_col=deseq_sig_col)
     clear_sig       = _sig_ids(clear_de,       args.fdr, args.lfc, sig_col=deseq_sig_col)
+
+    limma_sig_col = next(
+        (c for c in ("pvalue", "P.Value", "padj") if limma_de is not None and c in limma_de.columns),
+        "padj",
+    )
+    limma_sig = (
+        _sig_ids(limma_de, args.fdr, args.lfc, sig_col=limma_sig_col)
+        if limma_de is not None else set()
+    )
     sponge_sig      = (
         _sig_ids(sponging_de, args.fdr, args.lfc, sig_col=deseq_sig_col)
         if sponging_de is not None else set()
@@ -314,12 +329,18 @@ def main() -> None:
     # ── Quality metrics ───────────────────────────────────────────────────────
     cb_our    = _circbase_hits(our_de,    annot, 20, args.slop, our_sig_col)
     cb_nfcore = _circbase_hits(nfcore_de, annot, 20, args.slop, deseq_sig_col)
+    cb_limma  = (_circbase_hits(limma_de, annot, 20, args.slop, limma_sig_col)
+                 if limma_de is not None else None)
 
     cbr_our    = _circbase_rate(our_sig,    annot, our_de,    args.slop)
     cbr_nfcore = _circbase_rate(nfcore_sig, annot, nfcore_de, args.slop)
+    cbr_limma  = (_circbase_rate(limma_sig, annot, limma_de,  args.slop)
+                  if limma_de is not None else None)
 
     mlfc_our    = _median_abs_lfc(our_de,    our_sig)
     mlfc_nfcore = _median_abs_lfc(nfcore_de, nfcore_sig)
+    mlfc_limma  = (_median_abs_lfc(limma_de, limma_sig)
+                   if limma_de is not None else None)
 
     n_both, concordance = _directional_concordance(
         our_sig, our_de, nfcore_sig, nfcore_de, args.slop
@@ -332,7 +353,7 @@ def main() -> None:
         file=sys.stderr,
     )
 
-    # ── Summary table（Our edgeR vs DESeq2）──────────────────────────────────
+    # ── Summary table ─────────────────────────────────────────────────────────
     summary_rows = [
         _make_row("Our_edgeR_ciriquant", our_de, our_sig,
                   f"edgeR_ciriquant (BSJ/FSJ ratio + FSJ offset); nominal p<{args.fdr}",
@@ -342,8 +363,14 @@ def main() -> None:
                   f"DESeq2 (BSJ counts only; nominal p<{args.fdr}; same count matrix)",
                   cb_hits=cb_nfcore, cb_rate=cbr_nfcore, median_lfc=mlfc_nfcore),
     ]
+    if limma_de is not None:
+        summary_rows.append(
+            _make_row("limma_voom", limma_de, limma_sig,
+                      f"limma-voom (BSJ counts, TMM+voom; nominal p<{args.fdr}; same count matrix)",
+                      cb_hits=cb_limma, cb_rate=cbr_limma, median_lfc=mlfc_limma)
+        )
 
-    # ── Jaccard + concordance（Our vs DESeq2）────────────────────────────────
+    # ── Jaccard pairwise ──────────────────────────────────────────────────────
     jac_rows = [{
         "Method_A":               "Our_edgeR_ciriquant",
         "Method_B":               "DESeq2_baseline",
@@ -353,6 +380,23 @@ def main() -> None:
         "Both":                   n_both,
         "Directional_concordance_pct": concordance,
     }]
+    if limma_de is not None and limma_sig:
+        n_ol, conc_ol = _directional_concordance(our_sig, our_de, limma_sig, limma_de, args.slop)
+        jac_rows.append({
+            "Method_A": "Our_edgeR_ciriquant", "Method_B": "limma_voom",
+            "Jaccard":  _jaccard(our_sig, limma_sig, args.slop),
+            "A_only":   sum(1 for x in our_sig   if not _fuzzy_in(x, limma_sig, args.slop)),
+            "B_only":   sum(1 for x in limma_sig if not _fuzzy_in(x, our_sig,   args.slop)),
+            "Both": n_ol, "Directional_concordance_pct": conc_ol,
+        })
+        n_dl, conc_dl = _directional_concordance(nfcore_sig, nfcore_de, limma_sig, limma_de, args.slop)
+        jac_rows.append({
+            "Method_A": "DESeq2_baseline", "Method_B": "limma_voom",
+            "Jaccard":  _jaccard(nfcore_sig, limma_sig, args.slop),
+            "A_only":   sum(1 for x in nfcore_sig if not _fuzzy_in(x, limma_sig,  args.slop)),
+            "B_only":   sum(1 for x in limma_sig  if not _fuzzy_in(x, nfcore_sig, args.slop)),
+            "Both": n_dl, "Directional_concordance_pct": conc_dl,
+        })
 
     # ── Write outputs ─────────────────────────────────────────────────────────
     Path(args.output_summary).parent.mkdir(parents=True, exist_ok=True)

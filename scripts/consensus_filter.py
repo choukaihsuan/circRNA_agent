@@ -109,6 +109,63 @@ def parse_dcc(path: str, min_bsj: int) -> CoordMap:
     return coords
 
 
+def parse_circexplorer2(path: str, min_bsj: int) -> CoordMap:
+    """Parse CIRCexplorer2 output: auto-detects format.
+
+    Handles two formats:
+    - back_spliced_junction.bed (≤6 cols): col 4 = BSJ count (score)
+    - known_circ.txt / circularRNA_known.txt (≥13 cols): col 12 = readNumber
+
+    CIRCexplorer2 uses BED 0-based start; we add 1 to match CIRIquant GTF (1-based).
+    """
+    coords: CoordMap = {}
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            parts = line.strip().split("\t")
+            n = len(parts)
+            if n < 5:
+                continue
+            try:
+                chrom = parts[0]
+                start = int(parts[1]) + 1  # BED 0-based → 1-based (match CIRIquant)
+                end   = int(parts[2])
+                bsj   = float(parts[12]) if n >= 13 else float(parts[4])
+                if bsj >= min_bsj:
+                    coords[(chrom, start, end)] = bsj
+            except (ValueError, IndexError):
+                continue
+    return coords
+
+
+def parse_find_circ(path: str, min_bsj: int) -> CoordMap:
+    """Parse find_circ splice_sites.bed output.
+
+    Format (BED 0-based): chrom start end name n_reads strand [n_uniq ...]
+    Column 4 (n_reads) = BSJ read count.
+    Start is converted to 1-based to match CIRIquant GTF coordinates.
+    """
+    coords: CoordMap = {}
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith("#") or line.startswith("chrom"):
+                continue
+            parts = line.strip().split("\t")
+            if len(parts) < 5:
+                continue
+            try:
+                chrom = parts[0]
+                start = int(parts[1]) + 1  # BED 0-based → 1-based
+                end   = int(parts[2])
+                bsj   = float(parts[4])    # n_reads column
+                if bsj >= min_bsj:
+                    coords[(chrom, start, end)] = bsj
+            except (ValueError, IndexError):
+                continue
+    return coords
+
+
 def parse_ciri2(path: str, min_bsj: int) -> CoordMap:
     """Parse CIRI2 output text file. Returns {(chr, start, end): bsj}."""
     coords: CoordMap = {}
@@ -203,9 +260,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Multi-tool circRNA consensus filter with adaptive confidence scoring"
     )
-    parser.add_argument("--cirique",   default=None, help="CIRIquant GTF output (optional)")
-    parser.add_argument("--ciri2",     default=None, help="CIRI2 output text file (optional)")
-    parser.add_argument("--dcc",       default=None, help="DCC CircCoordinates file (optional)")
+    parser.add_argument("--cirique",       default=None, help="CIRIquant GTF output (optional)")
+    parser.add_argument("--ciri2",         default=None, help="CIRI2 output text file (optional)")
+    parser.add_argument("--dcc",           default=None, help="DCC CircCoordinates file (optional)")
+    parser.add_argument("--circexplorer2", default=None,
+                        help="CIRCexplorer2 back_spliced_junction.bed or known_circ.txt (optional)")
+    parser.add_argument("--find-circ",     default=None, dest="find_circ",
+                        help="find_circ splice_sites.bed output (optional)")
     parser.add_argument("--output",    required=True, help="Output BED file")
     parser.add_argument("--summary",   required=True, help="Output summary TSV file")
     parser.add_argument("--min-tools", type=int, default=2, dest="min_tools",
@@ -225,34 +286,52 @@ def main() -> None:
                         dest="adaptive_ratio",
                         help="Threshold for adaptive fallback: if min(tool_counts) / "
                              "max(tool_counts) < ratio, trigger single-tool mode (default: 0.1)")
+    parser.add_argument("--min-confidence", type=float, default=0.0,
+                        dest="min_confidence",
+                        help="Minimum confidence score threshold after voting (default: 0.0). "
+                             "Removes low-evidence circRNAs to improve precision.")
     args = parser.parse_args()
 
-    if not args.cirique and not args.dcc:
-        parser.error("At少需要提供 --cirique 或 --dcc 其中一個")
+    if not any([args.cirique, args.ciri2, args.dcc, args.circexplorer2, args.find_circ]):
+        parser.error("至少需要提供 --cirique、--ciri2、--dcc、--circexplorer2 或 --find-circ 其中一個")
 
     tool_maps: list[CoordMap] = []
     tool_names: list[str] = []
-    cirique_map: CoordMap = {}
-    ciri2_map:   CoordMap = {}
-    dcc_map:     CoordMap = {}
+    cirique_map:       CoordMap = {}
+    ciri2_map:         CoordMap = {}
+    dcc_map:           CoordMap = {}
+    circexplorer2_map: CoordMap = {}
+    find_circ_map:     CoordMap = {}
 
     if args.cirique:
         cirique_map = parse_ciriquant(args.cirique, args.min_bsj, args.max_junction_ratio)
         tool_maps.append(cirique_map)
         tool_names.append("ciriquant")
-        print(f"[consensus] CIRIquant: {len(cirique_map)} circRNAs", file=sys.stderr)
+        print(f"[consensus] CIRIquant:     {len(cirique_map)} circRNAs", file=sys.stderr)
 
     if args.ciri2:
         ciri2_map = parse_ciri2(args.ciri2, args.min_bsj)
         tool_maps.append(ciri2_map)
         tool_names.append("ciri2")
-        print(f"[consensus] CIRI2:     {len(ciri2_map)} circRNAs", file=sys.stderr)
+        print(f"[consensus] CIRI2:         {len(ciri2_map)} circRNAs", file=sys.stderr)
 
     if args.dcc:
         dcc_map = parse_dcc(args.dcc, args.min_bsj)
         tool_maps.append(dcc_map)
         tool_names.append("dcc")
-        print(f"[consensus] DCC:       {len(dcc_map)} circRNAs", file=sys.stderr)
+        print(f"[consensus] DCC:           {len(dcc_map)} circRNAs", file=sys.stderr)
+
+    if args.circexplorer2:
+        circexplorer2_map = parse_circexplorer2(args.circexplorer2, args.min_bsj)
+        tool_maps.append(circexplorer2_map)
+        tool_names.append("circexplorer2")
+        print(f"[consensus] CIRCexplorer2: {len(circexplorer2_map)} circRNAs", file=sys.stderr)
+
+    if args.find_circ:
+        find_circ_map = parse_find_circ(args.find_circ, args.min_bsj)
+        tool_maps.append(find_circ_map)
+        tool_names.append("find_circ")
+        print(f"[consensus] find_circ:     {len(find_circ_map)} circRNAs", file=sys.stderr)
 
     effective_min_tools = min(args.min_tools, len(tool_maps))
     if effective_min_tools < args.min_tools:
@@ -291,6 +370,16 @@ def main() -> None:
             file=sys.stderr,
         )
 
+    # ── Confidence score filter ────────────────────────────────────────────────
+    if args.min_confidence > 0.0:
+        before = len(results)
+        results = [r for r in results if r[4] >= args.min_confidence]
+        print(
+            f"[consensus] confidence_score ≥ {args.min_confidence}: "
+            f"{len(results)} circRNAs 保留（移除 {before - len(results)} 個）",
+            file=sys.stderr,
+        )
+
     # ── BED output: chr start end . n_tools . confidence_score ───────────────
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w") as fh:
@@ -324,6 +413,14 @@ def main() -> None:
             m = _best_match(coord, dcc_map, args.slop)
             row["in_dcc"] = 1 if m else 0
             row["bsj_dcc"] = m[0] if m else 0
+        if circexplorer2_map:
+            m = _best_match(coord, circexplorer2_map, args.slop)
+            row["in_circexplorer2"] = 1 if m else 0
+            row["bsj_circexplorer2"] = m[0] if m else 0
+        if find_circ_map:
+            m = _best_match(coord, find_circ_map, args.slop)
+            row["in_find_circ"] = 1 if m else 0
+            row["bsj_find_circ"] = m[0] if m else 0
         rows.append(row)
 
     pd.DataFrame(rows).to_csv(args.summary, sep="\t", index=False)

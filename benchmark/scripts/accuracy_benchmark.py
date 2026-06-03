@@ -1,19 +1,15 @@
 """
 accuracy_benchmark.py – 偵測準確率比較（對照 RNase R ground truth）
 
-Five detection strategies evaluated:
+Three multi-tool detection strategies evaluated (single-tool methods excluded):
   1. Our adaptive consensus filter
      CIRIquant + DCC, slop=10 bp, BSJ/FSJ pseudo-circ QC
   2. CirComPara2 simulation (Gaffo et al. 2022)
      CIRIquant + DCC, slop=10 bp, NO pseudo-circ QC
   3. nf-core/circrna simulation (Digby-Bell et al. 2023)
      CIRIquant + CIRCexplorer2 + find_circ, slop=0 (exact coords), min_tools=2
-  4. circRNA-sponging simulation (Hansen et al. 2023)
-     DCC-only, min_bsj=2
-  5. CLEAR simulation (custom 2020)
-     CIRIquant-only, slop=0 (exact coords), no consensus step
 
-Metrics: Precision, Recall, F1, AUC-PR
+Metrics: Precision, Recall, F1, Specificity, AUC-PR
 Stratification: low BSJ (1–4), mid (5–19), high (≥20 RPM in total RNA)
 
 Outputs:
@@ -311,10 +307,6 @@ def main() -> None:
                         help="nf-core 3-tool sim BED (CIRIquant+CIRCexplorer2+find_circ, slop=0)")
     parser.add_argument("--nfcore-summary",        default=None,
                         help="nf-core 3-tool sim summary TSV (contains confidence_score)")
-    parser.add_argument("--dcc-coords",            required=True,
-                        help="DCC CircCoordinates (circRNA-sponging sim)")
-    parser.add_argument("--clear-bed",             required=True,
-                        help="CLEAR sim BED (CIRIquant-only, slop=0)")
     parser.add_argument("--output-summary",        required=True)
     parser.add_argument("--output-stratified",     required=True)
     parser.add_argument("--output-fp-comparison",  default=None,
@@ -340,27 +332,21 @@ def main() -> None:
         _load_summary_scores(args.nfcore_summary)
         if args.nfcore_summary else None
     )
-    sponge_ids, sponge_scores = _load_dcc(args.dcc_coords, args.min_bsj)
-    clear_ids            = _load_bed(args.clear_bed)
 
     print(
         f"[accuracy] Detected: ours={len(our_ids)}, "
         f"circompara2_sim={len(circompara2_ids)}, "
-        f"nfcore_3tools={len(nfcore_ids)}, "
-        f"sponging_sim={len(sponge_ids)}, "
-        f"clear_sim={len(clear_ids)}",
+        f"nfcore_3tools={len(nfcore_ids)}",
         file=sys.stderr,
     )
 
     # ── Evaluate each method ──────────────────────────────────────────────────
-    # slop=0 for exact-coordinate methods (nfcore, clear): evaluating at their native resolution.
-    # nfcore_3tools uses confidence_score from consensus_filter.py output (no longer binary).
+    # nfcore uses slop=0 (exact coords); evaluated at its native resolution.
+    # nfcore_3tools uses confidence_score from consensus_filter.py (not binary).
     methods = [
-        ("Our_adaptive",    our_ids,         args.slop, our_scores),
-        ("CirComPara2_sim", circompara2_ids,  args.slop, circompara2_scores),
-        ("nfcore_3tools",   nfcore_ids,       0,         nfcore_scores),
-        ("sponging_DCC",    sponge_ids,       args.slop, sponge_scores),
-        ("CLEAR_sim",       clear_ids,        0,         None),
+        ("Our_adaptive",    our_ids,        args.slop, our_scores),
+        ("CirComPara2_sim", circompara2_ids, args.slop, circompara2_scores),
+        ("nfcore_3tools",   nfcore_ids,      0,         nfcore_scores),
     ]
 
     summary_rows = []

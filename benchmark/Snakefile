@@ -569,17 +569,15 @@ rule clear_sim_filter:
 # ─── Accuracy benchmark ───────────────────────────────────────────────────────
 
 rule accuracy_benchmark:
-    """Compute Precision/Recall/F1/AUC-PR for five detection strategies."""
+    """Compute Precision/Recall/F1/AUC-PR for three multi-tool detection strategies."""
     input:
-        ground_truth         = RESULTS + "/rnaser/ground_truth.tsv",
-        our_bed              = RESULTS + "/detection/our_method.bed",
-        our_summary          = RESULTS + "/detection/our_method_summary.tsv",
-        circompara2_bed      = RESULTS + "/detection/circompara2_sim.bed",
-        circompara2_summary  = RESULTS + "/detection/circompara2_sim_summary.tsv",
-        nfcore_bed           = RESULTS + "/detection/nfcore_3tools.bed",
-        nfcore_summary       = RESULTS + "/detection/nfcore_3tools_summary.tsv",
-        dcc_coords           = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
-        clear_bed            = RESULTS + "/detection/clear_sim.bed",
+        ground_truth        = RESULTS + "/rnaser/ground_truth.tsv",
+        our_bed             = RESULTS + "/detection/our_method.bed",
+        our_summary         = RESULTS + "/detection/our_method_summary.tsv",
+        circompara2_bed     = RESULTS + "/detection/circompara2_sim.bed",
+        circompara2_summary = RESULTS + "/detection/circompara2_sim_summary.tsv",
+        nfcore_bed          = RESULTS + "/detection/nfcore_3tools.bed",
+        nfcore_summary      = RESULTS + "/detection/nfcore_3tools_summary.tsv",
     output:
         summary       = RESULTS + "/accuracy_summary.tsv",
         stratified    = RESULTS + "/stratified_f1.tsv",
@@ -591,18 +589,16 @@ rule accuracy_benchmark:
     shell:
         """
         python {AGENT_DIR}/benchmark/scripts/accuracy_benchmark.py \
-            --ground-truth          {input.ground_truth} \
-            --our-bed               {input.our_bed} \
-            --our-summary           {input.our_summary} \
-            --circompara2-bed       {input.circompara2_bed} \
-            --circompara2-summary   {input.circompara2_summary} \
-            --nfcore-bed            {input.nfcore_bed} \
-            --nfcore-summary        {input.nfcore_summary} \
-            --dcc-coords            {input.dcc_coords} \
-            --clear-bed             {input.clear_bed} \
-            --output-summary        {output.summary} \
-            --output-stratified     {output.stratified} \
-            --output-fp-comparison  {output.fp_comparison} \
+            --ground-truth         {input.ground_truth} \
+            --our-bed              {input.our_bed} \
+            --our-summary          {input.our_summary} \
+            --circompara2-bed      {input.circompara2_bed} \
+            --circompara2-summary  {input.circompara2_summary} \
+            --nfcore-bed           {input.nfcore_bed} \
+            --nfcore-summary       {input.nfcore_summary} \
+            --output-summary       {output.summary} \
+            --output-stratified    {output.stratified} \
+            --output-fp-comparison {output.fp_comparison} \
             --slop    {params.slop} \
             --min-bsj {params.min_bsj} \
             2>&1 | tee {log}
@@ -641,17 +637,19 @@ rule compute_cost:
 
 rule de_deseq2_baseline:
     """
-    Run DESeq2 on GSE113230 BSJ counts — shared baseline for nf-core / CirComPara2 / CLEAR sims.
-    Uses the same count matrix as our edgeR_ciriquant run; only the method differs.
+    Run all 3 DE methods (DESeq2 primary + limma side-product) on GSE113230 BSJ counts.
+    No FSJ matrix → edgeR_ciriquant is skipped; DESeq2 and limma-voom both run.
     """
     input:
         matrix = GS113["count_matrix"],
         groups = GS113["groups"],
     output:
-        de      = RESULTS + "/de/nfcore_deseq2_results.tsv",
-        volcano = RESULTS + "/de/plots/nfcore_volcano.pdf",
-        heatmap = RESULTS + "/de/plots/nfcore_heatmap.pdf",
-        pca     = RESULTS + "/de/plots/nfcore_pca.pdf",
+        de       = RESULTS + "/de/nfcore_deseq2_results.tsv",
+        de_deseq = RESULTS + "/de/nfcore_deseq2_only.tsv",
+        de_limma = RESULTS + "/de/nfcore_limma_results.tsv",
+        volcano  = RESULTS + "/de/plots/nfcore_volcano.pdf",
+        heatmap  = RESULTS + "/de/plots/nfcore_heatmap.pdf",
+        pca      = RESULTS + "/de/plots/nfcore_pca.pdf",
     params:
         de_method    = "deseq2",
         fdr          = DE_FDR,
@@ -664,10 +662,11 @@ rule de_deseq2_baseline:
 
 
 rule de_quality_benchmark:
-    """Compare DE analysis quality across the five pipeline simulations."""
+    """Compare DE analysis quality: edgeR_ciriquant vs DESeq2 vs limma-voom."""
     input:
         our_de    = GS113["de_results"],
         nfcore_de = RESULTS + "/de/nfcore_deseq2_results.tsv",
+        limma_de  = RESULTS + "/de/nfcore_limma_results.tsv",
     output:
         summary = RESULTS + "/de_quality_summary.tsv",
         jaccard = RESULTS + "/de_jaccard.tsv",
@@ -688,6 +687,7 @@ rule de_quality_benchmark:
             --nfcore-de      {input.nfcore_de} \
             --circompara2-de {input.nfcore_de} \
             --clear-de       {input.nfcore_de} \
+            --limma-de       {input.limma_de} \
             --output-summary {output.summary} \
             --output-jaccard {output.jaccard} \
             --fdr {params.fdr} \

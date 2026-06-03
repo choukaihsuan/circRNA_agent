@@ -12,10 +12,13 @@ rule de_analysis:
         groups         = config["groups"],
         circbase_annot = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
     output:
-        de      = RESULTS_DIR + "/de/de_results.tsv",
-        volcano = RESULTS_DIR + "/plots/volcano.pdf",
-        heatmap = RESULTS_DIR + "/plots/heatmap.pdf",
-        pca     = RESULTS_DIR + "/plots/pca.pdf",
+        de       = RESULTS_DIR + "/de/de_results.tsv",
+        de_edger = RESULTS_DIR + "/de/de_results_edgeR_ciriquant.tsv",
+        de_deseq = RESULTS_DIR + "/de/de_results_deseq2.tsv",
+        de_limma = RESULTS_DIR + "/de/de_results_limma.tsv",
+        volcano  = RESULTS_DIR + "/plots/volcano.pdf",
+        heatmap  = RESULTS_DIR + "/plots/heatmap.pdf",
+        pca      = RESULTS_DIR + "/plots/pca.pdf",
     params:
         de_method     = DE_METHOD,
         fdr           = config["de"]["fdr_cutoff"],
@@ -153,7 +156,10 @@ rule predict_interactions:
 rule generate_report:
     """Build a self-contained HTML summary report."""
     input:
-        de             = RESULTS_DIR + "/de/de_results.tsv",
+        de       = RESULTS_DIR + "/de/de_results.tsv",
+        de_edger = RESULTS_DIR + "/de/de_results_edgeR_ciriquant.tsv",
+        de_deseq = RESULTS_DIR + "/de/de_results_deseq2.tsv",
+        de_limma = RESULTS_DIR + "/de/de_results_limma.tsv",
         biomarkers     = RESULTS_DIR + "/de/biomarker_candidates.tsv",
         matrix         = RESULTS_DIR + "/circRNA/count_matrix.tsv",
         volcano        = RESULTS_DIR + "/plots/volcano.pdf",

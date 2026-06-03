@@ -443,11 +443,10 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
 </div>
 
 <p style="margin-top:20px; font-size:13px; color:#555">
-  <strong>總結：</strong>在三個多工具管線中，我們的方法在偵測準確率（F1/AUC-PR）和 DE 分析深度上
+  <strong>總結：</strong>在三個多工具共識管線中，我們的方法在偵測準確率（F1/AUC-PR）和 DE 分析深度上
   均最優。BSJ/FSJ offset 模型、Type I/II 分類、CSI 指標和 Isoform switching 分析是本管線
   對乳癌 biomarker 研究的核心貢獻，在現有公開管線中均為獨特功能。
-  CirComPara2 在靈敏度上有優勢但計算成本最高；nf-core 適合雲端部署；
-  sponging 和 CLEAR 適合資源受限的快速分析。
+  CirComPara2 在靈敏度上有優勢但計算成本最高；nf-core 適合雲端部署且資源效率最佳。
 </p>
 """
 
@@ -551,6 +550,10 @@ def build_report(
     our_sig = de.loc[de["Method"] == "Our_edgeR_ciriquant", "Sig_DE_circRNAs"].values
     our_sig_n = int(our_sig[0]) if len(our_sig) else "—"
 
+    # Filter out single-tool methods from accuracy and compute tables
+    _SINGLE_TOOL = {"CLEAR_sim", "sponging_DCC", "CLEAR", "circRNA-sponging"}
+    acc = acc[~acc["Method"].isin(_SINGLE_TOOL)].reset_index(drop=True)
+
     # Compute display tables (select/rename columns for readability)
     acc_cols = ["Method", "n_detected", "TP", "FP", "FN"]
     if "TN" in acc.columns:
@@ -561,6 +564,9 @@ def build_report(
     acc_cols += ["AUC_PR"]
     acc_display = acc[[c for c in acc_cols if c in acc.columns]].copy()
 
+    # Filter compute cost to multi-tool pipelines only
+    _SINGLE_TOOL_PIPE = {"circRNA-sponging", "CLEAR"}
+    comp = comp[~comp["Pipeline"].isin(_SINGLE_TOOL_PIPE)].reset_index(drop=True)
     comp_display = comp[["Pipeline", "Tool_combination", "Alignment_wall_min",
                           "Total_wall_min", "Peak_RAM_GB", "CPU_cores",
                           "CPU_hours", "Source"]].copy()
