@@ -7,7 +7,7 @@ Five detection strategies evaluated:
   2. CirComPara2 simulation (Gaffo et al. 2022)
      CIRIquant + DCC, slop=10 bp, NO pseudo-circ QC
   3. nf-core/circrna simulation (Digby-Bell et al. 2023)
-     CIRIquant + DCC, slop=0 (exact coords), no BSJ/FSJ QC
+     CIRIquant + CIRCexplorer2 + find_circ, slop=0 (exact coords), min_tools=2
   4. circRNA-sponging simulation (Hansen et al. 2023)
      DCC-only, min_bsj=2
   5. CLEAR simulation (custom 2020)
@@ -124,7 +124,7 @@ def evaluate(
     Excludes ambiguous entries (is_true == -1).
     """
     gt = truth[truth["is_true"].isin([0, 1])]
-    tp = fp = fn = 0
+    tp = fp = fn = tn = 0
     score_list: list[float] = []
     label_list: list[int]   = []
 
@@ -146,13 +146,17 @@ def evaluate(
             fp += 1
         elif lbl == 1 and not detected:
             fn += 1
+        else:  # lbl == 0 and not detected
+            tn += 1
 
     prec, rec, f1 = _prf(tp, fp, fn)
     auc = _auc_pr(score_list, label_list)
+    specificity = round(tn / (tn + fp), 4) if (tn + fp) > 0 else 0.0
     return {
         "n_detected": len(method_ids),
-        "TP": tp, "FP": fp, "FN": fn,
-        "Precision": prec, "Recall": rec, "F1": f1, "AUC_PR": auc,
+        "TP": tp, "FP": fp, "FN": fn, "TN": tn,
+        "Precision": prec, "Recall": rec, "F1": f1,
+        "Specificity": specificity, "AUC_PR": auc,
     }
 
 
@@ -261,7 +265,9 @@ def main() -> None:
     parser.add_argument("--circompara2-summary",    required=True,
                         help="CirComPara2 sim summary TSV")
     parser.add_argument("--nfcore-bed",            required=True,
-                        help="nf-core sim BED (slop=0, no BSJ/FSJ QC)")
+                        help="nf-core 3-tool sim BED (CIRIquant+CIRCexplorer2+find_circ, slop=0)")
+    parser.add_argument("--nfcore-summary",        default=None,
+                        help="nf-core 3-tool sim summary TSV (contains confidence_score)")
     parser.add_argument("--dcc-coords",            required=True,
                         help="DCC CircCoordinates (circRNA-sponging sim)")
     parser.add_argument("--clear-bed",             required=True,
@@ -279,29 +285,34 @@ def main() -> None:
           f"(ambiguous excluded)", file=sys.stderr)
 
     # ── Load predictions ──────────────────────────────────────────────────────
-    our_ids           = _load_bed(args.our_bed)
-    our_scores        = _load_summary_scores(args.our_summary)
-    circompara2_ids   = _load_bed(args.circompara2_bed)
-    circompara2_scores= _load_summary_scores(args.circompara2_summary)
-    nfcore_ids        = _load_bed(args.nfcore_bed)
+    our_ids              = _load_bed(args.our_bed)
+    our_scores           = _load_summary_scores(args.our_summary)
+    circompara2_ids      = _load_bed(args.circompara2_bed)
+    circompara2_scores   = _load_summary_scores(args.circompara2_summary)
+    nfcore_ids           = _load_bed(args.nfcore_bed)
+    nfcore_scores        = (
+        _load_summary_scores(args.nfcore_summary)
+        if args.nfcore_summary else None
+    )
     sponge_ids, sponge_scores = _load_dcc(args.dcc_coords, args.min_bsj)
-    clear_ids         = _load_bed(args.clear_bed)
+    clear_ids            = _load_bed(args.clear_bed)
 
     print(
         f"[accuracy] Detected: ours={len(our_ids)}, "
         f"circompara2_sim={len(circompara2_ids)}, "
-        f"nfcore_sim={len(nfcore_ids)}, "
+        f"nfcore_3tools={len(nfcore_ids)}, "
         f"sponging_sim={len(sponge_ids)}, "
         f"clear_sim={len(clear_ids)}",
         file=sys.stderr,
     )
 
     # ── Evaluate each method ──────────────────────────────────────────────────
-    # slop=0 for exact-coordinate methods (nfcore, clear)
+    # slop=0 for exact-coordinate methods (nfcore, clear): evaluating at their native resolution.
+    # nfcore_3tools uses confidence_score from consensus_filter.py output (no longer binary).
     methods = [
         ("Our_adaptive",    our_ids,         args.slop, our_scores),
         ("CirComPara2_sim", circompara2_ids,  args.slop, circompara2_scores),
-        ("nfcore_fixed",    nfcore_ids,       0,         None),
+        ("nfcore_3tools",   nfcore_ids,       0,         nfcore_scores),
         ("sponging_DCC",    sponge_ids,       args.slop, sponge_scores),
         ("CLEAR_sim",       clear_ids,        0,         None),
     ]
@@ -317,7 +328,8 @@ def main() -> None:
         print(
             f"[accuracy] {name:22s}  "
             f"Prec={m['Precision']:.3f}  Rec={m['Recall']:.3f}  "
-            f"F1={m['F1']:.3f}  AUC-PR={m['AUC_PR']:.3f}",
+            f"F1={m['F1']:.3f}  Spec={m['Specificity']:.3f}  "
+            f"TN={m['TN']}  AUC-PR={m['AUC_PR']:.3f}",
             file=sys.stderr,
         )
 
