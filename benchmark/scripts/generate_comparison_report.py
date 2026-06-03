@@ -190,13 +190,13 @@ def _feature_table() -> str:
         ("Detection tools",
          "CIRIquant + DCC",
          "CIRI2 + CIRIquant + DCC + find_circ + CircExplorer2",
-         "CIRIquant + DCC",
+         "CIRIquant + CIRCexplorer2 + find_circ",
          "STAR + DCC",
          "CIRIquant"),
         ("Tool consensus",
          "✓ adaptive (≥2/2, slop=10 bp)",
          "✓ fixed (≥2/5 tools)",
-         "✓ fixed (≥2/2, exact)",
+         "✓ fixed (≥2/3 tools, exact)",
          "✗ single-tool",
          "✗ single-tool"),
         ("Coordinate tolerance",
@@ -313,7 +313,7 @@ def _stratified_chart(strat: pd.DataFrame) -> str:
     colors_by_method = {
         "Our_adaptive":    "c1",
         "CirComPara2_sim": "c2",
-        "nfcore_fixed":    "c3",
+        "nfcore_3tools":   "c3",
         "sponging_DCC":    "c4",
         "CLEAR_sim":       "c5",
     }
@@ -388,6 +388,7 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
   <div class="concl-card c-nfcore">
     <h4>nf-core/circrna <span class="badge badge-nfcore">Nextflow · 2023</span></h4>
     <ul>
+      <li>三工具組合（CIRIquant + CIRCexplorer2 + find_circ）— 代表 nf-core 典型使用情境</li>
       <li>Nextflow 雲端就緒，適合大規模 cohort</li>
       <li>固定 slop=0 exact match → recall 較低（尤其低 BSJ 層）</li>
       <li>無 BSJ/FSJ QC，DESeq2 僅用 BSJ counts，不區分 Type I/II</li>
@@ -429,12 +430,81 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
 
 # ── Build report ─────────────────────────────────────────────────────────────
 
+def _fp_comparison_section(fp: pd.DataFrame) -> str:
+    """Render FP score distribution comparison bar chart (Our vs CirComPara2)."""
+    html = """
+<h3>False Positive Score Distribution：Our method vs CirComPara2 sim</h3>
+<p class="note">
+  兩種方法唯一差異：Our method 啟用 BSJ/FSJ pseudo-circ QC（max_junction_ratio=1.0），
+  CirComPara2 sim 關閉此 QC。比較各 confidence score 區段的 FP 數量，
+  可直接量化 pseudo-circ QC 對假陽性的貢獻。
+</p>
+<div class="tbl-wrap"><table>
+<thead><tr>
+  <th>Score bin</th>
+  <th>Our TP</th><th>Our FP</th><th>Our FP rate</th>
+  <th>CirComPara2 TP</th><th>CirComPara2 FP</th><th>CirComPara2 FP rate</th>
+  <th>FP 差異（CirComPara2 − Our）</th>
+</tr></thead><tbody>
+"""
+    for _, row in fp.iterrows():
+        diff = int(row["CirComPara2_FP"]) - int(row["Our_FP"])
+        diff_str = f'+{diff}' if diff > 0 else str(diff)
+        diff_cls = 'style="color:#c0392b;font-weight:bold"' if diff > 0 else ''
+        html += (
+            f'<tr><td><strong>{row["score_bin"]}</strong></td>'
+            f'<td>{row["Our_TP"]}</td><td>{row["Our_FP"]}</td>'
+            f'<td>{float(row["Our_FP_rate"]):.3f}</td>'
+            f'<td>{row["CirComPara2_TP"]}</td><td>{row["CirComPara2_FP"]}</td>'
+            f'<td>{float(row["CirComPara2_FP_rate"]):.3f}</td>'
+            f'<td {diff_cls}>{diff_str}</td></tr>\n'
+        )
+    # totals row
+    our_fp_total = int(fp["Our_FP"].sum())
+    cp2_fp_total = int(fp["CirComPara2_FP"].sum())
+    diff_total   = cp2_fp_total - our_fp_total
+    html += (
+        f'<tr style="border-top:2px solid #1a5c96; font-weight:bold">'
+        f'<td>Total</td>'
+        f'<td>{int(fp["Our_TP"].sum())}</td><td>{our_fp_total}</td><td>—</td>'
+        f'<td>{int(fp["CirComPara2_TP"].sum())}</td><td>{cp2_fp_total}</td><td>—</td>'
+        f'<td style="color:#c0392b">+{diff_total}</td></tr>\n'
+    )
+    html += '</tbody></table></div>\n'
+
+    # FP count bar chart per bin
+    html += '<h3 style="margin-top:20px">FP count per score bin</h3>'
+    max_fp = max(
+        int(fp["Our_FP"].max()), int(fp["CirComPara2_FP"].max()), 1
+    )
+    for _, row in fp.iterrows():
+        our_pct = round(int(row["Our_FP"]) / max_fp * 100, 1)
+        cp2_pct = round(int(row["CirComPara2_FP"]) / max_fp * 100, 1)
+        html += (
+            f'<div style="margin:6px 0"><strong style="font-size:12px">{row["score_bin"]}</strong><br>'
+            f'<div class="bar-group">'
+            f'<span class="bar-label">Our method</span>'
+            f'<div class="bar-wrap"><div class="bar-fill c1" style="width:{our_pct}%">'
+            f'{row["Our_FP"]}</div></div>'
+            f'<span class="bar-val">{row["Our_FP"]} FP</span></div>'
+            f'<div class="bar-group">'
+            f'<span class="bar-label">CirComPara2 sim</span>'
+            f'<div class="bar-wrap"><div class="bar-fill c2" style="width:{cp2_pct}%">'
+            f'{row["CirComPara2_FP"]}</div></div>'
+            f'<span class="bar-val">{row["CirComPara2_FP"]} FP</span></div>'
+            f'</div>'
+        )
+    html += f'<p class="note">BSJ/FSJ pseudo-circ QC 共移除 <strong>{diff_total} 個假陽性</strong>（CirComPara2 sim FP total = {cp2_fp_total}，Our method = {our_fp_total}）。</p>'
+    return html
+
+
 def build_report(
     accuracy_tsv:    str,
     stratified_tsv:  str,
     compute_tsv:     str,
     de_quality_tsv:  str,
     de_jaccard_tsv:  str,
+    fp_comparison_tsv: str | None,
     output_html:     str,
 ) -> None:
     acc    = pd.read_csv(accuracy_tsv,   sep="\t")
@@ -442,6 +512,7 @@ def build_report(
     comp   = pd.read_csv(compute_tsv,    sep="\t")
     de     = pd.read_csv(de_quality_tsv, sep="\t")
     jac    = pd.read_csv(de_jaccard_tsv, sep="\t")
+    fp_cmp = pd.read_csv(fp_comparison_tsv, sep="\t") if fp_comparison_tsv else None
 
     # Key summary numbers
     n_tp = int(acc["TP"].max()) if "TP" in acc.columns else "—"
@@ -453,8 +524,14 @@ def build_report(
     our_sig_n = int(our_sig[0]) if len(our_sig) else "—"
 
     # Compute display tables (select/rename columns for readability)
-    acc_display = acc[["Method", "n_detected", "TP", "FP", "FN",
-                        "Precision", "Recall", "F1", "AUC_PR"]].copy()
+    acc_cols = ["Method", "n_detected", "TP", "FP", "FN"]
+    if "TN" in acc.columns:
+        acc_cols += ["TN"]
+    acc_cols += ["Precision", "Recall", "F1"]
+    if "Specificity" in acc.columns:
+        acc_cols += ["Specificity"]
+    acc_cols += ["AUC_PR"]
+    acc_display = acc[[c for c in acc_cols if c in acc.columns]].copy()
 
     comp_display = comp[["Pipeline", "Tool_combination", "Alignment_wall_min",
                           "Total_wall_min", "Peak_RAM_GB", "CPU_cores",
@@ -534,6 +611,9 @@ def build_report(
 {_bar_chart(acc, "F1", title="F1 Score by Method")}
 {_bar_chart(acc, "Precision", title="Precision by Method")}
 {_bar_chart(acc, "Recall", title="Recall by Method")}
+{_bar_chart(acc, "Specificity", title="Specificity by Method") if "Specificity" in acc.columns else ""}
+
+{_fp_comparison_section(fp_cmp) if fp_cmp is not None else ""}
 
 <h3>Stratified F1 by BSJ count tier</h3>
 <p class="note">
@@ -544,9 +624,10 @@ def build_report(
 {_stratified_chart(strat)}
 
 <p class="note">
-  * nf-core simulation uses slop=0 (exact coordinate match) to replicate its
-  fixed-threshold consensus behaviour.  circRNA-sponging simulation uses DCC-only
-  output (no CIRIquant cross-validation).
+  * nf-core/circrna simulation uses CIRIquant + CIRCexplorer2 + find_circ (≥2/3 tools,
+  slop=0 exact match) to replicate the typical nf-core 3-tool consensus configuration
+  (Digby-Bell et al. 2023, BMC Bioinformatics).
+  circRNA-sponging simulation uses DCC-only output (no CIRIquant cross-validation).
 </p>
 </div>
 
@@ -635,17 +716,20 @@ def main() -> None:
     parser.add_argument("--stratified",  required=True)
     parser.add_argument("--compute",     required=True)
     parser.add_argument("--de-quality",  required=True, dest="de_quality")
-    parser.add_argument("--de-jaccard",  required=True, dest="de_jaccard")
-    parser.add_argument("--output",      required=True)
+    parser.add_argument("--de-jaccard",     required=True,  dest="de_jaccard")
+    parser.add_argument("--fp-comparison",  default=None,   dest="fp_comparison",
+                        help="FP score comparison TSV (from accuracy_benchmark.py)")
+    parser.add_argument("--output",         required=True)
     args = parser.parse_args()
 
     build_report(
-        accuracy_tsv   = args.accuracy,
-        stratified_tsv = args.stratified,
-        compute_tsv    = args.compute,
-        de_quality_tsv = args.de_quality,
-        de_jaccard_tsv = args.de_jaccard,
-        output_html    = args.output,
+        accuracy_tsv      = args.accuracy,
+        stratified_tsv    = args.stratified,
+        compute_tsv       = args.compute,
+        de_quality_tsv    = args.de_quality,
+        de_jaccard_tsv    = args.de_jaccard,
+        fp_comparison_tsv = args.fp_comparison,
+        output_html       = args.output,
     )
 
 

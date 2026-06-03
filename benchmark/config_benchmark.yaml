@@ -35,6 +35,13 @@ genome:
   bwa_index:    /home3/choukaihsuan/reference/hg19/bwa_index/hg19
   hisat2_index: /home3/choukaihsuan/reference/hg19/hisat2_index/hg19
   star_index:   /home3/choukaihsuan/reference/hg19/star_index
+  # ── nf-core 3-tool simulation prerequisites ───────────────────────────────
+  # bowtie2 index: bowtie2-build --threads 8 hg19.fa /home3/choukaihsuan/reference/hg19/bowtie2_index/hg19
+  bowtie2_index: /home3/choukaihsuan/reference/hg19/bowtie2_index/hg19
+  # refFlat for CIRCexplorer2: wget -qO- https://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/refFlat.txt.gz | gunzip > ref_flat.txt
+  ref_flat:      /home3/choukaihsuan/reference/hg19/refFlat.txt
+  # find_circ scripts: git clone https://github.com/marvin-jens/find_circ /home3/choukaihsuan/tools/find_circ
+  find_circ_dir: /home3/choukaihsuan/tools/find_circ
 
 ciriquant_config: /home3/choukaihsuan/circRNA_agent/config/ciriquant.yaml
 

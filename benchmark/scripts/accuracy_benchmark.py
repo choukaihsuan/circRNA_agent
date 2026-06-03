@@ -160,6 +160,49 @@ def evaluate(
     }
 
 
+def fp_score_binned(
+    method_ids: set[str],
+    summary_scores: dict[str, float],
+    truth: pd.DataFrame,
+    match_slop: int,
+) -> list[dict]:
+    """
+    Bin detected circRNAs by confidence_score and label each as TP/FP.
+    Returns one row per (bin, label) with count.
+    Used to compare FP distributions between methods.
+    """
+    gt_pos = set(truth[truth["is_true"] == 1]["circ_id"])
+    gt_neg = set(truth[truth["is_true"] == 0]["circ_id"])
+
+    bins   = [0, 1.5, 2.0, 2.5, 3.0, 3.5, float("inf")]
+    labels = ["<1.5", "1.5–2.0", "2.0–2.5", "2.5–3.0", "3.0–3.5", "≥3.5"]
+    tp_counts = {lbl: 0 for lbl in labels}
+    fp_counts = {lbl: 0 for lbl in labels}
+
+    for circ_id, score in summary_scores.items():
+        # assign bin
+        bin_lbl = labels[-1]
+        for i in range(len(bins) - 1):
+            if bins[i] <= score < bins[i + 1]:
+                bin_lbl = labels[i]
+                break
+
+        if _coord_match_in_set(circ_id, gt_pos, match_slop):
+            tp_counts[bin_lbl] += 1
+        elif _coord_match_in_set(circ_id, gt_neg, match_slop):
+            fp_counts[bin_lbl] += 1
+
+    rows = []
+    for lbl in labels:
+        tp, fp = tp_counts[lbl], fp_counts[lbl]
+        fp_rate = round(fp / (tp + fp), 4) if (tp + fp) > 0 else 0.0
+        rows.append({
+            "score_bin": lbl,
+            "TP": tp, "FP": fp, "FP_rate": fp_rate,
+        })
+    return rows
+
+
 def stratified_f1(
     method_ids: set[str],
     truth: pd.DataFrame,
@@ -274,6 +317,9 @@ def main() -> None:
                         help="CLEAR sim BED (CIRIquant-only, slop=0)")
     parser.add_argument("--output-summary",        required=True)
     parser.add_argument("--output-stratified",     required=True)
+    parser.add_argument("--output-fp-comparison",  default=None,
+                        dest="output_fp_comparison",
+                        help="TSV: FP score distribution comparison (Our vs CirComPara2)")
     parser.add_argument("--slop",    type=int, default=10)
     parser.add_argument("--min-bsj", type=int, default=2, dest="min_bsj")
     args = parser.parse_args()
@@ -341,6 +387,24 @@ def main() -> None:
     pd.DataFrame(strat_rows).to_csv(  args.output_stratified, sep="\t", index=False)
     print(f"[accuracy] Summary    → {args.output_summary}",    file=sys.stderr)
     print(f"[accuracy] Stratified → {args.output_stratified}", file=sys.stderr)
+
+    # ── FP score distribution comparison (Our vs CirComPara2) ─────────────────
+    if args.output_fp_comparison:
+        our_bins = fp_score_binned(our_ids, our_scores, truth, args.slop)
+        cp2_bins = fp_score_binned(circompara2_ids, circompara2_scores, truth, args.slop)
+        fp_rows = []
+        for o, c in zip(our_bins, cp2_bins):
+            fp_rows.append({
+                "score_bin":          o["score_bin"],
+                "Our_TP":             o["TP"],
+                "Our_FP":             o["FP"],
+                "Our_FP_rate":        o["FP_rate"],
+                "CirComPara2_TP":     c["TP"],
+                "CirComPara2_FP":     c["FP"],
+                "CirComPara2_FP_rate":c["FP_rate"],
+            })
+        pd.DataFrame(fp_rows).to_csv(args.output_fp_comparison, sep="\t", index=False)
+        print(f"[accuracy] FP comparison → {args.output_fp_comparison}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -48,6 +48,12 @@ RESULTS    = BENCH["output_dir"]
 # workflow.snakefile is benchmark/Snakefile; go up one level to get circRNA_agent root
 AGENT_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(workflow.snakefile)))
 
+# nf-core 3-tool simulation prerequisites
+# CIRCexplorer2: conda install -c bioconda circexplorer2
+# find_circ:     git clone https://github.com/marvin-jens/find_circ to GENOME["find_circ_dir"]
+#                conda install -c bioconda bowtie2
+# bowtie2 index: bowtie2-build --threads 8 hg19.fa {GENOME["bowtie2_index"]}
+
 # Derived from config
 DE_FDR          = config.get("de_fdr",          0.05)
 DE_LFC          = config.get("de_lfc",           1.0)
@@ -341,6 +347,7 @@ rule our_filter:
         slop               = BENCH.get("slop", 10),
         min_bsj            = BENCH.get("min_bsj", 2),
         max_junction_ratio = BENCH.get("max_junction_ratio", 1.0),
+        min_confidence     = BENCH.get("min_confidence", 0.0),
     log: "logs/bench/our_filter.log"
     shell:
         """
@@ -354,6 +361,7 @@ rule our_filter:
             --min-bsj {params.min_bsj} \
             --max-junction-ratio {params.max_junction_ratio} \
             --adaptive --adaptive-ratio 0.1 \
+            --min-confidence {params.min_confidence} \
             2>&1 | tee {log}
         """
 
@@ -389,28 +397,139 @@ rule circompara2_sim_filter:
         """
 
 
-rule nfcore_sim_filter:
+rule bench_circexplorer2:
     """
-    nf-core/circrna simulation (Digby-Bell et al. 2023, BMC Bioinformatics):
-    CIRIquant + DCC, slop=0 (exact coordinate match), BSJ/FSJ QC disabled.
-    Replicates nf-core's fixed min_tools=2 consensus behaviour.
+    CIRCexplorer2 circRNA detection using existing STAR chimeric junctions.
+    Step 1 (parse): Chimeric.out.junction → back_spliced_junction.bed
+    Step 2 (annotate): annotate with refFlat → known_circ.txt
+    Prerequisites: conda install -c bioconda circexplorer2
     """
     input:
-        cirique = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
-        dcc     = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+        junc   = GS55["results_dir"] + "/circRNA/{srr}/Chimeric.out.junction",
+        genome = GENOME["fasta"],
     output:
-        bed     = RESULTS + "/detection/nfcore_sim.bed",
-        summary = RESULTS + "/detection/nfcore_sim_summary.tsv",
+        bed    = GS55["results_dir"] + "/circRNA/{srr}/CIRCexplorer2/back_spliced_junction.bed",
+        known  = GS55["results_dir"] + "/circRNA/{srr}/CIRCexplorer2/known_circ.txt",
+    params:
+        outdir   = GS55["results_dir"] + "/circRNA/{srr}/CIRCexplorer2",
+        ref_flat = GENOME.get("ref_flat", ""),
+    threads: 2
+    resources:
+        mem_gb = 8
+    log: "logs/bench/circexplorer2_{srr}.log"
+    shell:
+        """
+        (
+            mkdir -p {params.outdir}
+            cd {params.outdir}
+            CIRCexplorer2 parse -t STAR {input.junc} -b back_spliced_junction.bed
+            CIRCexplorer2 annotate \
+                -r {params.ref_flat} \
+                -g {input.genome} \
+                -b back_spliced_junction.bed
+            mv {params.outdir}/circularRNA_known.txt {output.known} 2>/dev/null || true
+        ) > {log} 2>&1
+        """
+
+
+rule bench_find_circ_map:
+    """
+    Bowtie2 alignment to extract unmapped read pairs for find_circ.
+    Prerequisites:
+      - conda install -c bioconda bowtie2
+      - bowtie2-build --threads 8 {genome.fa} {GENOME[bowtie2_index]}
+    """
+    input:
+        r1 = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
+        r2 = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
+    output:
+        unm_r1 = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_1.fastq",
+        unm_r2 = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_2.fastq",
+    params:
+        outdir = GS55["results_dir"] + "/circRNA/{srr}/find_circ",
+        index  = GENOME.get("bowtie2_index", ""),
+    threads: config.get("threads", 8)
+    resources:
+        mem_gb = 8
+    log: "logs/bench/find_circ_map_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.outdir}
+        bowtie2 -p {threads} --very-sensitive --mm \
+            -x {params.index} \
+            -1 {input.r1} -2 {input.r2} \
+            --un-conc {params.outdir}/unmapped_%.fastq \
+            -S /dev/null \
+            > {log} 2>&1
+        """
+
+
+rule bench_find_circ:
+    """
+    find_circ circRNA detection from unmapped bowtie2 reads.
+    Prerequisites:
+      - git clone https://github.com/marvin-jens/find_circ {GENOME[find_circ_dir]}
+      - conda install -c bioconda bowtie2 pysam
+    """
+    input:
+        unm_r1 = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_1.fastq",
+        unm_r2 = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_2.fastq",
+    output:
+        bed = GS55["results_dir"] + "/circRNA/{srr}/find_circ/splice_sites.bed",
+    params:
+        outdir        = GS55["results_dir"] + "/circRNA/{srr}/find_circ",
+        index         = GENOME.get("bowtie2_index", ""),
+        find_circ_dir = GENOME.get("find_circ_dir", ""),
+        genome        = GENOME["fasta"],
+        sample        = "{srr}",
+    threads: config.get("threads", 8)
+    resources:
+        mem_gb = 8
+    log: "logs/bench/find_circ_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.outdir}
+        # Concatenate both mates: find_circ processes read pairs jointly
+        cat {input.unm_r1} {input.unm_r2} | \
+            python {params.find_circ_dir}/unmapped2anchors.py | \
+            bowtie2 -p {threads} --score-min=C,-15,0 --reorder \
+                -x {params.index} -U - | \
+            python {params.find_circ_dir}/find_circ.py \
+                --genome={params.genome} \
+                --prefix={params.sample} \
+                --name={params.sample} \
+                --reads-per-circ=2 \
+                --stats={params.outdir}/find_circ_stats.txt \
+                > {output.bed} \
+                2>> {log}
+        """
+
+
+rule nfcore_3tools_filter:
+    """
+    nf-core/circrna simulation (Digby-Bell et al. 2023, BMC Bioinformatics):
+    CIRIquant + CIRCexplorer2 + find_circ — the typical nf-core 3-tool combination.
+    min_tools=2 (at least 2 of 3 tools agree), slop=0 (nf-core exact matching).
+    BSJ/FSJ QC disabled (nf-core does not apply pseudo-circ filtering).
+    """
+    input:
+        cirique      = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
+        circexplorer = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/CIRCexplorer2/known_circ.txt",
+        find_circ    = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/find_circ/splice_sites.bed",
+    output:
+        bed     = RESULTS + "/detection/nfcore_3tools.bed",
+        summary = RESULTS + "/detection/nfcore_3tools_summary.tsv",
     params:
         min_bsj = BENCH.get("min_bsj", 2),
-    log: "logs/bench/nfcore_sim_filter.log"
+    log: "logs/bench/nfcore_3tools_filter.log"
     shell:
         """
         python {AGENT_DIR}/scripts/consensus_filter.py \
-            --cirique {input.cirique} \
-            --dcc     {input.dcc} \
-            --output  {output.bed} \
-            --summary {output.summary} \
+            --cirique      {input.cirique} \
+            --circexplorer2 {input.circexplorer} \
+            --find-circ    {input.find_circ} \
+            --output       {output.bed} \
+            --summary      {output.summary} \
             --min-tools 2 \
             --slop 0 \
             --min-bsj {params.min_bsj} \
@@ -452,17 +571,19 @@ rule clear_sim_filter:
 rule accuracy_benchmark:
     """Compute Precision/Recall/F1/AUC-PR for five detection strategies."""
     input:
-        ground_truth        = RESULTS + "/rnaser/ground_truth.tsv",
-        our_bed             = RESULTS + "/detection/our_method.bed",
-        our_summary         = RESULTS + "/detection/our_method_summary.tsv",
-        circompara2_bed     = RESULTS + "/detection/circompara2_sim.bed",
-        circompara2_summary = RESULTS + "/detection/circompara2_sim_summary.tsv",
-        nfcore_bed          = RESULTS + "/detection/nfcore_sim.bed",
-        dcc_coords          = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
-        clear_bed           = RESULTS + "/detection/clear_sim.bed",
+        ground_truth         = RESULTS + "/rnaser/ground_truth.tsv",
+        our_bed              = RESULTS + "/detection/our_method.bed",
+        our_summary          = RESULTS + "/detection/our_method_summary.tsv",
+        circompara2_bed      = RESULTS + "/detection/circompara2_sim.bed",
+        circompara2_summary  = RESULTS + "/detection/circompara2_sim_summary.tsv",
+        nfcore_bed           = RESULTS + "/detection/nfcore_3tools.bed",
+        nfcore_summary       = RESULTS + "/detection/nfcore_3tools_summary.tsv",
+        dcc_coords           = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+        clear_bed            = RESULTS + "/detection/clear_sim.bed",
     output:
-        summary    = RESULTS + "/accuracy_summary.tsv",
-        stratified = RESULTS + "/stratified_f1.tsv",
+        summary       = RESULTS + "/accuracy_summary.tsv",
+        stratified    = RESULTS + "/stratified_f1.tsv",
+        fp_comparison = RESULTS + "/fp_score_comparison.tsv",
     params:
         slop    = BENCH.get("slop", 10),
         min_bsj = BENCH.get("min_bsj", 2),
@@ -476,10 +597,12 @@ rule accuracy_benchmark:
             --circompara2-bed       {input.circompara2_bed} \
             --circompara2-summary   {input.circompara2_summary} \
             --nfcore-bed            {input.nfcore_bed} \
+            --nfcore-summary        {input.nfcore_summary} \
             --dcc-coords            {input.dcc_coords} \
             --clear-bed             {input.clear_bed} \
             --output-summary        {output.summary} \
             --output-stratified     {output.stratified} \
+            --output-fp-comparison  {output.fp_comparison} \
             --slop    {params.slop} \
             --min-bsj {params.min_bsj} \
             2>&1 | tee {log}
@@ -581,22 +704,24 @@ rule de_quality_benchmark:
 rule comparison_report:
     """Generate self-contained HTML comparison report."""
     input:
-        accuracy   = RESULTS + "/accuracy_summary.tsv",
-        stratified = RESULTS + "/stratified_f1.tsv",
-        compute    = RESULTS + "/compute_cost.tsv",
-        de_quality = RESULTS + "/de_quality_summary.tsv",
-        de_jaccard = RESULTS + "/de_jaccard.tsv",
+        accuracy      = RESULTS + "/accuracy_summary.tsv",
+        stratified    = RESULTS + "/stratified_f1.tsv",
+        compute       = RESULTS + "/compute_cost.tsv",
+        de_quality    = RESULTS + "/de_quality_summary.tsv",
+        de_jaccard    = RESULTS + "/de_jaccard.tsv",
+        fp_comparison = RESULTS + "/fp_score_comparison.tsv",
     output:
         RESULTS + "/comparison_report.html",
     log: "logs/bench/comparison_report.log"
     shell:
         """
         python {AGENT_DIR}/benchmark/scripts/generate_comparison_report.py \
-            --accuracy   {input.accuracy} \
-            --stratified {input.stratified} \
-            --compute    {input.compute} \
-            --de-quality {input.de_quality} \
-            --de-jaccard {input.de_jaccard} \
-            --output     {output} \
+            --accuracy       {input.accuracy} \
+            --stratified     {input.stratified} \
+            --compute        {input.compute} \
+            --de-quality     {input.de_quality} \
+            --de-jaccard     {input.de_jaccard} \
+            --fp-comparison  {input.fp_comparison} \
+            --output         {output} \
             2>&1 | tee {log}
         """
