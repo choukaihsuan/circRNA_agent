@@ -1,7 +1,7 @@
 """
 de_quality_benchmark.py – DE 分析品質比較
 
-比較五種方法對 GSE113230（肝癌 6 samples）的 DE 分析結果：
+比較五種方法對 GSE113230（三陰性乳癌 6 samples）的 DE 分析結果：
   1. Our method        : edgeR_ciriquant (BSJ/FSJ ratio + Type I/II 分類)
   2. CirComPara2 sim   : DESeq2 on BSJ counts (same matrix; CirComPara2 uses DESeq2/edgeR by default)
   3. nf-core sim       : DESeq2 on consensus circRNA BSJ counts (no FSJ offset)

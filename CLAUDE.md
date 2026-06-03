@@ -497,6 +497,100 @@ wrapper mock 了 `snakemake` 物件（`_NamedList` + `_Params`），hardcode GSE
 
 ---
 
+## Benchmark 設計（`benchmark/`）
+
+評估本 pipeline 對抗三個已發表方法的偵測準確率與 DE 品質，輸出自包含 HTML 報告。
+
+### 執行方式
+
+```bash
+cd ~/circRNA_agent
+conda activate ciriquant
+snakemake \
+    --snakefile benchmark/Snakefile \
+    --configfile benchmark/config_benchmark.yaml \
+    --cores 8 \
+    --resources mem_gb=60 \
+    --keep-going --rerun-incomplete
+```
+
+只跑準確率（跳過 DE quality，適合 GSE113230 尚未完成時）：
+```bash
+snakemake --snakefile benchmark/Snakefile \
+    --configfile benchmark/config_benchmark.yaml \
+    --cores 8 --until accuracy_benchmark compute_cost
+```
+
+### Ground Truth 建立（`rnaser_ground_truth.py`）
+
+使用 **GSE55872**（Hs68 cell line, hg19）的 RNase R enrichment 實驗作為 ground truth：
+
+| SRR ID | 角色 |
+|--------|------|
+| SRR444655 | Total RNA（偵測基準）|
+| SRR444974 | RNase R replicate 1 |
+| SRR445016 | RNase R replicate 2 |
+
+RNase R 消化線性 RNA 並富集環狀 RNA，是目前 circRNA 偵測 benchmark 的標準方法。
+
+**Enrichment Ratio（ER）判斷**：
+- ER = RNase R BSJ counts / Total RNA BSJ counts
+- ER > 1.5 → **True Positive**（真實 circRNA）
+- ER < 0.5 → **True Negative**（假陽性候選）
+- 中間值排除於評估之外
+
+GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無需手動準備。
+
+### Task 1 – 偵測準確率比較（`accuracy_benchmark.py`）
+
+對 SRR444655（total RNA）執行五種偵測策略，再對照 RNase R ground truth：
+
+| 策略 | 工具組合 | slop | pseudo-circ QC | 對應論文 |
+|------|----------|------|----------------|----------|
+| **Our method** | CIRIquant + DCC | 10 bp | ✅ BSJ/FSJ QC + adaptive | — |
+| CirComPara2 sim | CIRIquant + DCC | 10 bp | ❌ | Gaffo et al. 2022 |
+| nf-core/circrna sim | CIRIquant + DCC | 0（精確匹配）| ❌ | Digby-Bell et al. 2023 |
+| circRNA-sponging sim | DCC only | 10 bp | ❌ | Hansen et al. 2023 |
+| CLEAR sim | CIRIquant only | 0（精確匹配）| ❌ | custom 2020 |
+
+**評估指標**：Precision、Recall、F1、AUC-PR
+
+**分層分析**：依 Total RNA 中的 BSJ count 分三層：
+- Low：1–4 RPM
+- Mid：5–19 RPM
+- High：≥ 20 RPM
+
+輸出：`benchmark/accuracy_summary.tsv`、`benchmark/stratified_f1.tsv`
+
+### Task 2 – DE 分析品質比較（`de_quality_benchmark.py`）
+
+使用 **GSE113230**（三陰性乳癌，6 samples）的 count matrix，比較各策略的 DE 結果：
+
+| 方法 | DE 演算法 | 特色 |
+|------|----------|------|
+| **Our method** | edgeR_ciriquant（BSJ/FSJ ratio）| Type I/II 分類；FSJ offset |
+| CirComPara2 / nf-core / CLEAR sim | DESeq2 on BSJ counts | 無 FSJ offset |
+
+**前置條件**：GSE113230 的 DE results 需由主 pipeline 先跑完（`config gse113230.de_results`）。
+
+**評估指標**：
+- 各方法顯著 DE circRNA 數量
+- 兩兩 Jaccard similarity
+- Type I circRNA 中，僅我們方法偵測到的比例
+- Top 20 DE circRNA 中 circBase 已知的比例
+
+輸出：`benchmark/de_quality_summary.tsv`、`benchmark/de_jaccard.tsv`
+
+### Task 3 – 計算資源成本（`compute_cost.py`）
+
+整合我們的 pipeline 各步驟實測時間（`/usr/bin/time -v` log）與文獻報告值，輸出 `benchmark/compute_cost.tsv`。
+
+### 輸出報告
+
+`benchmark/comparison_report.html`：自包含 HTML，整合三個面向（準確率、DE 品質、資源成本）的比較表與圖表。
+
+---
+
 ## 已知問題與解決方法
 
 | 問題 | 原因 | 解決方法 |
