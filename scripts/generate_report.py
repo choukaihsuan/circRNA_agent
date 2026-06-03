@@ -1077,7 +1077,7 @@ function _drawCircleRNA(circId, container) {{
         const [lx,ly]=polar((RIN+ROUT)/2,aMid);
         const isLow=(aMid>0&&aMid<Math.PI);
         const tdeg=isLow?(aMid*180/Math.PI-90):(aMid*180/Math.PI+90);
-        const exonLabel=eb.label.replace(/^e(\d+)$/,'exon $1');
+        const exonLabel=eb.label.replace(/^e(\\d+)$/,'exon $1');
         svg+=`<text transform="translate(${{lx.toFixed(1)}},${{ly.toFixed(1)}}) rotate(${{tdeg.toFixed(1)}})" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#444" font-weight="600">${{exonLabel}}</text>`;
       }}
     }});
@@ -1102,7 +1102,7 @@ function _drawCircleRNA(circId, container) {{
   if(totalLen>0){{
     mirnaList.forEach(item=>{{
       const name=item.miRNAName||'';
-      const m=(item.circ_pos||'').match(/(\d+)[–\-](\d+)/);
+      const m=(item.circ_pos||'').match(/(\\d+)[–-](\\d+)/);
       if(!m)return;
       if(!(name in miMap)){{
         miIdx++;
@@ -1416,7 +1416,7 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
   // parse chr and genomic start from circId (e.g. "chr2:56813056|56820808")
   let chrom='', chromStart=0;
   if(circId) {{
-    const cm=circId.match(/^(.+):(\d+)\|(\d+)$/);
+    const cm=circId.match(/^(.+):(\\d+)[|](\\d+)$/);
     if(cm) {{ chrom=cm[1]; chromStart=parseInt(cm[2]); }}
   }}
 
@@ -1428,7 +1428,7 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
 
   const _absPos=v=>{{
     if(!chrom||!v||v==='—') return v;
-    const pm=String(v).match(/(\d+)[–\-](\d+)/);
+    const pm=String(v).match(/(\\d+)[–-](\\d+)/);
     if(!pm) return v;
     const a=chromStart+parseInt(pm[1])-1;
     const b=chromStart+parseInt(pm[2])-1;
@@ -1460,7 +1460,7 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
       if(k==='circ_pos') v=_absPos(v);
       if(k==='_seq_logo') {{
         const rawPos=String(r.circ_pos||'');
-        const pm=rawPos.match(/(\d+)[–\-](\d+)/);
+        const pm=rawPos.match(/(\\d+)[–-](\\d+)/);
         if(pm&&chrom) {{
           const s0=chromStart+parseInt(pm[1])-1;
           const e0=chromStart+parseInt(pm[2]);
