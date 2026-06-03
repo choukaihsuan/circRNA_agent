@@ -240,11 +240,16 @@ biomarker_score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + r
 
 ### DE 分析方法（`config de.method`）
 
+`analysis.R` **預設三種方法全跑**，各輸出獨立 TSV：
+- `de_results_edgeR_ciriquant.tsv`（同時作為主 `de_results.tsv`）
+- `de_results_deseq2.tsv`
+- `de_results_limma.tsv`
+
 | 值 | 說明 |
 |----|------|
-| `edgeR_ciriquant`（預設）| 複製 `CIRI_DE_replicate`：edgeR GLM + FSJ offset（測 BSJ/FSJ 比值），輸出 Type I/II 分類 |
+| `edgeR_ciriquant`（預設主方法）| 複製 `CIRI_DE_replicate`：edgeR GLM + FSJ offset（測 BSJ/FSJ 比值），輸出 Type I/II 分類 |
 | `deseq2` | DESeq2 RLE normalization + Wald test |
-| `limma` | limma-voom |
+| `limma` | limma-voom（TMM normalization）|
 
 **`edgeR_ciriquant` 核心邏輯**：
 FSJ counts → TMM normalization → per-locus FSJ CPM 作為 GLM offset
@@ -482,21 +487,33 @@ echo 10000 > /proc/sys/user/max_user_namespaces
 cp config/projects/GSE113230.yaml config.yaml
 ```
 
-### `/tmp/run_generate_report.py`（Server 端獨立重跑報告）
+### Server 端獨立重跑腳本（Mock snakemake 物件）
 
-當 server 上 config.yaml 已切換到其他專案、但需重跑 GSE113230 的報告時，
-使用此 wrapper 繞過 Snakemake DAG，直接呼叫 `generate_report.py`：
+當 server 上 config.yaml 已切換到其他專案時，用以下 wrapper 直接執行，繞過 Snakemake DAG：
 
+**`/tmp/run_generate_report.py`**（Python mock，`snakemake` = `types.SimpleNamespace`）：
 ```bash
-# server 上（必須用 ciriquant conda env，否則 plotly 未安裝）
+# 必須用 conda run，否則 base python 缺少 plotly，會生成靜態 PDF 報告
 conda run -n ciriquant python /tmp/run_generate_report.py
 ```
 
-wrapper mock 了 `snakemake` 物件（`_NamedList` + `_Params`），hardcode GSE113230 的 input/output/params。
-此模式可複用於任何需要獨立重跑 terminal rule 的情境。
+**`/tmp/run_de_analysis.R`**（R mock，S4 class with list slots）：
+```bash
+conda run -n ciriquant Rscript /tmp/run_de_analysis.R
+```
+R mock 格式：
+```r
+setClass('Snakemake', representation(input='list', output='list', params='list', log='list'))
+snakemake <- new('Snakemake',
+  input  = list(matrix="...", fsj_matrix="...", groups="...", circbase_annot="..."),
+  output = list(de="...", de_edger="...", de_deseq="...", de_limma="...", volcano="...", ...),
+  params = list(de_method="edgeR_ciriquant", fdr=0.05, lfc=1.0, ...),
+  log    = list("/path/to/log")
+)
+source('/home/choukaihsuan/circRNA_agent/scripts/analysis.R')
+```
 
-**重要**：`python /tmp/run_generate_report.py`（不加 conda run）使用 base conda (Python 3.13)，
-沒有 plotly，會生成沒有互動圖表的靜態報告。必須加 `conda run -n ciriquant`。
+兩個 wrapper 都 hardcode GSE113230 的 input/output/params 路徑。此模式可複用於任何需要獨立重跑 terminal rule 的情境。
 
 ---
 
@@ -546,39 +563,40 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 
 ### Task 1 – 偵測準確率比較（`accuracy_benchmark.py`）
 
-對 SRR444655（total RNA）執行五種偵測策略，再對照 RNase R ground truth：
+對 SRR444655（total RNA）執行**三種多工具共識**策略，再對照 RNase R ground truth（報告不顯示單工具方法）：
 
 | 策略 | 工具組合 | slop | pseudo-circ QC | 對應論文 |
 |------|----------|------|----------------|----------|
 | **Our method** | CIRIquant + DCC | 10 bp | ✅ BSJ/FSJ QC + adaptive | — |
 | CirComPara2 sim | CIRIquant + DCC | 10 bp | ❌ | Gaffo et al. 2022 |
-| nf-core/circrna sim | CIRIquant + DCC | 0（精確匹配）| ❌ | Digby-Bell et al. 2023 |
-| circRNA-sponging sim | DCC only | 10 bp | ❌ | Hansen et al. 2023 |
-| CLEAR sim | CIRIquant only | 0（精確匹配）| ❌ | custom 2020 |
+| nf-core sim | CIRIquant + DCC | 0（精確匹配）| ❌ | Digby-Bell et al. 2023 |
 
-**評估指標**：Precision、Recall、F1、AUC-PR
+（circRNA-sponging DCC-only 和 CLEAR CIRIquant-only 也在 Snakefile 中計算，但從報告表格移除）
+
+**評估指標**：Precision、Recall、F1、**Specificity**、**TN**、AUC-PR
 
 **分層分析**：依 Total RNA 中的 BSJ count 分三層：
 - Low：1–4 RPM
 - Mid：5–19 RPM
 - High：≥ 20 RPM
 
-輸出：`benchmark/accuracy_summary.tsv`、`benchmark/stratified_f1.tsv`
+輸出：`benchmark/accuracy_summary.tsv`（含 TN、Specificity 欄）、`benchmark/stratified_f1.tsv`
 
 ### Task 2 – DE 分析品質比較（`de_quality_benchmark.py`）
 
-使用 **GSE113230**（三陰性乳癌，6 samples）的 count matrix，比較各策略的 DE 結果：
+使用 **GSE113230**（三陰性乳癌，6 samples）的 count matrix，比較三種 DE 方法：
 
 | 方法 | DE 演算法 | 特色 |
 |------|----------|------|
 | **Our method** | edgeR_ciriquant（BSJ/FSJ ratio）| Type I/II 分類；FSJ offset |
-| CirComPara2 / nf-core / CLEAR sim | DESeq2 on BSJ counts | 無 FSJ offset |
+| DESeq2 baseline | DESeq2 on BSJ counts | 無 FSJ offset |
+| **limma-voom** | limma-voom（TMM + voom weights）| 無 FSJ offset |
 
-**前置條件**：GSE113230 的 DE results 需由主 pipeline 先跑完（`config gse113230.de_results`）。
+**前置條件**：需先執行 `/tmp/run_de_analysis.R`（或 Snakemake de_analysis rule）產生三個 TSV；以及 `/tmp/run_de_baseline.R` 執行 benchmark baseline。
 
 **評估指標**：
 - 各方法顯著 DE circRNA 數量
-- 兩兩 Jaccard similarity
+- 兩兩 Jaccard similarity（Our vs DESeq2 / Our vs limma / DESeq2 vs limma）
 - Type I circRNA 中，僅我們方法偵測到的比例
 - Top 20 DE circRNA 中 circBase 已知的比例
 
@@ -587,10 +605,45 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 ### Task 3 – 計算資源成本（`compute_cost.py`）
 
 整合我們的 pipeline 各步驟實測時間（`/usr/bin/time -v` log）與文獻報告值，輸出 `benchmark/compute_cost.tsv`。
+**報告中只顯示多工具方法（Our / CirComPara2 / nf-core），移除單工具方法行。**
 
 ### 輸出報告
 
 `benchmark/comparison_report.html`：自包含 HTML，整合三個面向（準確率、DE 品質、資源成本）的比較表與圖表。
+
+**獨立重跑 benchmark 腳本**（繞過 Snakemake，適合 config 指向其他專案時）：
+```bash
+RESULTS='/home3/choukaihsuan/GSE113230_results'
+BENCH=$RESULTS/benchmark
+SCRIPTS=~/circRNA_agent/benchmark/scripts
+
+# 1. accuracy（多工具方法）
+/home/choukaihsuan/miniconda3/envs/ciriquant/bin/python $SCRIPTS/accuracy_benchmark.py \
+    --ground-truth $BENCH/rnaser/ground_truth.tsv \
+    --our-bed $BENCH/detection/our_method.bed --our-summary $BENCH/detection/our_method_summary.tsv \
+    --circompara2-bed $BENCH/detection/circompara2_sim.bed --circompara2-summary $BENCH/detection/circompara2_sim_summary.tsv \
+    --nfcore-bed $BENCH/detection/nfcore_sim.bed \
+    --output-summary $BENCH/accuracy_summary.tsv --output-stratified $BENCH/stratified_f1.tsv
+
+# 2. DE baseline（mock snakemake，見 /tmp/run_de_baseline.R）
+conda run -n ciriquant Rscript /tmp/run_de_baseline.R
+
+# 3. DE quality
+/home/choukaihsuan/miniconda3/envs/ciriquant/bin/python $SCRIPTS/de_quality_benchmark.py \
+    --our-de $RESULTS/de/de_results.tsv \
+    --nfcore-de $BENCH/de/nfcore_deseq2_results.tsv \
+    --limma-de $BENCH/de/nfcore_limma_results.tsv \
+    --circbase-annot $RESULTS/circRNA/circbase_annotated.tsv \
+    --fdr 0.05 --lfc 1.0 \
+    --output-summary $BENCH/de_quality_summary.tsv --output-jaccard $BENCH/de_jaccard.tsv
+
+# 4. comparison report
+/home/choukaihsuan/miniconda3/envs/ciriquant/bin/python $SCRIPTS/generate_comparison_report.py \
+    --accuracy $BENCH/accuracy_summary.tsv --stratified $BENCH/stratified_f1.tsv \
+    --compute $BENCH/compute_cost.tsv \
+    --de-quality $BENCH/de_quality_summary.tsv --de-jaccard $BENCH/de_jaccard.tsv \
+    --output $BENCH/comparison_report.html
+```
 
 ---
 
@@ -633,6 +686,10 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 | `generate_report` Plotly 圖表沒有互動（靜態 PDF embed） | 用 base conda Python（3.13）執行，無 plotly | 改用 `conda run -n ciriquant python /tmp/run_generate_report.py` |
 | modal 分頁無法點擊（整個 JS 失效） | `priTitle` 字串中的 Python `\n` 變成 JS 字串裡的實際換行 → SyntaxError | 改為 `\\n`，讓 JS 收到合法逸脫序列 |
 | Isoform switching bar chart x-axis label 重疊 | 10 基因 × 2 條件 = 20 個 label 太密 | 改用 Plotly multi-level x-axis（`[[gene,gene],["Normal","Tumor"]]`） |
+| `analysis.R` limma `object 'logFC' not found` | dplyr 1.1.x `rename(log2FC = logFC)` NSE 在 ciriquant env 下找不到欄位 `logFC`；DESeq2 和 edgeR 用 base R 賦值故無問題 | limma 區塊改用 base R：`names(res_df)[names(res_df) == "logFC"] <- "log2FC"` |
+| benchmark `--forcerun comparison_report` 觸發 bowtie2 重跑 | `comparison_report` 依賴 `accuracy_summary` → `nfcore_sim.bed` → `bench_find_circ` → `bench_find_circ_map`；任何 `--forcerun` 包含 `comparison_report` 都會觸發整個 dependency chain | 改用直接腳本執行（見 Benchmark 獨立重跑腳本）；或只 `--forcerun de_deseq2_baseline de_quality_benchmark` |
+| benchmark `de_deseq2_baseline` groups 路徑失效 | `benchmark/config_benchmark.yaml` 的 `groups` 指向全域 `metadata/sample_groups.csv`；config.yaml 切換到 GSE58135 後該檔案是 GSE58135 的 sample list | 更新 `benchmark/config_benchmark.yaml` 的 `groups` 改為 `metadata/GSE113230/sample_groups.csv` |
+| Snakemake `--forcerun de_analysis` 觸發完整 DAG 重建 | `--forcerun` 標記 de_analysis 需重跑，但 Snakemake 評估 transitive inputs；若 `raw_dir` FASTQ 不存在則排入 download_fastq | 改用 `/tmp/run_de_analysis.R` mock snakemake 直接執行，或確保 `--configfile` 指向正確專案且所有上游 output 都存在 |
 
 ---
 
@@ -701,15 +758,26 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 
 | 區塊 | 說明 |
 |------|------|
-| Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down；顯著標準依 `de_sig_by` 顯示 `p<0.05` 或 `FDR<0.05` |
+| **DE 方法切換器** | 頁面頂部三個按鈕（edgeR_ciriquant / DESeq2 / limma-voom）；切換時即時更新 stat-boxes、Volcano、Heatmap（`Plotly.react` 原地更新，無頁面 reload）|
+| Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down；id="stat-n-sig/up/dn"，供方法切換器更新 |
 | **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量 |
+| **3-method Venn diagram** | SVG 三圓 Venn，顯示 edgeR / DESeq2 / limma 三方法顯著 DE circRNA 的重疊；圓心座標硬編碼，7 個區域計數 |
 | **Biomarker 候選表** | top 30，欄位：rank, circ_id, log2FC, padj, biomarker_score, in_circbase, circbase_id, circbase_gene, Type |
 | **Top DE table（分兩表）** | 上調（tumor 高）和下調（tumor 低）分開顯示；欄位含 gene_name / strand / region / exon_span / circbase_id / log2FC / pvalue / Type（**padj 已移除**） |
-| Volcano plot | **Plotly 互動式**（hover 顯示 circ_id / log2FC / p-value / Type）；Y 軸標題依 `de_sig_by` 動態切換；fallback to PDF embed if Plotly unavailable |
+| Volcano plot | **Plotly 互動式**（hover 顯示 circ_id / log2FC / p-value / Type）；div_id="main-volcano-plot"；方法切換時 Plotly.react 更新 |
 | PCA | **Plotly 互動式**（hover 顯示 SRR ID / condition，tumor/normal 顏色區分）；numpy SVD |
-| Heatmap | **Plotly 互動式**（top 50 DE，hover 顯示 circRNA ID，RdBu_r colorscale，z-score 標準化）；fallback to PDF embed |
-| Isoform Switching | Plotly 長條圖（top 10 switching genes；multi-level x-axis：基因名/Normal+Tumor）+ 顯著 switching 表格 |
+| **Heatmap top-N 控制** | 使用者可自訂上調/下調各顯示幾個（預設 10 + 10，最高 50 + 50）；輸入後點「更新 Heatmap」或按 Enter 觸發 `updateMainHeatmap()`；資料從 `FULL_HEATMAP_DATA`（pool=50）動態切片 |
+| Heatmap | **Plotly 互動式**（top N DE，hover 顯示 circRNA ID，RdBu_r colorscale，z-score 標準化）；div_id="main-heatmap-plot"；方法切換時同步更新 |
+| Isoform Switching | Plotly 長條圖（top 10 switching genes；multi-level x-axis：基因名/Normal+Tumor）+ 顯著 switching 表格（含 **exon_structure** 欄：`exon_span / region / strand` + circBase ID）|
 | **SVG Circular Diagram** | 每個 circRNA 的環狀圖（exon 結構 + miRNA/RBP binding site 弧段 + 流水號 badge）|
+
+**JS 全域狀態變數**：
+- `const ALL_DE_METHODS`：三方法的完整 volcano + stats + heatmap 資料（~500 KB × 3）
+- `const FULL_HEATMAP_DATA`：pool=50 up + 50 down，每 circRNA 含 `{z, pval, log2fc, label}`
+- `let _HEATMAP_DATA_CACHE`：目前顯示方法的 heatmap data（方法切換時更新）
+- `let _CURRENT_VOLCANO_DATA`：目前顯示方法的 volcano data（方法切換時更新）
+
+**`switchDEMethod(method)`**：更新 stat-boxes、`_HEATMAP_DATA_CACHE`、`_CURRENT_VOLCANO_DATA`，呼叫 `Plotly.react` 更新 volcano，呼叫 `updateMainHeatmap()` 更新 heatmap。
 
 **circRNA 詳細 modal（點擊任意 circ_id 開啟）**：
 - **⬛ Circular Structure**：SVG 環狀圖；底部「⬇ SVG」下載按鈕
@@ -748,11 +816,11 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-01）
+## 目前執行進度（2026-06-03）
 
 ### GSE113230（三陰性乳癌）
 
-**所有步驟已完成。** 報告位置：`~/GSE113230_results/report.html`（server）
+**所有步驟已完成（含三方法 DE + 新版報告）。** 報告位置：`~/GSE113230_results/report.html`（server）
 
 | 步驟 | 狀態 |
 |------|------|
@@ -771,14 +839,17 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | predict_interactions | ✅ 完成（top 50；CircInteractome；interactions.json） |
 | isoform switching | ✅ 完成（66 events，within-gene FDR < 0.1） |
 | rank_biomarkers | ✅ 完成（482 candidates；**6D score**：sig+FC+conf+circbase+miRNA+RBP） |
-| report | ✅ 完成（Plotly 互動；Type I/II；SVG exon diagram；miRNA/RBP badge） |
+| report | ✅ 完成（Plotly 互動；Type I/II；SVG exon diagram；miRNA/RBP badge；**三方法切換器**；Venn diagram；top-N heatmap 控制；isoform exon_structure 欄）|
+| benchmark | ✅ 完成（accuracy + DE quality + compute cost；比較報告 `~/GSE113230_results/benchmark/comparison_report.html`）|
 
 **主要數值結果**：
 - 偵測：9,349 consensus circRNAs → filterByExpr 後 4,630 tested
-- DE：482 significant（nominal p < 0.05，|log2FC| > 1）；min Storey q = 0.384（underpowered）
+- DE（edgeR_ciriquant）：482 significant（nominal p < 0.05，|log2FC| > 1）；min Storey q = 0.384（underpowered）
+- DE（DESeq2 baseline）：409 significant；DE（limma-voom）：736 significant
 - Isoform switching：66 events（within-gene FDR < 0.1，|ΔIUI| > 0.1）
 - Biomarker score：6D（sig, FC, confidence, circBase, #miRNA, #RBP），50 circRNAs 有 interaction data
 - Top 1 biomarker：chr8:116631359|116635985（score=0.7126，51 miRNA，8 RBP binders）
+- Benchmark（3 multi-tool methods）：Our AUC-PR=0.947 / Specificity=0.962；circBase rate 80.3%（edgeR）
 
 **Biomarker score 公式（6D）**：
 ```
