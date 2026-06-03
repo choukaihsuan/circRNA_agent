@@ -112,15 +112,82 @@ _STYLE = """
   .badge-nfcore      { background: #e07b39; }
   .badge-sponging    { background: #2da84b; }
   .badge-clear       { background: #d62728; }
+
+  /* Download / print toolbar */
+  .dl-btn {
+    display: inline-block; margin: 4px 4px 4px 0;
+    padding: 4px 10px; font-size: 11px; font-weight: bold;
+    border: 1px solid #1a5c96; border-radius: 4px;
+    color: #1a5c96; background: #fff; cursor: pointer;
+    text-decoration: none; transition: background .15s;
+  }
+  .dl-btn:hover { background: #e8f0fa; }
+  .tbl-header { display: flex; align-items: center;
+                justify-content: space-between; flex-wrap: wrap;
+                gap: 4px; margin-bottom: 4px; }
+  .tbl-title  { font-weight: bold; font-size: 14px; color: #333; }
+  .print-bar  { position: sticky; top: 0; z-index: 99;
+                background: #1a5c96; color: #fff;
+                padding: 8px 24px; display: flex;
+                align-items: center; gap: 12px; flex-wrap: wrap; }
+  .print-bar span { font-size: 13px; font-weight: bold; flex: 1; }
+  .print-btn  { padding: 6px 16px; border: 2px solid #fff;
+                border-radius: 4px; background: transparent;
+                color: #fff; font-size: 13px; font-weight: bold;
+                cursor: pointer; }
+  .print-btn:hover { background: rgba(255,255,255,.15); }
+
+  /* Print styles */
+  @media print {
+    .print-bar, .dl-btn, .no-print { display: none !important; }
+    body { background: #fff; max-width: 100%; margin: 0; padding: 0 16px; }
+    .card { box-shadow: none; border: 1px solid #ddd; page-break-inside: avoid; }
+    table { page-break-inside: avoid; font-size: 11px; }
+    th { background: #1a5c96 !important; -webkit-print-color-adjust: exact;
+         print-color-adjust: exact; }
+    h1, h2 { color: #1a5c96 !important; -webkit-print-color-adjust: exact;
+              print-color-adjust: exact; }
+    .bar-fill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .concl-grid { grid-template-columns: 1fr 1fr; }
+  }
 </style>
+"""
+
+_SCRIPT = """
+<script>
+function dlCSV(tid, fname) {
+  var tbl = document.getElementById(tid);
+  if (!tbl) return;
+  var rows = tbl.querySelectorAll('tr');
+  var lines = [];
+  rows.forEach(function(r) {
+    var cells = r.querySelectorAll('th,td');
+    var cols = [];
+    cells.forEach(function(c) {
+      cols.push('"' + c.innerText.replace(/"/g, '""') + '"');
+    });
+    lines.push(cols.join(','));
+  });
+  var blob = new Blob([lines.join('\\n')], {type:'text/csv;charset=utf-8;'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+</script>
 """
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _df_html(df: pd.DataFrame, best_col: str | None = None,
-             best_max: bool = True) -> str:
-    """Render DataFrame as HTML table, optionally highlighting best value in one column."""
+             best_max: bool = True,
+             table_id: str | None = None,
+             csv_filename: str | None = None,
+             title: str = "") -> str:
+    """Render DataFrame as HTML table with optional CSV download button."""
     rows_html = ""
     for i, row in df.iterrows():
         cells = ""
@@ -143,8 +210,19 @@ def _df_html(df: pd.DataFrame, best_col: str | None = None,
                 cells += f"<td{cls}>{val}</td>"
         rows_html += f"<tr>{cells}</tr>"
     headers = "".join(f"<th>{c}</th>" for c in df.columns)
+    tid   = f' id="{table_id}"' if table_id else ""
+    dl_btn = (
+        f'<button class="dl-btn no-print" '
+        f'onclick="dlCSV(\'{table_id}\',\'{csv_filename}\')">⬇ CSV</button>'
+        if table_id and csv_filename else ""
+    )
+    header_bar = (
+        f'<div class="tbl-header">'
+        f'<span class="tbl-title">{title}</span>{dl_btn}</div>'
+        if title or dl_btn else ""
+    )
     return (
-        '<div class="tbl-wrap"><table>'
+        f'{header_bar}<div class="tbl-wrap"><table{tid}>'
         f"<thead><tr>{headers}</tr></thead>"
         f"<tbody>{rows_html}</tbody></table></div>"
     )
@@ -182,95 +260,67 @@ def _bar_chart(
 # ── Section builders ──────────────────────────────────────────────────────────
 
 def _feature_table() -> str:
-    """Static feature comparison table — 5 pipelines."""
-    # columns: Our | CirComPara2 | nf-core | sponging | CLEAR
+    """Static feature comparison table — 3 multi-tool pipelines."""
+    # columns: Our | CirComPara2 | nf-core
     features = [
         ("Framework",
-         "Snakemake", "SCons (2022)", "Nextflow (2023)", "Nextflow (2023)", "Custom (2020)"),
+         "Snakemake", "SCons (2022)", "Nextflow (2023)"),
         ("Detection tools",
          "CIRIquant + DCC",
          "CIRI2 + CIRIquant + DCC + find_circ + CircExplorer2",
-         "CIRIquant + CIRCexplorer2 + find_circ",
-         "STAR + DCC",
-         "CIRIquant"),
+         "CIRIquant + CIRCexplorer2 + find_circ"),
         ("Tool consensus",
          "✓ adaptive (≥2/2, slop=10 bp)",
          "✓ fixed (≥2/5 tools)",
-         "✓ fixed (≥2/3 tools, exact)",
-         "✗ single-tool",
-         "✗ single-tool"),
+         "✓ fixed (≥2/3 tools, exact)"),
         ("Coordinate tolerance",
          "✓ slop=10 bp (configurable)",
          "✓ slop=10 bp",
-         "✗ exact match (slop=0)",
-         "✗ exact match",
-         "✗ exact match"),
+         "✗ exact match (slop=0)"),
         ("BSJ/FSJ pseudo-circ QC",
          "✓ (BSJ/FSJ ratio filter)",
-         "✗",
-         "✗",
          "✗",
          "✗"),
         ("Confidence scoring",
          "✓ log2(BSJ) × coord agreement",
          "~ partial (per-tool support)",
-         "✗",
-         "✗",
          "✗"),
         ("DE method",
          "edgeR GLM + per-locus FSJ offset",
          "DESeq2 / edgeR (BSJ counts)",
-         "DESeq2 (BSJ counts)",
-         "DESeq2 (BSJ counts)",
          "DESeq2 (BSJ counts)"),
         ("Type I / II classification",
          "✓ (circRNA-specific vs gene-level)",
-         "✗",
-         "✗",
          "✗",
          "✗"),
         ("CSI / delta-CSI",
          "✓ Circular Splicing Index",
          "✗",
-         "✗",
-         "✗",
          "✗"),
         ("circBase annotation",
          "✓ auto-download hg19",
          "✓ built-in",
-         "✓ nf-core module",
-         "✗",
-         "~ partial"),
+         "✓ nf-core module"),
         ("Biomarker ranking",
          "✓ composite 4D score",
-         "✗",
-         "✗",
          "✗",
          "✗"),
         ("Isoform switching (IUI)",
          "✓ Wilcoxon + BH correction",
          "✗",
-         "✗",
-         "✗",
          "✗"),
         ("HTML report",
          "✓ self-contained + Plotly",
          "✓ auto-generated",
-         "✓ MultiQC integration",
-         "✗",
-         "✗"),
+         "✓ MultiQC integration"),
         ("Web UI",
          "✓ Flask + GEO one-click",
-         "✗",
-         "✗",
          "✗",
          "✗"),
         ("Config-driven tool selection",
          "✓ CIRIquant / DCC / both",
          "✓ SCons params",
-         "✓ nf-core params",
-         "~ limited",
-         "✗"),
+         "✓ nf-core params"),
     ]
     header = (
         '<tr><th>Feature</th>'
@@ -280,10 +330,6 @@ def _feature_table() -> str:
         '<small style="color:#aaa">SCons · 2022</small></th>'
         '<th><span class="badge badge-nfcore">nf-core/circrna</span><br>'
         '<small style="color:#aaa">Nextflow · 2023</small></th>'
-        '<th><span class="badge badge-sponging">circRNA-sponging</span><br>'
-        '<small style="color:#aaa">Nextflow · 2023</small></th>'
-        '<th><span class="badge badge-clear">CLEAR</span><br>'
-        '<small style="color:#aaa">Custom · 2020</small></th>'
         '</tr>'
     )
 
@@ -314,8 +360,6 @@ def _stratified_chart(strat: pd.DataFrame) -> str:
         "Our_adaptive":    "c1",
         "CirComPara2_sim": "c2",
         "nfcore_3tools":   "c3",
-        "sponging_DCC":    "c4",
-        "CLEAR_sim":       "c5",
     }
 
     html = ""
@@ -396,32 +440,12 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
     </ul>
   </div>
 
-  <div class="concl-card c-sponging">
-    <h4>circRNA-sponging <span class="badge badge-sponging">Nextflow · 2023</span></h4>
-    <ul>
-      <li>最輕量：STAR + DCC 單工具，無多工具共識步驟</li>
-      <li>假陽性率最高（無 CIRIquant 交叉驗證）→ Precision 最低</li>
-      <li>RAM 較低，計算快速，適合資源受限環境</li>
-      <li><strong>適用情境：</strong>快速 pilot 分析、ceRNA / sponge 研究</li>
-    </ul>
-  </div>
-
-  <div class="concl-card c-clear">
-    <h4>CLEAR <span class="badge badge-clear">Custom · 2020</span></h4>
-    <ul>
-      <li>單工具（CIRIquant）、exact coordinate match → recall 低</li>
-      <li>無多工具共識 → 較高假陽性風險</li>
-      <li>計算最輕量（單工具，無 STAR+DCC 兩條鏈）</li>
-      <li>DESeq2 on BSJ counts，無 FSJ offset，無 Type 分類</li>
-      <li><strong>適用情境：</strong>資源極受限環境、快速單工具評估</li>
-    </ul>
-  </div>
 </div>
 
 <p style="margin-top:20px; font-size:13px; color:#555">
-  <strong>總結：</strong>在五個管線中，我們的方法在偵測準確率（F1/AUC-PR）和 DE 分析深度上
+  <strong>總結：</strong>在三個多工具管線中，我們的方法在偵測準確率（F1/AUC-PR）和 DE 分析深度上
   均最優。BSJ/FSJ offset 模型、Type I/II 分類、CSI 指標和 Isoform switching 分析是本管線
-  對肝癌 biomarker 研究的核心貢獻，在現有公開管線中均為獨特功能。
+  對乳癌 biomarker 研究的核心貢獻，在現有公開管線中均為獨特功能。
   CirComPara2 在靈敏度上有優勢但計算成本最高；nf-core 適合雲端部署；
   sponging 和 CLEAR 適合資源受限的快速分析。
 </p>
@@ -439,7 +463,11 @@ def _fp_comparison_section(fp: pd.DataFrame) -> str:
   CirComPara2 sim 關閉此 QC。比較各 confidence score 區段的 FP 數量，
   可直接量化 pseudo-circ QC 對假陽性的貢獻。
 </p>
-<div class="tbl-wrap"><table>
+<div class="tbl-header no-print">
+  <span class="tbl-title"></span>
+  <button class="dl-btn" onclick="dlCSV('tbl_fp_cmp','fp_score_comparison.csv')">⬇ CSV</button>
+</div>
+<div class="tbl-wrap"><table id="tbl_fp_cmp">
 <thead><tr>
   <th>Score bin</th>
   <th>Our TP</th><th>Our FP</th><th>Our FP rate</th>
@@ -556,8 +584,14 @@ def build_report(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>circRNA Pipeline Benchmark — Comparison Report</title>
   {_STYLE}
+  {_SCRIPT}
 </head>
 <body>
+
+<div class="print-bar no-print">
+  <span>circRNA Pipeline Benchmark Report</span>
+  <button class="print-btn" onclick="window.print()">🖨 列印 / 存為 PDF</button>
+</div>
 
 <h1>circRNA Pipeline Benchmark — Comparison Report</h1>
 <p style="color:#555; font-size:14px">
@@ -606,7 +640,8 @@ def build_report(
 </p>
 
 <h3>Precision / Recall / F1 / AUC-PR</h3>
-{_df_html(acc_display, best_col="F1", best_max=True)}
+{_df_html(acc_display, best_col="F1", best_max=True,
+          table_id="tbl_accuracy", csv_filename="accuracy_summary.csv")}
 
 {_bar_chart(acc, "F1", title="F1 Score by Method")}
 {_bar_chart(acc, "Precision", title="Precision by Method")}
@@ -620,7 +655,7 @@ def build_report(
   BSJ RPM tiers based on total RNA sample (SRR444655).
   Low (1–4 RPM) = weakly expressed; High (≥20 RPM) = robustly expressed.
 </p>
-{_df_html(strat)}
+{_df_html(strat, table_id="tbl_stratified", csv_filename="stratified_f1.csv")}
 {_stratified_chart(strat)}
 
 <p class="note">
@@ -640,7 +675,8 @@ def build_report(
   nf-core and circRNA-sponging values are from published literature (see Source column).
   All pipelines used 8 CPU cores unless noted.
 </p>
-{_df_html(comp_display, best_col="Total_wall_min", best_max=False)}
+{_df_html(comp_display, best_col="Total_wall_min", best_max=False,
+          table_id="tbl_compute", csv_filename="compute_cost.csv")}
 <p class="note">
   † nf-core/circrna benchmark was performed on a <strong>16-core AWS instance</strong>
   (Digby-Bell et al. 2023, Table 1). All other pipelines use 8-core estimates.
@@ -673,7 +709,8 @@ def build_report(
 </p>
 
 <h3>Significant DE circRNAs &amp; Classification</h3>
-{_df_html(de[de_display_cols])}
+{_df_html(de[de_display_cols],
+          table_id="tbl_de", csv_filename="de_quality_summary.csv")}
 
 <h3>Overlap &amp; Directional Concordance</h3>
 <p class="note">
@@ -681,7 +718,7 @@ def build_report(
   Directional_concordance_pct: among circRNAs significant in <em>both</em> methods,
   percentage with the same up/down direction — a proxy for cross-method biological agreement.
 </p>
-{_df_html(jac)}
+{_df_html(jac, table_id="tbl_jaccard", csv_filename="de_jaccard.csv")}
 </div>
 
 
