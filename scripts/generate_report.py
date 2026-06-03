@@ -519,7 +519,7 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
         margin        = dict(b=80, t=60),
         xaxis         = dict(tickfont=dict(size=11)),
     )
-    return fig.to_html(include_plotlyjs="cdn", full_html=False)
+    return fig.to_html(include_plotlyjs=False, full_html=False)
 
 
 def _isoform_section(switching_file: Optional[str],
@@ -771,7 +771,7 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
     )
     fig.update_xaxes(showgrid=True, gridcolor="#f0f0f0", zeroline=False)
     fig.update_yaxes(showgrid=True, gridcolor="#f0f0f0", zeroline=False)
-    return fig.to_html(include_plotlyjs="cdn", full_html=False, div_id=div_id)
+    return fig.to_html(include_plotlyjs=False, full_html=False, div_id=div_id)
 
 
 def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
@@ -845,7 +845,7 @@ def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
         plot_bgcolor="white", paper_bgcolor="white",
         margin=dict(t=60, l=300),
     )
-    return fig.to_html(include_plotlyjs="cdn", full_html=False, div_id="main-heatmap-plot")
+    return fig.to_html(include_plotlyjs=False, full_html=False, div_id="main-heatmap-plot")
 
 
 def _plotly_pca(matrix: pd.DataFrame, groups_file: Optional[str] = None) -> str:
@@ -902,7 +902,7 @@ def _plotly_pca(matrix: pd.DataFrame, groups_file: Optional[str] = None) -> str:
     )
     fig.update_xaxes(showgrid=True, gridcolor="#f0f0f0", zeroline=True, zerolinecolor="#ccc")
     fig.update_yaxes(showgrid=True, gridcolor="#f0f0f0", zeroline=True, zerolinecolor="#ccc")
-    return fig.to_html(include_plotlyjs="cdn", full_html=False)
+    return fig.to_html(include_plotlyjs=False, full_html=False)
 
 
 def _enrich_de(de: pd.DataFrame,
@@ -1969,6 +1969,12 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
    + "Click any circ_position to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>" if n_ixn > 0
    else "<p style='font-size:12px;color:#aaa'>Click any circ_position to view exon diagram "
         "(interaction data not yet fetched — run predict_interactions rule).</p>"}
+  <p style="font-size:11px;color:#888">
+    <button onclick="showCircDetail('{list(interactions.keys())[0] if interactions else ''}')"
+      style="background:#2c6fad;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">
+      &#128269; Test: Open first circRNA detail
+    </button>
+  </p>
 
   <h2>Summary</h2>
   {_msw_html}
