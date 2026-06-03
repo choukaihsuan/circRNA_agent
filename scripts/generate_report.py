@@ -619,7 +619,7 @@ def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
         plot_bgcolor="white", paper_bgcolor="white",
         margin=dict(t=60, l=300),
     )
-    return fig.to_html(include_plotlyjs="cdn", full_html=False)
+    return fig.to_html(include_plotlyjs="cdn", full_html=False, div_id="main-heatmap-plot")
 
 
 def _plotly_pca(matrix: pd.DataFrame, groups_file: Optional[str] = None) -> str:
@@ -780,15 +780,16 @@ def build_report(
     _lfc_js  = lfc
     _sig_label_js = _sig_label_str
 
-    # Build HEATMAP_DATA for modal mini-heatmap (no Plotly dependency — pure pandas)
-    heatmap_data_js = "{}"
+    # Build FULL_HEATMAP_DATA for dynamic main heatmap + modal mini-heatmap (pool: top 50 up + 50 down)
+    _HM_POOL = 50
+    full_heatmap_data_js = "null"
     if not de.empty and not matrix.empty:
         try:
             _pc_hm = p_col
             if {"circ_id", "log2FC", _pc_hm}.issubset(de.columns):
-                _up_hm = de[de["log2FC"] > 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(heatmap_top_n)
-                _dn_hm = de[de["log2FC"] < 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(heatmap_top_n)
-                _hm_ids   = list(_up_hm["circ_id"]) + list(_dn_hm["circ_id"])
+                _up_pool = de[de["log2FC"] > 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(_HM_POOL)
+                _dn_pool = de[de["log2FC"] < 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(_HM_POOL)
+                _hm_ids  = list(_up_pool["circ_id"]) + list(_dn_pool["circ_id"])
                 _hm_avail = [i for i in _hm_ids if i in matrix.index]
                 if _hm_avail:
                     _samps  = matrix.columns.tolist()
@@ -806,15 +807,35 @@ def build_report(
                     _rmean = _log_hm[_rcols].mean(axis=1)
                     _rstd  = _log_hm.std(axis=1).clip(lower=0.1)
                     _z_hm  = _log_hm.sub(_rmean, axis=0).div(_rstd, axis=0)
-                    heatmap_data_js = _json.dumps({
+                    # circbase label map
+                    _cb_map_hm = {}
+                    if "circbase_id" in de.columns and "in_circbase" in de.columns:
+                        _known_cb = de[de["in_circbase"] == 1].dropna(subset=["circbase_id"])
+                        _cb_map_hm = dict(zip(_known_cb["circ_id"].astype(str), _known_cb["circbase_id"].astype(str)))
+                    _pval_map_hm = dict(zip(de["circ_id"].astype(str), de[_pc_hm]))
+                    _lfc_map_hm  = dict(zip(de["circ_id"].astype(str), de["log2FC"]))
+                    _rows_hm = {}
+                    for _cid in _hm_avail:
+                        _cb = _cb_map_hm.get(_cid, "")
+                        _lbl = _cb if _cb and _cb not in ("", "novel") else _cid
+                        _rows_hm[_cid] = {
+                            "z":      [round(v, 3) for v in _z_hm.loc[_cid].tolist()],
+                            "pval":   float(_pval_map_hm.get(_cid, 1.0)),
+                            "log2fc": float(_lfc_map_hm.get(_cid, 0.0)),
+                            "label":  _lbl,
+                        }
+                    _up_avail = [i for i in _up_pool["circ_id"] if i in set(_hm_avail)]
+                    _dn_avail = [i for i in _dn_pool["circ_id"] if i in set(_hm_avail)]
+                    full_heatmap_data_js = _json.dumps({
                         "samples":    _samps,
                         "conditions": _cmap_hm,
-                        "rows": {cid: [round(v, 3) for v in _z_hm.loc[cid].tolist()]
-                                 for cid in _hm_avail},
+                        "up_order":   _up_avail,
+                        "dn_order":   _dn_avail,
+                        "rows":       _rows_hm,
                     }, ensure_ascii=False)
         except Exception as _hm_exc:
             import sys as _sys
-            print(f"[report] HEATMAP_DATA build failed: {_hm_exc}", file=_sys.stderr)
+            print(f"[report] FULL_HEATMAP_DATA build failed: {_hm_exc}", file=_sys.stderr)
 
     # Compute heatmap top IDs for volcano annotation
     heatmap_ids: set = set()
@@ -846,9 +867,9 @@ def build_report(
 
     _modal_js = f"""
 <script>
-const CIRC_DATA    = {interactions_js};
-const VOLCANO_DATA = {volcano_data_js};
-const HEATMAP_DATA = {heatmap_data_js};
+const CIRC_DATA         = {interactions_js};
+const VOLCANO_DATA      = {volcano_data_js};
+const FULL_HEATMAP_DATA = {full_heatmap_data_js};
 const _FDR = {_fdr_js};
 const _LFC = {_lfc_js};
 const _SIG_LABEL = "{_sig_label_js}";
@@ -878,6 +899,7 @@ function showCircDetail(circId) {{
   hEl._plotlyLoaded = false;
   document.getElementById('cm-tab-heatmap').style.display = '';
   _switchTab('exon');
+  _updateDlBar('exon');
   document.getElementById('circ-modal').style.display = 'flex';
 }}
 
@@ -902,6 +924,57 @@ function _switchTab(name) {{
     const hEl = document.getElementById('cm-heatmap');
     if (!hEl._plotlyLoaded) _buildMiniHeatmap(hEl.dataset.circId);
   }}
+  _updateDlBar(name);
+}}
+
+function _updateDlBar(name) {{
+  const bar    = document.getElementById('cm-dl-bar');
+  const circId = document.getElementById('cm-title').textContent.trim();
+  const safe   = circId.replace(/[:|]/g,'_');
+  const btn = (label, fn) =>
+    `<button class="dl-btn" onclick="${{fn}}">${{label}}</button>`;
+  const map = {{
+    exon:    btn('⬇ SVG', `_dlSVG('${{safe}}')`),
+    mirna:   btn('⬇ CSV', `_dlTabCSV('cm-mirna','${{safe}}_mirna.csv')`),
+    rbp:     btn('⬇ CSV', `_dlTabCSV('cm-rbp','${{safe}}_rbp.csv')`),
+    volcano: btn('⬇ PNG', `_dlPlotly('cm-volcano','${{safe}}_volcano')`),
+    heatmap: btn('⬇ PNG', `_dlPlotly('cm-heatmap','${{safe}}_heatmap')`),
+  }};
+  bar.innerHTML = map[name] || '';
+}}
+
+function _dlSVG(safeName) {{
+  const svg = document.querySelector('#cm-circle-wrap svg');
+  if (!svg) return;
+  const blob = new Blob([svg.outerHTML], {{type:'image/svg+xml;charset=utf-8'}});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = safeName + '_circle.svg';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}}
+
+function _dlTabCSV(containerId, fname) {{
+  const tbl = document.querySelector('#' + containerId + ' table');
+  if (!tbl) return;
+  const rows = tbl.querySelectorAll('tr');
+  const lines = [];
+  rows.forEach(function(r) {{
+    const cells = r.querySelectorAll('th,td');
+    const cols = [];
+    cells.forEach(function(c) {{ cols.push('"' + c.innerText.replace(/"/g,'""') + '"'); }});
+    lines.push(cols.join(','));
+  }});
+  const blob = new Blob([lines.join('\n')], {{type:'text/csv;charset=utf-8;'}});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}}
+
+function _dlPlotly(elId, fname) {{
+  const el = document.getElementById(elId);
+  if (!el || !el._plotlyLoaded || typeof Plotly === 'undefined') return;
+  Plotly.downloadImage(el, {{format:'png', filename:fname, width:900, height:550}});
 }}
 
 // ── Circular RNA diagram ──────────────────────────────────────────────────────
@@ -1158,19 +1231,16 @@ function _buildMiniHeatmap(circId) {{
   const el=document.getElementById('cm-heatmap');
   if(!el)return;
   if(typeof Plotly==='undefined'){{el.innerHTML='<p class="no-data">Plotly not available.</p>';return;}}
-  if(!HEATMAP_DATA||!HEATMAP_DATA.rows||Object.keys(HEATMAP_DATA.rows).length===0){{
+  if(!FULL_HEATMAP_DATA||!FULL_HEATMAP_DATA.rows||Object.keys(FULL_HEATMAP_DATA.rows).length===0){{
     el.innerHTML='<p class="no-data">Heatmap data not available.</p>';return;
   }}
-  const _inTop=HEATMAP_DATA.rows[circId]!=null;
-  const allIds=Object.keys(HEATMAP_DATA.rows);
+  const _inTop=FULL_HEATMAP_DATA.rows[circId]!=null;
+  const allIds=Object.keys(FULL_HEATMAP_DATA.rows);
   const tIdx=allIds.indexOf(circId);
-  const samps=HEATMAP_DATA.samples||[];
-  const zMatrix=allIds.map(id=>HEATMAP_DATA.rows[id]);
-  const yLabels=allIds.map(id=>{{
-    const cd=CIRC_DATA[id];
-    return(cd&&cd.info&&cd.info.circbase_id&&cd.info.circbase_id!=='novel')?cd.info.circbase_id:id;
-  }});
-  const conds=HEATMAP_DATA.conditions||{{}};
+  const samps=FULL_HEATMAP_DATA.samples||[];
+  const zMatrix=allIds.map(id=>FULL_HEATMAP_DATA.rows[id].z);
+  const yLabels=allIds.map(id=>FULL_HEATMAP_DATA.rows[id].label||id);
+  const conds=FULL_HEATMAP_DATA.conditions||{{}};
   const TUMOR_COL='#d62728', NORMAL_COL='#2c6fad';
   // merge consecutive samples of same condition into one labelled bar
   const grps=[];let cur=null;
@@ -1319,6 +1389,57 @@ function _toggleAll(type, show, container) {{
   }}
 }}
 
+// ── Main heatmap dynamic update ───────────────────────────────────────────────
+function updateMainHeatmap() {{
+  if(!FULL_HEATMAP_DATA||typeof Plotly==='undefined')return;
+  const n=Math.max(1,Math.min(50,parseInt(document.getElementById('heatmap-n-input').value)||10));
+  document.getElementById('heatmap-n-input').value=n;
+  const upIds=(FULL_HEATMAP_DATA.up_order||[]).slice(0,n);
+  const dnIds=(FULL_HEATMAP_DATA.dn_order||[]).slice(0,n);
+  const allIds=[...upIds,...dnIds];
+  if(allIds.length<2)return;
+  const samps=FULL_HEATMAP_DATA.samples||[];
+  const conds=FULL_HEATMAP_DATA.conditions||{{}};
+  const rows=FULL_HEATMAP_DATA.rows||{{}};
+  const validIds=allIds.filter(id=>rows[id]);
+  const zMatrix=validIds.map(id=>rows[id].z);
+  const yLabels=validIds.map(id=>rows[id].label||id);
+  const nUp=upIds.filter(id=>rows[id]).length;
+  const nDn=dnIds.filter(id=>rows[id]).length;
+  const TUMOR_COL='#d62728',NORMAL_COL='#2c6fad';
+  const grps=[];let cur=null;
+  samps.forEach((s,i)=>{{
+    const c=conds[s]||'';
+    const col=c==='{tumor_label}'?TUMOR_COL:c==='{normal_label}'?NORMAL_COL:'#888';
+    if(!cur||cur.c!==c){{cur={{c,col,s:i,e:i}};grps.push(cur);}}else cur.e=i;
+  }});
+  const groupShapes=grps.map(g=>{{return{{type:'rect',xref:'x',yref:'paper',
+    x0:g.s-0.45,x1:g.e+0.45,y0:1.02,y1:1.055,fillcolor:g.col,line:{{width:0}}}}}});
+  const groupAnno=grps.map(g=>{{return{{xref:'x',yref:'paper',x:(g.s+g.e)/2,y:1.0375,
+    yanchor:'middle',xanchor:'center',text:g.c,showarrow:false,
+    font:{{size:9,color:'white',family:'sans-serif'}}}}}});
+  Plotly.react('main-heatmap-plot',[{{
+    type:'heatmap',z:zMatrix,x:samps,y:yLabels,
+    colorscale:[[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']],
+    zmid:0,colorbar:{{title:'z-score<br>(normal-<br>centered)'}},
+    hovertemplate:'<b>%{{y}}</b><br>%{{x}}<br>z-score: %{{z:.2f}}<extra></extra>',
+  }}],{{
+    title:{{text:`Top ${{nUp}} up + ${{nDn}} down DE circRNAs — Heatmap (normal-centered z-score)`,font:{{size:14}}}},
+    yaxis:{{tickfont:{{size:8}},autorange:'reversed'}},
+    height:Math.max(420,validIds.length*22+120),
+    plot_bgcolor:'white',paper_bgcolor:'white',
+    margin:{{t:60,l:300}},
+    shapes:groupShapes,
+    annotations:groupAnno,
+  }});
+  const titleEl=document.getElementById('heatmap-section-title');
+  if(titleEl)titleEl.textContent=`Heatmap (top ${{nUp}} up + ${{nDn}} down DE circRNAs)`;
+  const maxUp=(FULL_HEATMAP_DATA.up_order||[]).length;
+  const maxDn=(FULL_HEATMAP_DATA.dn_order||[]).length;
+  const statusEl=document.getElementById('heatmap-status');
+  if(statusEl)statusEl.textContent=`（已顯示 ${{validIds.length}} 筆；資料庫最多 ${{maxUp}} up + ${{maxDn}} down）`;
+}}
+
 document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}});
 </script>"""
 
@@ -1340,6 +1461,7 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
     <div id="cm-rbp"     class="ctab-content"></div>
     <div id="cm-volcano" class="ctab-content" style="min-height:340px"></div>
     <div id="cm-heatmap" class="ctab-content" style="min-height:340px"></div>
+    <div id="cm-dl-bar" style="text-align:right;margin-top:10px;border-top:1px solid #eee;padding-top:8px"></div>
   </div>
 </div>"""
 
@@ -1397,7 +1519,17 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
   <h2>PCA</h2>
   {pca_html}
 
-  <h2>Heatmap (top {heatmap_top_n} up + {heatmap_top_n} down DE circRNAs)</h2>
+  <h2 id="heatmap-section-title">Heatmap (top {heatmap_top_n} up + {heatmap_top_n} down DE circRNAs)</h2>
+  <div style="display:flex;align-items:center;gap:10px;margin:8px 0 12px;background:#f4f8ff;padding:10px 16px;border-radius:6px;border:1px solid #d0e4f7;flex-wrap:wrap">
+    <span style="font-size:13px">每方向顯示 top</span>
+    <input type="number" id="heatmap-n-input" value="{heatmap_top_n}" min="1" max="50"
+           style="width:60px;padding:3px 6px;border:1px solid #bbb;border-radius:4px;font-size:13px"
+           onkeydown="if(event.key==='Enter')updateMainHeatmap()">
+    <span style="font-size:13px">up + down</span>
+    <button onclick="updateMainHeatmap()"
+            style="background:#2c6fad;color:white;border:none;border-radius:4px;padding:5px 16px;cursor:pointer;font-size:13px">更新 Heatmap</button>
+    <span id="heatmap-status" style="font-size:12px;color:#888"></span>
+  </div>
   {heatmap_html}
 
 {_modal_html}
