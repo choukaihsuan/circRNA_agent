@@ -1,0 +1,39 @@
+# ── Generated reports (large HTML, not source code) ──────────────────────────
+*.html
+!scripts/templates/*.html
+
+# ── Data files (on server, not in repo) ──────────────────────────────────────
+*.fastq
+*.fastq.gz
+*.bam
+*.bai
+*.gtf.gz
+*.fa
+*.fai
+*.bed.gz
+*.vcf
+
+# ── Log files ─────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Conda / Python cache ──────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.conda/
+*.egg-info/
+
+# ── Container artifacts ───────────────────────────────────────────────────────
+*.sif
+*.tar
+*.tar.gz
+
+# ── Benchmark output data ─────────────────────────────────────────────────────
+benchmark/results/
+benchmark/*.tsv
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/

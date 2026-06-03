@@ -488,12 +488,15 @@ cp config/projects/GSE113230.yaml config.yaml
 使用此 wrapper 繞過 Snakemake DAG，直接呼叫 `generate_report.py`：
 
 ```bash
-# server 上
-python /tmp/run_generate_report.py
+# server 上（必須用 ciriquant conda env，否則 plotly 未安裝）
+conda run -n ciriquant python /tmp/run_generate_report.py
 ```
 
 wrapper mock 了 `snakemake` 物件（`_NamedList` + `_Params`），hardcode GSE113230 的 input/output/params。
 此模式可複用於任何需要獨立重跑 terminal rule 的情境。
+
+**重要**：`python /tmp/run_generate_report.py`（不加 conda run）使用 base conda (Python 3.13)，
+沒有 plotly，會生成沒有互動圖表的靜態報告。必須加 `conda run -n ciriquant`。
 
 ---
 
@@ -627,6 +630,9 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 | SVG badge 距離弧段過遠（舊 angular de-overlap） | `deOverlap` 只往順時針推移，多個 badge 連鎖推移後遠離原弧段 | 改為 radial staggering：badge 固定在弧段正上方角度，僅在 angular gap < 0.14 rad 時改變半徑（`MI_R0=+7` vs `MI_R1=+19`）；虛線放在 `<g>` 內隨 badge 隱藏 |
 | `analysis.R` heatmap 錯誤（`pheatmap` 少於 2 行） | DE circRNA 數量太少時 `pheatmap` 會報錯 | 加 `if (nrow(mat) >= 2)` 判斷，否則 `plot.new()` 顯示提示文字 |
 | `analysis.R` `slice_min` 版本警告 | dplyr 新版棄用 `slice_min` 的部分用法 | 改為 `arrange(.data[[col]]) %>% head(n)` |
+| `generate_report` Plotly 圖表沒有互動（靜態 PDF embed） | 用 base conda Python（3.13）執行，無 plotly | 改用 `conda run -n ciriquant python /tmp/run_generate_report.py` |
+| modal 分頁無法點擊（整個 JS 失效） | `priTitle` 字串中的 Python `\n` 變成 JS 字串裡的實際換行 → SyntaxError | 改為 `\\n`，讓 JS 收到合法逸脫序列 |
+| Isoform switching bar chart x-axis label 重疊 | 10 基因 × 2 條件 = 20 個 label 太密 | 改用 Plotly multi-level x-axis（`[[gene,gene],["Normal","Tumor"]]`） |
 
 ---
 
@@ -702,8 +708,27 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 | Volcano plot | **Plotly 互動式**（hover 顯示 circ_id / log2FC / p-value / Type）；Y 軸標題依 `de_sig_by` 動態切換；fallback to PDF embed if Plotly unavailable |
 | PCA | **Plotly 互動式**（hover 顯示 SRR ID / condition，tumor/normal 顏色區分）；numpy SVD |
 | Heatmap | **Plotly 互動式**（top 50 DE，hover 顯示 circRNA ID，RdBu_r colorscale，z-score 標準化）；fallback to PDF embed |
-| Isoform Switching | Plotly 長條圖（top 10 switching genes 的 IUI tumor vs normal）+ 顯著 switching 表格 |
+| Isoform Switching | Plotly 長條圖（top 10 switching genes；multi-level x-axis：基因名/Normal+Tumor）+ 顯著 switching 表格 |
 | **SVG Circular Diagram** | 每個 circRNA 的環狀圖（exon 結構 + miRNA/RBP binding site 弧段 + 流水號 badge）|
+
+**circRNA 詳細 modal（點擊任意 circ_id 開啟）**：
+- **⬛ Circular Structure**：SVG 環狀圖；底部「⬇ SVG」下載按鈕
+- **📺 miRNA Sponge**：互動表格（Priority 排序）；「⬇ CSV」下載；Binding Seq 欄自動從 UCSC hg19 REST API 獲取序列
+- **🧬 RBP Binding**：同上
+- **📈 Volcano / 🔥 Heatmap**：Plotly mini-chart；「⬇ PNG」下載
+- **Priority Score**（miRNA）：seed type（8mer=+4…6mer=+1）+ CLIP>0（+3）+ ENCORI（+2）+ in_circ（+1）
+- **Priority Score**（RBP）：bindingSites log₂×2 max3 + internal（+2）+ CLIP>0（+3）+ ENCORI（+2）+ in_circ（+1）
+- 所有 header 可點擊排序（▲/▼）
+- Chr Position 欄顯示 chr 絕對座標（circRNA start + circ_pos 1-based offset）
+
+**Volcano toggle**：右上角「○ Heatmap circles: OFF / ON」按鈕，heatmap top circRNA 標記預設隱藏。
+
+**全域下載功能**：
+- 頁面頂部 sticky 列：「🖨 列印 / 存為 PDF」（`window.print()`）
+- 各表格右上角「⬇ CSV」按鈕：DE 上調/下調、Biomarker、Isoform switching
+
+**Plotly 安裝要求**：`pip install plotly` 在 `ciriquant` conda env（已安裝 5.18.0）。
+必須用 `conda run -n ciriquant python` 執行 generate_report.py，否則 fallback 靜態 PDF。
 
 **SVG Circular Diagram — Badge 放置邏輯（radial staggering）**：
 
