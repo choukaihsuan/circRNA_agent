@@ -359,7 +359,9 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
     return fig.to_html(include_plotlyjs="cdn", full_html=False)
 
 
-def _isoform_section(switching_file: Optional[str]) -> str:
+def _isoform_section(switching_file: Optional[str],
+                     isoform_file:  Optional[str] = None,
+                     circbase_file: Optional[str] = None) -> str:
     """Return HTML block for isoform switching results; empty string if unavailable."""
     if not switching_file or not Path(switching_file).exists():
         return ""
@@ -375,11 +377,49 @@ def _isoform_section(switching_file: Optional[str]) -> str:
     n_genes_sig     = sig["gene_id"].nunique() if not sig.empty else 0
     n_events        = len(sig)
 
+    # Merge exon structure annotations (exon_span, region, strand)
+    if isoform_file and "circ_id" in sig.columns:
+        try:
+            iso = pd.read_csv(isoform_file, sep="\t",
+                              usecols=lambda c: c in ("circ_id", "gene_name", "strand", "region", "exon_span"))
+            new_cols = ["circ_id"] + [c for c in iso.columns if c not in sig.columns and c != "circ_id"]
+            if len(new_cols) > 1:
+                sig = sig.merge(iso[new_cols], on="circ_id", how="left")
+        except Exception:
+            pass
+
+    # Merge circBase annotation
+    if circbase_file and "circ_id" in sig.columns:
+        try:
+            cb = pd.read_csv(circbase_file, sep="\t",
+                             usecols=lambda c: c in ("circ_id", "circbase_id", "in_circbase"))
+            new_cols = ["circ_id"] + [c for c in cb.columns if c not in sig.columns and c != "circ_id"]
+            if len(new_cols) > 1:
+                sig = sig.merge(cb[new_cols], on="circ_id", how="left")
+        except Exception:
+            pass
+
+    # Build compact exon_structure column: "e3-e7 · exonic" / "intronic" / "intergenic"
+    if "region" in sig.columns:
+        def _struct(row: pd.Series) -> str:
+            span   = str(row.get("exon_span", "") or "").strip()
+            region = str(row.get("region",    "") or "").strip()
+            strand = str(row.get("strand",    "") or "").strip()
+            parts  = []
+            if span:
+                parts.append(span)
+            if region:
+                parts.append(region)
+            if strand:
+                parts.append(strand)
+            return " · ".join(parts) if parts else "—"
+        sig["exon_structure"] = sig.apply(_struct, axis=1)
+
     plot_html = _plot_isoform_usage(sig)
 
     show_cols = [c for c in
-                 ["gene_name", "circ_id", "iui_normal", "iui_tumor",
-                  "delta_iui", "p_value"]
+                 ["gene_name", "circ_id", "exon_structure", "circbase_id",
+                  "iui_normal", "iui_tumor", "delta_iui", "p_value"]
                  if c in sig.columns]
     sort_keys = [c for c in ["gene_name", "p_value"] if c in sig.columns]
     table_html = (
@@ -850,7 +890,9 @@ def build_report(
 
     type_html      = _type_section(sig)
     biomarker_html = _biomarker_section(biomarker_file, interactions=interactions)
-    isoform_html   = _isoform_section(switching_file)
+    isoform_html   = _isoform_section(switching_file,
+                                       isoform_file=isoform_file,
+                                       circbase_file=circbase_file)
 
     # Interactive Plotly charts; fall back to static PDF embeds when unavailable
     p_volcano = _plotly_volcano(de, fdr, lfc, de_method, p_col=p_col, sig_thr=sig_thr,
@@ -884,11 +926,13 @@ function showCircDetail(circId) {{
   circEl.innerHTML = '';
   _drawCircleRNA(circId, circEl);
   document.getElementById('cm-mirna').innerHTML = _buildInteractionTable(
-    d.mirna||[], ['miRNAName','siteType','circ_pos','clipExpNum','cellType','source','in_circ'],
-    ['miRNA','Site Type','Chr Position','CLIP Exp.','Cell Type','Source','In circRNA'], circId);
+    d.mirna||[], ['miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source','in_circ'],
+    ['miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source','In circRNA'], circId);
   document.getElementById('cm-rbp').innerHTML = _buildInteractionTable(
-    d.rbp||[], ['RBPName','bindingSites','circ_pos','location','clipExpNum','cellType','source','in_circ'],
-    ['RBP','Sites','Chr Position','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId);
+    d.rbp||[], ['RBPName','bindingSites','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
+    ['RBP','Sites','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId);
+  _fetchSeqsInTable('cm-mirna');
+  _fetchSeqsInTable('cm-rbp');
   const vEl = document.getElementById('cm-volcano');
   vEl.dataset.circId = circId;
   vEl.innerHTML = '<p style="color:#aaa;font-size:12px;padding:8px">Click tab to load volcano.</p>';
@@ -1355,6 +1399,20 @@ function _buildInteractionTable(rows, keys, headers, circId) {{
     keys.forEach(k=>{{
       let v=r[k]!==undefined&&r[k]!==''?r[k]:'—';
       if(k==='circ_pos') v=_absPos(v);
+      if(k==='_seq_logo') {{
+        const rawPos=String(r.circ_pos||'');
+        const pm=rawPos.match(/(\d+)[–\-](\d+)/);
+        if(pm&&chrom) {{
+          const s0=chromStart+parseInt(pm[1])-1;
+          const e0=chromStart+parseInt(pm[2]);
+          const len=e0-s0;
+          if(len>80)
+            v=`<span style="color:#aaa;font-size:10px">${{len}}bp</span>`;
+          else
+            v=`<span class="_seqCell" data-chrom="${{chrom}}" data-s="${{s0}}" data-e="${{e0}}"
+                 style="color:#aaa;font-size:10px;font-family:monospace">⟳</span>`;
+        }} else {{ v='—'; }}
+      }}
       if(k==='source') v=_srcBadge(String(r[k]||''));
       if(k==='in_circ'){{
         const ic=r[k];
@@ -1376,8 +1434,40 @@ function _buildInteractionTable(rows, keys, headers, circId) {{
     &nbsp;&nbsp;
     <span style="background:#0077b6;color:white;border-radius:3px;padding:1px 5px;font-size:10px">ENCORI</span>
     ${{nEN}} records · CLIP-seq validated · hg38 · Gene-level
+    &nbsp;&nbsp; Binding Seq: hg19 UCSC (⟳ = loading)
   </p>`;
   return html;
+}}
+
+function _seqLogoSpan(seq) {{
+  const C={{A:'#2ca02c',T:'#d62728',G:'#e07b39',C:'#1a5c96',
+            U:'#d62728',R:'#8c564b',Y:'#9467bd',K:'#bcbd22',
+            M:'#17becf',S:'#7f7f7f',W:'#e377c2',N:'#aaa'}};
+  const MAX=42;
+  const s=seq.toUpperCase();
+  const disp=s.length>MAX?s.slice(0,MAX)+'…':s;
+  return '<span title="'+s+'" style="font-family:monospace;font-size:11px;letter-spacing:0.3px">'
+    +disp.split('').map(c=>{{
+      const col=C[c]||'#888';
+      return `<span style="color:${{col}};font-weight:bold;`
+            +`border-bottom:2.5px solid ${{col}};padding-bottom:1px;margin:0 0.3px">${{c}}</span>`;
+    }}).join('')+'</span>';
+}}
+
+function _fetchSeqsInTable(containerId) {{
+  const cells=Array.from(document.querySelectorAll('#'+containerId+' ._seqCell'));
+  if(!cells.length) return;
+  Promise.all(cells.map(cell=>{{
+    const {{chrom,s,e}}=cell.dataset;
+    const url='https://api.genome.ucsc.edu/getData/sequence?genome=hg19;chrom='+chrom+';start='+s+';end='+e;
+    return fetch(url)
+      .then(r=>r.ok?r.json():null)
+      .then(json=>{{
+        if(json&&json.dna) cell.outerHTML=_seqLogoSpan(json.dna);
+        else cell.textContent='N/A';
+      }})
+      .catch(()=>{{cell.textContent='✗';}});
+  }}));
 }}
 
 function _toggleBadge(type, num, chip) {{
