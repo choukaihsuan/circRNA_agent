@@ -146,7 +146,7 @@ def main() -> None:
     # (16-core node; single sample; 150 bp PE; hg38 — comparable to our hg19 run)
     nfcore_row = {
         "Pipeline":          "nf-core/circrna",
-        "Tool_combination":  "CIRIquant + STAR + DCC (fixed min_tools=2)",
+        "Tool_combination":  "CIRIquant + CIRCexplorer2 + find_circ (fixed ≥2/3 tools, exact)",
         "Alignment_wall_min": 139,
         "Consensus_wall_min": 5,
         "Total_wall_min":    144,

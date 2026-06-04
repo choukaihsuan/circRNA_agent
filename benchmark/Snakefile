@@ -146,19 +146,21 @@ rule bench_ciriquant:
         r1  = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
         r2  = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
     output:
-        gtf = GS55["results_dir"] + "/circRNA/{srr}/{srr}.gtf",
+        gtf      = GS55["results_dir"] + "/circRNA/{srr}/{srr}.gtf",
+        time_log = "logs/bench/time_ciriquant_{srr}.log",
     params:
         outdir = GS55["results_dir"] + "/circRNA/{srr}",
         sample = "{srr}",
         cfg    = config["ciriquant_config"],
-    threads: config.get("threads", 8)
+    threads: 8  # fixed for reproducible benchmark timing
     resources:
         mem_gb = 16
     log: "logs/bench/ciriquant_{srr}.log"
     shell:
         """
         mkdir -p {params.outdir}
-        CIRIquant -t {threads} \
+        /usr/bin/time -v -o {output.time_log} \
+            CIRIquant -t {threads} \
             -1 {input.r1} -2 {input.r2} \
             --config {params.cfg} \
             -o {params.outdir} \
@@ -176,20 +178,22 @@ rule bench_star_paired:
         r1 = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
         r2 = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
     output:
-        junc = GS55["results_dir"] + "/circRNA/{srr}/Chimeric.out.junction",
-        bam  = GS55["results_dir"] + "/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
+        junc     = GS55["results_dir"] + "/circRNA/{srr}/Chimeric.out.junction",
+        bam      = GS55["results_dir"] + "/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
+        time_log = "logs/bench/time_star_paired_{srr}.log",
     params:
         index  = GENOME["star_index"],
         prefix = GS55["results_dir"] + "/circRNA/{srr}/",
         tmp    = GS55["results_dir"] + "/circRNA/{srr}/star_tmp",
-    threads: config.get("threads", 8)
+    threads: 8  # fixed for reproducible benchmark timing
     resources:
         mem_gb = 26
     log: "logs/bench/star_paired_{srr}.log"
     shell:
         """
         mkdir -p {params.tmp}
-        STAR --runThreadN {threads} --genomeDir {params.index} \
+        /usr/bin/time -v -o {output.time_log} \
+            sh -c 'STAR --runThreadN {threads} --genomeDir {params.index} \
              --readFilesIn {input.r1} {input.r2} \
              --readFilesCommand zcat \
              --outSAMtype BAM SortedByCoordinate \
@@ -199,8 +203,7 @@ rule bench_star_paired:
              --chimJunctionOverhangMin 5 \
              --alignSJDBoverhangMin 5 \
              --outSAMattributes NH HI NM MD AS \
-             > {log} 2>&1
-        samtools index {output.bam}
+             > {log} 2>&1 && samtools index {output.bam}'
         rm -rf {params.tmp}
         """
 
@@ -215,7 +218,7 @@ rule bench_star_mate1:
         index  = GENOME["star_index"],
         prefix = GS55["results_dir"] + "/circRNA/{srr}/mate1/",
         tmp    = GS55["results_dir"] + "/circRNA/{srr}/mate1_tmp",
-    threads: config.get("threads", 8)
+    threads: 8  # fixed for reproducible benchmark timing
     resources:
         mem_gb = 26
     log: "logs/bench/star_mate1_{srr}.log"
@@ -246,7 +249,7 @@ rule bench_star_mate2:
         index  = GENOME["star_index"],
         prefix = GS55["results_dir"] + "/circRNA/{srr}/mate2/",
         tmp    = GS55["results_dir"] + "/circRNA/{srr}/mate2_tmp",
-    threads: config.get("threads", 8)
+    threads: 8  # fixed for reproducible benchmark timing
     resources:
         mem_gb = 26
     log: "logs/bench/star_mate2_{srr}.log"
@@ -276,15 +279,17 @@ rule bench_dcc:
         bam   = GS55["results_dir"] + "/circRNA/{srr}/Aligned.sortedByCoord.out.bam",
         gtf   = GENOME["gtf"],
     output:
-        GS55["results_dir"] + "/circRNA/{srr}/DCC/CircCoordinates",
+        coords   = GS55["results_dir"] + "/circRNA/{srr}/DCC/CircCoordinates",
+        time_log = "logs/bench/time_dcc_{srr}.log",
     params:
         outdir = GS55["results_dir"] + "/circRNA/{srr}/DCC",
-    threads: 4
+    threads: 8  # fixed for reproducible benchmark timing
     log: "logs/bench/dcc_{srr}.log"
     shell:
         """
         mkdir -p {params.outdir}
-        ( cd {params.outdir} && DCC {input.junc} \
+        /usr/bin/time -v -o {output.time_log} \
+            sh -c '( cd {params.outdir} && DCC {input.junc} \
               -mt1 {input.junc1} \
               -mt2 {input.junc2} \
               -D -an {input.gtf} \
@@ -292,7 +297,7 @@ rule bench_dcc:
               -G -B {input.bam} \
               -O {params.outdir} \
               -T {threads} ) \
-              > {log} 2>&1
+              > {log} 2>&1'
         """
 
 
@@ -341,8 +346,9 @@ rule our_filter:
         cirique = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
         dcc     = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
     output:
-        bed     = RESULTS + "/detection/our_method.bed",
-        summary = RESULTS + "/detection/our_method_summary.tsv",
+        bed      = RESULTS + "/detection/our_method.bed",
+        summary  = RESULTS + "/detection/our_method_summary.tsv",
+        time_log = "logs/bench/time_consensus.log",
     params:
         slop               = BENCH.get("slop", 10),
         min_bsj            = BENCH.get("min_bsj", 2),
@@ -351,18 +357,19 @@ rule our_filter:
     log: "logs/bench/our_filter.log"
     shell:
         """
-        python {AGENT_DIR}/scripts/consensus_filter.py \
-            --cirique {input.cirique} \
-            --dcc     {input.dcc} \
-            --output  {output.bed} \
-            --summary {output.summary} \
-            --min-tools 2 \
-            --slop {params.slop} \
-            --min-bsj {params.min_bsj} \
-            --max-junction-ratio {params.max_junction_ratio} \
-            --adaptive --adaptive-ratio 0.1 \
-            --min-confidence {params.min_confidence} \
-            2>&1 | tee {log}
+        /usr/bin/time -v -o {output.time_log} \
+            python {AGENT_DIR}/scripts/consensus_filter.py \
+                --cirique {input.cirique} \
+                --dcc     {input.dcc} \
+                --output  {output.bed} \
+                --summary {output.summary} \
+                --min-tools 2 \
+                --slop {params.slop} \
+                --min-bsj {params.min_bsj} \
+                --max-junction-ratio {params.max_junction_ratio} \
+                --adaptive --adaptive-ratio 0.1 \
+                --min-confidence {params.min_confidence} \
+                2>&1 | tee {log}
         """
 
 
@@ -448,7 +455,7 @@ rule bench_find_circ_map:
     params:
         outdir = GS55["results_dir"] + "/circRNA/{srr}/find_circ",
         index  = GENOME.get("bowtie2_index", ""),
-    threads: config.get("threads", 8)
+    threads: 8  # fixed for reproducible benchmark timing
     resources:
         mem_gb = 8
     log: "logs/bench/find_circ_map_{srr}.log"
@@ -482,7 +489,7 @@ rule bench_find_circ:
         find_circ_dir = GENOME.get("find_circ_dir", ""),
         genome        = GENOME["fasta"],
         sample        = "{srr}",
-    threads: config.get("threads", 8)
+    threads: 8  # fixed for reproducible benchmark timing
     resources:
         mem_gb = 8
     log: "logs/bench/find_circ_{srr}.log"
@@ -610,25 +617,26 @@ rule accuracy_benchmark:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 rule compute_cost:
-    """Compile compute cost table (our logs + literature values)."""
+    """Compile compute cost table using actual /usr/bin/time -v measurements."""
+    input:
+        ciriquant_log = f"logs/bench/time_ciriquant_{TOTAL_SRR}.log",
+        star_log      = f"logs/bench/time_star_paired_{TOTAL_SRR}.log",
+        dcc_log       = f"logs/bench/time_dcc_{TOTAL_SRR}.log",
+        consensus_log = "logs/bench/time_consensus.log",
     output:
         RESULTS + "/compute_cost.tsv",
     log: "logs/bench/compute_cost.log"
     shell:
         """
         python {AGENT_DIR}/benchmark/scripts/compute_cost.py \
-            --output {output} \
+            --our-ciriquant-log {input.ciriquant_log} \
+            --our-star-log      {input.star_log} \
+            --our-dcc-log       {input.dcc_log} \
+            --our-consensus-log {input.consensus_log} \
+            --our-cores         8 \
+            --output            {output} \
             2>&1 | tee {log}
         """
-
-# ── Optional rule: run with measured time logs ────────────────────────────────
-# Wrap a step with /usr/bin/time -v to get actual measurements:
-#   /usr/bin/time -v CIRIquant ... 2>&1 | tee logs/bench/time_ciriquant_SRR444655.log
-# Then run compute_cost with those log paths:
-#   python benchmark/scripts/compute_cost.py \
-#       --our-ciriquant-log logs/bench/time_ciriquant_SRR444655.log \
-#       --our-star-log      logs/bench/time_star_SRR444655.log \
-#       --output            results/benchmark/compute_cost.tsv
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
