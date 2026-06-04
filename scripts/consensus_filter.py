@@ -30,13 +30,18 @@ CoordMap = Dict[Tuple[str, int, int], float]
 
 # ── Parsers ───────────────────────────────────────────────────────────────────
 
-def parse_ciriquant(path: str, min_bsj: int, max_junction_ratio: float = 1.0) -> CoordMap:
+def parse_ciriquant(
+    path: str,
+    min_bsj: int,
+    max_junction_ratio: float = 1.0,
+    qc_bsj_threshold: int = 5,
+) -> CoordMap:
     """Parse CIRIquant GTF. Returns {(chr, start, end): bsj_count}.
 
-    Pseudo-circ QC: removes entries where BSJ/FSJ > max_junction_ratio.
-    Real circRNAs almost always have fewer BSJ than FSJ reads; a ratio > 1.0
-    is a strong indicator of mis-mapping or genomic repeat artifacts.
-    FSJ = 0 entries are skipped from ratio filtering (no linear evidence present).
+    Pseudo-circ QC: removes entries where BSJ/FSJ > max_junction_ratio AND BSJ < qc_bsj_threshold.
+    High-BSJ circRNAs (BSJ >= qc_bsj_threshold) are exempt from ratio filtering —
+    they are likely real even if the host gene has low linear expression (FSJ << BSJ).
+    FSJ = 0 entries are always skipped from ratio filtering.
     """
     coords: CoordMap = {}
     n_ratio_filtered = 0
@@ -58,13 +63,15 @@ def parse_ciriquant(path: str, min_bsj: int, max_junction_ratio: float = 1.0) ->
             fsj = float(fsj_m.group(1)) if fsj_m else 0.0
             if bsj < min_bsj:
                 continue
-            if fsj > 0 and (bsj / fsj) > max_junction_ratio:
+            # Apply QC only to low-BSJ circRNAs; high-BSJ ones are kept regardless of ratio
+            if fsj > 0 and bsj < qc_bsj_threshold and (bsj / fsj) > max_junction_ratio:
                 n_ratio_filtered += 1
                 continue
             coords[(chrom, start, end)] = bsj
     if n_ratio_filtered:
         print(
-            f"[consensus] CIRIquant junction_ratio filter (BSJ/FSJ > {max_junction_ratio}): "
+            f"[consensus] CIRIquant junction_ratio filter "
+            f"(BSJ<{qc_bsj_threshold} AND BSJ/FSJ>{max_junction_ratio}): "
             f"{n_ratio_filtered} removed",
             file=sys.stderr,
         )
@@ -278,6 +285,10 @@ def main() -> None:
     parser.add_argument("--max-junction-ratio", type=float, default=1.0,
                         dest="max_junction_ratio",
                         help="Max BSJ/FSJ ratio for CIRIquant pseudo-circ QC (default: 1.0)")
+    parser.add_argument("--qc-bsj-threshold", type=int, default=5,
+                        dest="qc_bsj_threshold",
+                        help="BSJ count threshold: only apply ratio QC when BSJ < this value "
+                             "(default: 5). High-BSJ circRNAs are exempt from ratio filtering.")
     parser.add_argument("--adaptive", action="store_true", default=False,
                         help="Enable adaptive fallback: if one tool detects far fewer "
                              "circRNAs than another (< --adaptive-ratio), automatically "
@@ -304,7 +315,9 @@ def main() -> None:
     find_circ_map:     CoordMap = {}
 
     if args.cirique:
-        cirique_map = parse_ciriquant(args.cirique, args.min_bsj, args.max_junction_ratio)
+        cirique_map = parse_ciriquant(
+            args.cirique, args.min_bsj, args.max_junction_ratio, args.qc_bsj_threshold
+        )
         tool_maps.append(cirique_map)
         tool_names.append("ciriquant")
         print(f"[consensus] CIRIquant:     {len(cirique_map)} circRNAs", file=sys.stderr)

@@ -373,6 +373,38 @@ rule our_filter:
         """
 
 
+rule our_no_qc_filter:
+    """
+    Our method WITHOUT pseudo-circ QC (max_junction_ratio=99):
+    CIRIquant + DCC, slop=10 bp, adaptive — no BSJ/FSJ ratio filter.
+    Used to measure F1 upper bound and tune max_junction_ratio.
+    """
+    input:
+        cirique = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
+        dcc     = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+    output:
+        bed     = RESULTS + "/detection/our_no_qc.bed",
+        summary = RESULTS + "/detection/our_no_qc_summary.tsv",
+    params:
+        slop    = BENCH.get("slop", 10),
+        min_bsj = BENCH.get("min_bsj", 2),
+    log: "logs/bench/our_no_qc_filter.log"
+    shell:
+        """
+        python {AGENT_DIR}/scripts/consensus_filter.py \
+            --cirique {input.cirique} \
+            --dcc     {input.dcc} \
+            --output  {output.bed} \
+            --summary {output.summary} \
+            --min-tools 2 \
+            --slop {params.slop} \
+            --min-bsj {params.min_bsj} \
+            --max-junction-ratio 99 \
+            --adaptive --adaptive-ratio 0.1 \
+            2>&1 | tee {log}
+        """
+
+
 rule circompara2_sim_filter:
     """
     CirComPara2 simulation (Gaffo et al. 2022, Briefings Bioinformatics):
@@ -576,11 +608,13 @@ rule clear_sim_filter:
 # ─── Accuracy benchmark ───────────────────────────────────────────────────────
 
 rule accuracy_benchmark:
-    """Compute Precision/Recall/F1/AUC-PR for three multi-tool detection strategies."""
+    """Compute Precision/Recall/F1/AUC-PR for detection strategies (incl. no-QC ablation)."""
     input:
         ground_truth        = RESULTS + "/rnaser/ground_truth.tsv",
         our_bed             = RESULTS + "/detection/our_method.bed",
         our_summary         = RESULTS + "/detection/our_method_summary.tsv",
+        our_no_qc_bed       = RESULTS + "/detection/our_no_qc.bed",
+        our_no_qc_summary   = RESULTS + "/detection/our_no_qc_summary.tsv",
         circompara2_bed     = RESULTS + "/detection/circompara2_sim.bed",
         circompara2_summary = RESULTS + "/detection/circompara2_sim_summary.tsv",
         nfcore_bed          = RESULTS + "/detection/nfcore_3tools.bed",
@@ -599,6 +633,8 @@ rule accuracy_benchmark:
             --ground-truth         {input.ground_truth} \
             --our-bed              {input.our_bed} \
             --our-summary          {input.our_summary} \
+            --our-no-qc-bed        {input.our_no_qc_bed} \
+            --our-no-qc-summary    {input.our_no_qc_summary} \
             --circompara2-bed      {input.circompara2_bed} \
             --circompara2-summary  {input.circompara2_summary} \
             --nfcore-bed           {input.nfcore_bed} \

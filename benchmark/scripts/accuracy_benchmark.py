@@ -299,6 +299,10 @@ def main() -> None:
                         help="Our consensus filter BED (consensus_filter.py output)")
     parser.add_argument("--our-summary",           required=True,
                         help="Consensus summary TSV (contains confidence_score)")
+    parser.add_argument("--our-no-qc-bed",         default=None,
+                        help="Our method WITHOUT pseudo-circ QC (max_junction_ratio=99)")
+    parser.add_argument("--our-no-qc-summary",     default=None,
+                        help="Summary TSV for no-QC ablation")
     parser.add_argument("--circompara2-bed",        required=True,
                         help="CirComPara2 sim BED (slop=10, no BSJ/FSJ QC)")
     parser.add_argument("--circompara2-summary",    required=True,
@@ -325,6 +329,8 @@ def main() -> None:
     # ── Load predictions ──────────────────────────────────────────────────────
     our_ids              = _load_bed(args.our_bed)
     our_scores           = _load_summary_scores(args.our_summary)
+    our_no_qc_ids        = _load_bed(args.our_no_qc_bed) if args.our_no_qc_bed else None
+    our_no_qc_scores     = _load_summary_scores(args.our_no_qc_summary) if args.our_no_qc_summary else None
     circompara2_ids      = _load_bed(args.circompara2_bed)
     circompara2_scores   = _load_summary_scores(args.circompara2_summary)
     nfcore_ids           = _load_bed(args.nfcore_bed)
@@ -335,19 +341,21 @@ def main() -> None:
 
     print(
         f"[accuracy] Detected: ours={len(our_ids)}, "
-        f"circompara2_sim={len(circompara2_ids)}, "
+        + (f"ours_no_qc={len(our_no_qc_ids)}, " if our_no_qc_ids is not None else "")
+        + f"circompara2_sim={len(circompara2_ids)}, "
         f"nfcore_3tools={len(nfcore_ids)}",
         file=sys.stderr,
     )
 
     # ── Evaluate each method ──────────────────────────────────────────────────
-    # nfcore uses slop=0 (exact coords); evaluated at its native resolution.
-    # nfcore_3tools uses confidence_score from consensus_filter.py (not binary).
     methods = [
         ("Our_adaptive",    our_ids,        args.slop, our_scores),
         ("CirComPara2_sim", circompara2_ids, args.slop, circompara2_scores),
         ("nfcore_3tools",   nfcore_ids,      0,         nfcore_scores),
     ]
+    # Ablation: no pseudo-circ QC (F1 upper bound study)
+    if our_no_qc_ids is not None:
+        methods.insert(1, ("Our_no_QC", our_no_qc_ids, args.slop, our_no_qc_scores))
 
     summary_rows = []
     strat_rows   = []

@@ -5,6 +5,7 @@ consensus:
   min_tools: 2
   slop: 10
   max_junction_ratio: 1.0
+  qc_bsj_threshold: 5       # only apply ratio QC when BSJ < this; high-BSJ circRNAs exempt
   tools:
   - ciriquant
   - dcc
