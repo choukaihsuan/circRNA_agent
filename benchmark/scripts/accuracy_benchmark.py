@@ -307,6 +307,10 @@ def main() -> None:
                         help="CirComPara2 sim BED (slop=10, no BSJ/FSJ QC)")
     parser.add_argument("--circompara2-summary",    required=True,
                         help="CirComPara2 sim summary TSV")
+    parser.add_argument("--circompara2-4tools-bed",     default=None,
+                        help="CirComPara2 full 5-tool BED (CIRI2+CIRIquant+DCC+CIRCexplorer2+find_circ, slop=10)")
+    parser.add_argument("--circompara2-4tools-summary", default=None,
+                        help="CirComPara2 5-tool summary TSV")
     parser.add_argument("--nfcore-bed",            required=True,
                         help="nf-core 3-tool sim BED (CIRIquant+CIRCexplorer2+find_circ, slop=0)")
     parser.add_argument("--nfcore-summary",        default=None,
@@ -333,6 +337,8 @@ def main() -> None:
     our_no_qc_scores     = _load_summary_scores(args.our_no_qc_summary) if args.our_no_qc_summary else None
     circompara2_ids      = _load_bed(args.circompara2_bed)
     circompara2_scores   = _load_summary_scores(args.circompara2_summary)
+    cp2_4t_ids    = _load_bed(args.circompara2_4tools_bed) if args.circompara2_4tools_bed else None
+    cp2_4t_scores = _load_summary_scores(args.circompara2_4tools_summary) if args.circompara2_4tools_summary else None
     nfcore_ids           = _load_bed(args.nfcore_bed)
     nfcore_scores        = (
         _load_summary_scores(args.nfcore_summary)
@@ -356,6 +362,11 @@ def main() -> None:
     # Ablation: no pseudo-circ QC (F1 upper bound study)
     if our_no_qc_ids is not None:
         methods.insert(1, ("Our_no_QC", our_no_qc_ids, args.slop, our_no_qc_scores))
+    # Full 5-tool CirComPara2 (CIRI2 + CIRIquant + DCC + CIRCexplorer2 + find_circ)
+    if cp2_4t_ids is not None:
+        # Insert after CirComPara2_sim
+        pos = next((i for i, m in enumerate(methods) if m[0] == "CirComPara2_sim"), len(methods)) + 1
+        methods.insert(pos, ("CirComPara2_4tools", cp2_4t_ids, args.slop, cp2_4t_scores))
 
     summary_rows = []
     strat_rows   = []

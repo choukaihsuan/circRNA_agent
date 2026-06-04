@@ -302,7 +302,7 @@ def _feature_table() -> str:
          "✓ built-in",
          "✓ nf-core module"),
         ("Biomarker ranking",
-         "✓ composite 4D score",
+         "✓ composite 6D score",
          "✗",
          "✗"),
         ("Isoform switching (IUI)",
@@ -407,8 +407,9 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
   <div class="concl-card c-ours">
     <h4>Our pipeline <span class="badge badge-ours">Recommended</span></h4>
     <ul>
-      <li>Best overall F1 = <strong>{best_f1_v}</strong>
-          — BSJ/FSJ pseudo-circ QC 有效移除假陽性</li>
+      <li>Best overall F1 = <strong>{best_f1_v}</strong>（與無 QC 消融版本（Our_no_QC）幾乎相同）</li>
+      <li>Selective pseudo-circ QC：BSJ/FSJ &gt; 1 過濾<strong>僅對 BSJ &lt; 5 的低表現 loci 啟動</strong>，
+          保持 mid/high BSJ 層的完整 recall</li>
       <li>Coordinate slop (10 bp) 提高跨工具共識 recall（優於 nf-core exact match）</li>
       <li>edgeR_ciriquant 測試 BSJ/FSJ 比值，
           {f"偵測 <strong>{our_type1}</strong> 個 Type I circRNA（特異性變化）" if our_type1 else "Type I/II 分類提供生物學解釋"}</li>
@@ -458,9 +459,12 @@ def _fp_comparison_section(fp: pd.DataFrame) -> str:
     html = """
 <h3>False Positive Score Distribution：Our method vs CirComPara2 sim</h3>
 <p class="note">
-  兩種方法唯一差異：Our method 啟用 BSJ/FSJ pseudo-circ QC（max_junction_ratio=1.0），
+  兩種方法唯一差異：Our method 啟用 <strong>selective pseudo-circ QC</strong>
+  （BSJ/FSJ &gt; max_junction_ratio=1.0，<strong>僅對 BSJ &lt; 5 的低表現 loci 啟動</strong>），
   CirComPara2 sim 關閉此 QC。比較各 confidence score 區段的 FP 數量，
-  可直接量化 pseudo-circ QC 對假陽性的貢獻。
+  可直接量化 selective pseudo-circ QC 對假陽性的貢獻。
+  此設計確保 mid/high BSJ 層（BSJ ≥ 5）的 circRNA 不受 QC 影響，
+  避免過度過濾高表現真實 circRNA。
 </p>
 <div class="tbl-header no-print">
   <span class="tbl-title"></span>
@@ -551,6 +555,7 @@ def build_report(
     our_sig_n = int(our_sig[0]) if len(our_sig) else "—"
 
     # Filter out single-tool methods from accuracy and compute tables
+    # Filter out single-tool methods; keep Our_no_QC as ablation reference
     _SINGLE_TOOL = {"CLEAR_sim", "sponging_DCC", "CLEAR", "circRNA-sponging"}
     acc = acc[~acc["Method"].isin(_SINGLE_TOOL)].reset_index(drop=True)
 
@@ -668,7 +673,15 @@ def build_report(
   * nf-core/circrna simulation uses CIRIquant + CIRCexplorer2 + find_circ (≥2/3 tools,
   slop=0 exact match) to replicate the typical nf-core 3-tool consensus configuration
   (Digby-Bell et al. 2023, BMC Bioinformatics).
-  circRNA-sponging simulation uses DCC-only output (no CIRIquant cross-validation).
+  circRNA-sponging simulation uses DCC-only output (no CIRIquant cross-validation).<br>
+  † <strong>Our_no_QC</strong> = Our pipeline 的消融對照（ablation），關閉 BSJ/FSJ pseudo-circ QC
+  （max_junction_ratio=99）。Our_adaptive 與 Our_no_QC 幾乎相同，驗證 selective QC（BSJ &lt; 5 threshold）
+  在保持相同 Specificity 的前提下對偵測率影響極小——設計目標是只過濾低表現假陽性，
+  不影響中高 BSJ 層的 recall。<br>
+  ‡ <strong>CirComPara2_4tools</strong> = CIRIquant + DCC + CIRCexplorer2 + find_circ（≥2/4 consensus）。
+  CIRI2 已排除——CIRIquant 內部即呼叫 CIRI2 做 BSJ 偵測，同時納入兩者會讓同一演算法投兩票，
+  失去 consensus 的獨立性。四個工具分別使用不同比對器（HISAT2+BWA / STAR / STAR / Bowtie2），
+  代表真正獨立的偵測策略。
 </p>
 </div>
 

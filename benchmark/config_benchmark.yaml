@@ -32,7 +32,7 @@ gse113230:
 genome:
   fasta:        /home3/choukaihsuan/reference/hg19/hg19.fa
   gtf:          /home3/choukaihsuan/reference/hg19/genes.gtf
-  bwa_index:    /home3/choukaihsuan/reference/hg19/bwa_index/hg19
+  bwa_index:    /home3/choukaihsuan/reference/hg19/hg19.fa   # BWA index prefix = FASTA path
   hisat2_index: /home3/choukaihsuan/reference/hg19/hisat2_index/hg19
   star_index:   /home3/choukaihsuan/reference/hg19/star_index
   # ── nf-core 3-tool simulation prerequisites ───────────────────────────────
@@ -42,6 +42,8 @@ genome:
   ref_flat:      /home3/choukaihsuan/reference/hg19/refFlat.txt
   # find_circ scripts: git clone https://github.com/marvin-jens/find_circ /home3/choukaihsuan/tools/find_circ
   find_circ_dir: /home3/choukaihsuan/tools/find_circ
+  # CIRI2.pl bundled with CIRIquant package (auto-detected from conda env if empty)
+  ciri2_pl: /home3/choukaihsuan/miniconda3/envs/ciriquant/lib/python3.7/site-packages/libs/CIRI2.pl
 
 ciriquant_config: /home3/choukaihsuan/circRNA_agent/config/ciriquant.yaml
 

@@ -405,11 +405,95 @@ rule our_no_qc_filter:
         """
 
 
+rule bench_ciri2:
+    """
+    CIRI2 circRNA detection (BWA-MEM alignment → CIRI2.pl).
+    CIRI2 is bundled with CIRIquant; uses same BWA index.
+    Required for full 5-tool CirComPara2 simulation.
+    """
+    input:
+        r1 = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
+        r2 = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
+    output:
+        ciri2  = GS55["results_dir"] + "/circRNA/{srr}/CIRI2/{srr}.ciri2",
+        time_log = "logs/bench/time_ciri2_{srr}.log",
+    params:
+        outdir = GS55["results_dir"] + "/circRNA/{srr}/CIRI2",
+        ciri2_pl = GENOME.get("ciri2_pl", "/home3/choukaihsuan/miniconda3/envs/ciriquant/lib/python3.7/site-packages/libs/CIRI2.pl"),
+        bwa_index = GENOME["bwa_index"],
+        genome    = GENOME["fasta"],
+        gtf       = GENOME["gtf"],
+        sample    = "{srr}",
+    threads: 8
+    resources:
+        mem_gb = 32
+    log: "logs/bench/ciri2_{srr}.log"
+    shell:
+        """
+        mkdir -p {params.outdir}
+        SAM={params.outdir}/{params.sample}.sam
+        # BWA-MEM alignment (CIRI2 requires unsorted SAM)
+        /usr/bin/time -v -o {output.time_log} bash -c "
+            bwa mem -T 19 -t {threads} \
+                {params.bwa_index} \
+                {input.r1} {input.r2} \
+                > $SAM \
+                2> {params.outdir}/bwa.log && \
+            perl {params.ciri2_pl} \
+                -I $SAM \
+                -O {output.ciri2} \
+                -F {params.genome} \
+                -A {params.gtf} \
+                -T {threads} \
+                >> {log} 2>&1 && \
+            rm -f $SAM
+        " 2>> {log}
+        """
+
+
+rule circompara2_4tools_filter:
+    """
+    CirComPara2 4-tool simulation (Gaffo et al. 2022, Briefings Bioinformatics):
+    CIRIquant + DCC + CIRCexplorer2 + find_circ; ≥2/4 consensus; slop=10 bp.
+    CIRI2 excluded: CIRIquant already uses CIRI2 internally for BSJ detection,
+    so including both would double-count the same algorithm.
+    BSJ/FSJ QC disabled (CirComPara2 does not apply pseudo-circ filtering).
+    """
+    input:
+        cirique      = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
+        dcc          = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/DCC/CircCoordinates",
+        circexplorer = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/CIRCexplorer2/known_circ.txt",
+        find_circ    = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/find_circ/splice_sites.bed",
+    output:
+        bed     = RESULTS + "/detection/circompara2_4tools.bed",
+        summary = RESULTS + "/detection/circompara2_4tools_summary.tsv",
+    params:
+        slop    = BENCH.get("slop", 10),
+        min_bsj = BENCH.get("min_bsj", 2),
+    log: "logs/bench/circompara2_4tools_filter.log"
+    shell:
+        """
+        python {AGENT_DIR}/scripts/consensus_filter.py \
+            --cirique      {input.cirique} \
+            --dcc          {input.dcc} \
+            --circexplorer2 {input.circexplorer} \
+            --find-circ    {input.find_circ} \
+            --output       {output.bed} \
+            --summary      {output.summary} \
+            --min-tools 2 \
+            --slop {params.slop} \
+            --min-bsj {params.min_bsj} \
+            --max-junction-ratio 999 \
+            2>&1 | tee {log}
+        """
+
+
 rule circompara2_sim_filter:
     """
-    CirComPara2 simulation (Gaffo et al. 2022, Briefings Bioinformatics):
-    CIRIquant + DCC, slop=10 bp, BSJ/FSJ QC DISABLED.
+    CirComPara2 2-tool simulation (legacy, for ablation vs. Our_no_QC):
+    CIRIquant + DCC only, slop=10 bp, BSJ/FSJ QC DISABLED.
     Isolates the contribution of our pseudo-circ QC step.
+    Use circompara2_5tools_filter for the full 5-tool comparison.
     """
     input:
         cirique = GS55["results_dir"] + f"/circRNA/{TOTAL_SRR}/{TOTAL_SRR}.gtf",
@@ -447,8 +531,9 @@ rule bench_circexplorer2:
         junc   = GS55["results_dir"] + "/circRNA/{srr}/Chimeric.out.junction",
         genome = GENOME["fasta"],
     output:
-        bed    = GS55["results_dir"] + "/circRNA/{srr}/CIRCexplorer2/back_spliced_junction.bed",
-        known  = GS55["results_dir"] + "/circRNA/{srr}/CIRCexplorer2/known_circ.txt",
+        bed      = GS55["results_dir"] + "/circRNA/{srr}/CIRCexplorer2/back_spliced_junction.bed",
+        known    = GS55["results_dir"] + "/circRNA/{srr}/CIRCexplorer2/known_circ.txt",
+        time_log = "logs/bench/time_circexplorer2_{srr}.log",
     params:
         outdir   = GS55["results_dir"] + "/circRNA/{srr}/CIRCexplorer2",
         ref_flat = GENOME.get("ref_flat", ""),
@@ -461,13 +546,15 @@ rule bench_circexplorer2:
         (
             mkdir -p {params.outdir}
             cd {params.outdir}
+            /usr/bin/time -v -o {output.time_log} sh -c '
             CIRCexplorer2 parse -t STAR {input.junc} -b back_spliced_junction.bed
             CIRCexplorer2 annotate \
                 -r {params.ref_flat} \
                 -g {input.genome} \
                 -b back_spliced_junction.bed
             mv {params.outdir}/circularRNA_known.txt {output.known} 2>/dev/null || true
-        ) > {log} 2>&1
+            ' > {log} 2>&1
+        )
         """
 
 
@@ -482,8 +569,9 @@ rule bench_find_circ_map:
         r1 = GS55["trimmed_dir"] + "/{srr}_1.fastq.gz",
         r2 = GS55["trimmed_dir"] + "/{srr}_2.fastq.gz",
     output:
-        unm_r1 = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_1.fastq",
-        unm_r2 = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_2.fastq",
+        unm_r1   = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_1.fastq",
+        unm_r2   = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_2.fastq",
+        time_log = "logs/bench/time_find_circ_map_{srr}.log",
     params:
         outdir = GS55["results_dir"] + "/circRNA/{srr}/find_circ",
         index  = GENOME.get("bowtie2_index", ""),
@@ -494,12 +582,13 @@ rule bench_find_circ_map:
     shell:
         """
         mkdir -p {params.outdir}
-        bowtie2 -p {threads} --very-sensitive --mm \
-            -x {params.index} \
-            -1 {input.r1} -2 {input.r2} \
-            --un-conc {params.outdir}/unmapped_%.fastq \
-            -S /dev/null \
-            > {log} 2>&1
+        /usr/bin/time -v -o {output.time_log} \
+            bowtie2 -p {threads} --very-sensitive --mm \
+                -x {params.index} \
+                -1 {input.r1} -2 {input.r2} \
+                --un-conc {params.outdir}/unmapped_%.fastq \
+                -S /dev/null \
+                2> {log}
         """
 
 
@@ -514,7 +603,8 @@ rule bench_find_circ:
         unm_r1 = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_1.fastq",
         unm_r2 = GS55["results_dir"] + "/circRNA/{srr}/find_circ/unmapped_2.fastq",
     output:
-        bed = GS55["results_dir"] + "/circRNA/{srr}/find_circ/splice_sites.bed",
+        bed      = GS55["results_dir"] + "/circRNA/{srr}/find_circ/splice_sites.bed",
+        time_log = "logs/bench/time_find_circ_{srr}.log",
     params:
         outdir        = GS55["results_dir"] + "/circRNA/{srr}/find_circ",
         index         = GENOME.get("bowtie2_index", ""),
@@ -528,19 +618,21 @@ rule bench_find_circ:
     shell:
         """
         mkdir -p {params.outdir}
-        # Concatenate both mates: find_circ processes read pairs jointly
-        cat {input.unm_r1} {input.unm_r2} | \
-            python {params.find_circ_dir}/unmapped2anchors.py | \
+        TMPFIFO={params.outdir}/unmapped_concat_$$.fastq
+        mkfifo \$TMPFIFO
+        cat {input.unm_r1} {input.unm_r2} > \$TMPFIFO &
+        /usr/bin/time -v -o {output.time_log} \
+            sh -c 'python {params.find_circ_dir}/unmapped2anchors.py --fastq {params.outdir}/unmapped_concat_$$.fastq | \
             bowtie2 -p {threads} --score-min=C,-15,0 --reorder \
                 -x {params.index} -U - | \
             python {params.find_circ_dir}/find_circ.py \
                 --genome={params.genome} \
                 --prefix={params.sample} \
                 --name={params.sample} \
-                --reads-per-circ=2 \
                 --stats={params.outdir}/find_circ_stats.txt \
                 > {output.bed} \
-                2>> {log}
+                2>> {log}'
+        rm -f \$TMPFIFO
         """
 
 
@@ -608,7 +700,7 @@ rule clear_sim_filter:
 # ─── Accuracy benchmark ───────────────────────────────────────────────────────
 
 rule accuracy_benchmark:
-    """Compute Precision/Recall/F1/AUC-PR for detection strategies (incl. no-QC ablation)."""
+    """Compute Precision/Recall/F1/AUC-PR for detection strategies (incl. no-QC ablation and 5-tool CirComPara2)."""
     input:
         ground_truth        = RESULTS + "/rnaser/ground_truth.tsv",
         our_bed             = RESULTS + "/detection/our_method.bed",
@@ -617,6 +709,8 @@ rule accuracy_benchmark:
         our_no_qc_summary   = RESULTS + "/detection/our_no_qc_summary.tsv",
         circompara2_bed     = RESULTS + "/detection/circompara2_sim.bed",
         circompara2_summary = RESULTS + "/detection/circompara2_sim_summary.tsv",
+        circompara2_4tools_bed     = RESULTS + "/detection/circompara2_4tools.bed",
+        circompara2_4tools_summary = RESULTS + "/detection/circompara2_4tools_summary.tsv",
         nfcore_bed          = RESULTS + "/detection/nfcore_3tools.bed",
         nfcore_summary      = RESULTS + "/detection/nfcore_3tools_summary.tsv",
     output:
@@ -637,6 +731,8 @@ rule accuracy_benchmark:
             --our-no-qc-summary    {input.our_no_qc_summary} \
             --circompara2-bed      {input.circompara2_bed} \
             --circompara2-summary  {input.circompara2_summary} \
+            --circompara2-4tools-bed     {input.circompara2_4tools_bed} \
+            --circompara2-4tools-summary {input.circompara2_4tools_summary} \
             --nfcore-bed           {input.nfcore_bed} \
             --nfcore-summary       {input.nfcore_summary} \
             --output-summary       {output.summary} \
@@ -655,22 +751,28 @@ rule accuracy_benchmark:
 rule compute_cost:
     """Compile compute cost table using actual /usr/bin/time -v measurements."""
     input:
-        ciriquant_log = f"logs/bench/time_ciriquant_{TOTAL_SRR}.log",
-        star_log      = f"logs/bench/time_star_paired_{TOTAL_SRR}.log",
-        dcc_log       = f"logs/bench/time_dcc_{TOTAL_SRR}.log",
-        consensus_log = "logs/bench/time_consensus.log",
+        ciriquant_log        = f"logs/bench/time_ciriquant_{TOTAL_SRR}.log",
+        star_log             = f"logs/bench/time_star_paired_{TOTAL_SRR}.log",
+        dcc_log              = f"logs/bench/time_dcc_{TOTAL_SRR}.log",
+        consensus_log        = "logs/bench/time_consensus.log",
+        circexplorer2_log    = f"logs/bench/time_circexplorer2_{TOTAL_SRR}.log",
+        find_circ_map_log    = f"logs/bench/time_find_circ_map_{TOTAL_SRR}.log",
+        find_circ_log        = f"logs/bench/time_find_circ_{TOTAL_SRR}.log",
     output:
         RESULTS + "/compute_cost.tsv",
     log: "logs/bench/compute_cost.log"
     shell:
         """
         python {AGENT_DIR}/benchmark/scripts/compute_cost.py \
-            --our-ciriquant-log {input.ciriquant_log} \
-            --our-star-log      {input.star_log} \
-            --our-dcc-log       {input.dcc_log} \
-            --our-consensus-log {input.consensus_log} \
-            --our-cores         8 \
-            --output            {output} \
+            --our-ciriquant-log      {input.ciriquant_log} \
+            --our-star-log           {input.star_log} \
+            --our-dcc-log            {input.dcc_log} \
+            --our-consensus-log      {input.consensus_log} \
+            --nfcore-circexplorer2-log {input.circexplorer2_log} \
+            --nfcore-find-circ-map-log {input.find_circ_map_log} \
+            --nfcore-find-circ-log     {input.find_circ_log} \
+            --our-cores              8 \
+            --output                 {output} \
             2>&1 | tee {log}
         """
 

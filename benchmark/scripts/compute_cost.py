@@ -81,6 +81,15 @@ def main() -> None:
     parser.add_argument("--our-consensus-log",   default=None,
                         help="/usr/bin/time -v log for consensus filter")
     parser.add_argument("--our-cores",           type=int, default=8)
+    # nf-core measured time logs (CIRIquant shared with Our pipeline)
+    parser.add_argument("--nfcore-ciriquant-log",    default=None,
+                        help="Same as --our-ciriquant-log (CIRIquant is shared)")
+    parser.add_argument("--nfcore-circexplorer2-log", default=None,
+                        help="/usr/bin/time -v log for CIRCexplorer2 step")
+    parser.add_argument("--nfcore-find-circ-map-log", default=None,
+                        help="/usr/bin/time -v log for find_circ bowtie2 mapping")
+    parser.add_argument("--nfcore-find-circ-log",    default=None,
+                        help="/usr/bin/time -v log for find_circ detection")
     args = parser.parse_args()
 
     # ── Our pipeline ──────────────────────────────────────────────────────────
@@ -139,26 +148,71 @@ def main() -> None:
         ),
     }
 
-    # ── nf-core/circrna (literature) ─────────────────────────────────────────
+    # ── nf-core/circrna (measured or literature fallback) ────────────────────
+    nfcore_logs = {
+        "ciriquant":    args.nfcore_ciriquant_log or args.our_ciriquant_log,
+        "circexplorer2": args.nfcore_circexplorer2_log,
+        "fc_map":       args.nfcore_find_circ_map_log,
+        "fc_detect":    args.nfcore_find_circ_log,
+    }
+    nfcore_times: dict[str, float] = {}
+    nfcore_peak_ram: float = 0.0
+    nfcore_has_real = False
+
+    for step, log in nfcore_logs.items():
+        t = _parse_time_log(log)
+        if t["wall_min"] is not None:
+            nfcore_times[step] = t["wall_min"]
+            nfcore_has_real = True
+        if t["peak_ram_gb"] and t["peak_ram_gb"] > nfcore_peak_ram:
+            nfcore_peak_ram = t["peak_ram_gb"]
+
+    if nfcore_has_real:
+        # CIRIquant shared with Our pipeline; find_circ = map + detect
+        nfcore_align = (nfcore_times.get("ciriquant", 0)
+                        + nfcore_times.get("fc_map", 0))
+        nfcore_cons  = (nfcore_times.get("circexplorer2", 0)
+                        + nfcore_times.get("fc_detect", 0))
+        nfcore_total = nfcore_align + nfcore_cons
+        nfcore_source = "This study (measured with /usr/bin/time -v, SRR444655)"
+        nfcore_note = (
+            "CIRIquant shared with Our pipeline; CIRCexplorer2 uses existing STAR output; "
+            "find_circ = bowtie2 map + anchor detection; 8 CPU cores"
+        )
+        nfcore_cores = 8
+        nfcore_peak_ram = round(nfcore_peak_ram, 1) if nfcore_peak_ram else 26.0
+    else:
+        # Fallback: Digby-Bell et al. (2023) BMC Bioinformatics 24:430
+        # Table 1: CIRIquant alignment wall time 139 min, peak RAM 38 GB
+        # (16-core node; single sample; 150 bp PE; hg38)
+        nfcore_align = 139
+        nfcore_cons  = 5
+        nfcore_total = 144
+        nfcore_peak_ram = 38.0
+        nfcore_source = "Digby-Bell et al. 2023 BMC Bioinformatics 24:430 Table 1"
+        nfcore_note = (
+            "CIRIquant HISAT2+BWA alignment; 16-core AWS instance; "
+            "fixed coordinate-exact consensus, no BSJ/FSJ QC"
+        )
+        nfcore_cores = 16
+        print("[compute_cost] No nf-core time logs found; using Digby-Bell 2023 literature values.",
+              file=sys.stderr)
+
     # Digby-Bell et al. (2023) BMC Bioinformatics 24:430
     # https://doi.org/10.1186/s12859-023-05509-y
-    # Table 1: CIRIquant alignment wall time 139 min, peak RAM 38 GB
-    # (16-core node; single sample; 150 bp PE; hg38 — comparable to our hg19 run)
     nfcore_row = {
         "Pipeline":          "nf-core/circrna",
         "Tool_combination":  "CIRIquant + CIRCexplorer2 + find_circ (fixed ≥2/3 tools, exact)",
-        "Alignment_wall_min": 139,
-        "Consensus_wall_min": 5,
-        "Total_wall_min":    144,
-        "Peak_RAM_GB":       38.0,
-        "CPU_cores":         16,
-        "CPU_hours":         round(144 / 60 * 16, 1),
-        "Source":            "Digby-Bell et al. 2023 BMC Bioinformatics 24:430 Table 1",
-        "Note": (
-            "CIRIquant HISAT2+BWA alignment; 16-core AWS instance; "
-            "fixed coordinate-exact consensus, no BSJ/FSJ QC"
-        ),
+        "Alignment_wall_min": nfcore_align,
+        "Consensus_wall_min": nfcore_cons,
+        "Total_wall_min":    nfcore_total,
+        "Peak_RAM_GB":       nfcore_peak_ram,
+        "CPU_cores":         nfcore_cores,
+        "CPU_hours":         round(nfcore_total / 60 * nfcore_cores, 1),
+        "Source":            nfcore_source,
+        "Note":              nfcore_note,
     }
+
 
     # ── circRNA-sponging (literature) ─────────────────────────────────────────
     # Hansen et al. (2023) Bioinformatics Advances 3:vbad088

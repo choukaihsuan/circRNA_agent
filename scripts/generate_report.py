@@ -121,18 +121,22 @@ def _venn_3_svg(sig_sets: dict, lfc: float) -> str:
     }
     total_union = len(A | B | C) if len(sets) > 2 else len(A | B)
     # SVG layout (3-circle)
-    W, H = 460, 295
-    cx = [150, 310, 230]; cy = [128, 128, 218]; r = 90
+    # Closer centers → larger overlaps.
+    # A=(170,128) B=(290,128) C=(230,210), r=90
+    # A-B dist=120; A-C dist≈101; C bottom=300; label→H=345
+    W, H = 460, 345
+    cx = [170, 290, 230]; cy = [128, 128, 210]; r = 90
     colors = ["rgba(214,39,40,0.20)", "rgba(44,160,44,0.20)", "rgba(44,119,214,0.20)"]
     strokes = ["#d62728", "#2CA02C", "#2c6fad"]
     labels  = {"edgeR_ciriquant": "edgeR (FSJ offset)", "deseq2": "DESeq2", "limma": "limma-voom"}
-    # Label anchor positions (outside each circle)
-    lpos = [(cx[0]-r-2, cy[0]-r+5), (cx[1]+r+2, cy[1]-r+5), (cx[2], cy[2]+r+14)]
+    # Label positions: centered above/below each circle
+    lpos = [(170, 22), (290, 22), (230, 316)]
     # Region count positions
+    # AB-only: A∩B half-chord≈67 → intersects at y≈61; C top at y=120 → midpoint≈90
     rpos = {
-        "A":  (cx[0]-46, cy[0]),     "B":  (cx[1]+46, cy[1]),    "C":  (cx[2], cy[2]+46),
-        "AB": (230, cy[0]-20),        "AC": (165, cy[0]+62),      "BC": (295, cy[1]+62),
-        "ABC":(230, 178),
+        "A":  (118, 118),  "B":  (342, 118),  "C":  (230, 263),
+        "AB": (230, 88),   "AC": (170, 190),  "BC": (280, 182),
+        "ABC":(230, 163),
     }
     svg_parts = [f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
                  f'xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;max-width:480px">']
@@ -140,15 +144,14 @@ def _venn_3_svg(sig_sets: dict, lfc: float) -> str:
     for i in range(min(len(methods), 3)):
         svg_parts.append(f'<circle cx="{cx[i]}" cy="{cy[i]}" r="{r}" '
                          f'fill="{colors[i]}" stroke="{strokes[i]}" stroke-width="2.5"/>')
-    # Method labels
+    # Method labels — all text-anchor="middle" to avoid clipping on either edge
     for i, m in enumerate(methods[:3]):
         lx, ly = lpos[i]
-        anc = "end" if i == 0 else ("start" if i == 1 else "middle")
         svg_parts.append(f'<text x="{lx}" y="{ly}" font-size="11" font-weight="bold" '
-                         f'fill="{strokes[i]}" text-anchor="{anc}">'
+                         f'fill="{strokes[i]}" text-anchor="middle">'
                          f'{labels.get(m, m)}</text>')
         svg_parts.append(f'<text x="{lx}" y="{ly+14}" font-size="10" '
-                         f'fill="{strokes[i]}" text-anchor="{anc}">'
+                         f'fill="{strokes[i]}" text-anchor="middle">'
                          f'(n={len(sig_sets[m])})</text>')
     # Region counts
     for region, (rx, ry) in rpos.items():
@@ -157,12 +160,13 @@ def _venn_3_svg(sig_sets: dict, lfc: float) -> str:
         v = counts[region]
         if v == 0:
             continue
-        svg_parts.append(f'<text x="{rx}" y="{ry}" font-size="13" font-weight="bold" '
-                         f'text-anchor="middle" dominant-baseline="middle" fill="#333">{v}</text>')
+        svg_parts.append(f'<text x="{rx}" y="{ry}" font-size="15" font-weight="bold" '
+                         f'text-anchor="middle" dominant-baseline="middle" '
+                         f'stroke="white" stroke-width="4" paint-order="stroke" fill="#333">{v}</text>')
     svg_parts.append('</svg>')
-    note = (f'<p style="font-size:12px;color:#666;margin:4px 0 0">数字 = 各區域顯著 circRNA 數量'
+    note = (f'<p style="font-size:12px;color:#666;margin:4px 0 0">數字 = 各區域顯著 circRNA 數量'
             f'（閾值：|log₂FC| &gt; {lfc}）；三方法聯集共 {total_union} 個。</p>')
-    return f'<div style="text-align:center">{"".join(svg_parts)}</div>{note}'
+    return f'<div style="text-align:center">{"".join(svg_parts)}{note}</div>'
 
 
 def _build_method_js_data(
@@ -247,8 +251,36 @@ def _build_method_js_data(
                     }
         except Exception:
             pass
+    # DE table data (top 50 up + 50 down) for dynamic re-render on method switch
+    de_table = {"cols": [], "up": [], "dn": []}
+    sig_ids: list = []
+    if p_col in de.columns and "log2FC" in de.columns and "circ_id" in de.columns:
+        _mask = (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
+        sig_ids = [str(x) for x in de.loc[_mask, "circ_id"].tolist()]
+        _sig_de = de[_mask].sort_values(p_col)
+        _want = ["circ_id", "gene_name", "strand", "region", "exon_span",
+                 "circbase_id", "log2FC", p_col, "Type"]
+        _avail = [c for c in _want if c in de.columns]
+        de_table["cols"] = [("p-value" if c == p_col else c) for c in _avail]
+        def _fmt_row(r):
+            row = []
+            for c in _avail:
+                v = r[c]
+                if isinstance(v, float) and math.isnan(v):
+                    row.append(None)
+                elif c == "log2FC":
+                    row.append(round(float(v), 3))
+                elif c == p_col:
+                    row.append(float(v))
+                else:
+                    row.append(str(v))
+            return row
+        de_table["up"] = [_fmt_row(r) for _, r in _sig_de[_sig_de["log2FC"] > 0].head(50).iterrows()]
+        de_table["dn"] = [_fmt_row(r) for _, r in _sig_de[_sig_de["log2FC"] < 0].head(50).iterrows()]
+
     return {"stats": {"n_sig": n_sig, "n_up": n_up, "n_dn": n_dn},
-            "volcano": vol_rows, "heatmap": hm_data}
+            "volcano": vol_rows, "heatmap": hm_data,
+            "de_table": de_table, "sig_ids": sig_ids}
 
 
 def _load_interactions(json_file: Optional[str]) -> dict:
@@ -391,12 +423,54 @@ _STYLE = """
 
   @media print {
     .print-bar, .dl-btn, .no-print { display:none !important; }
-    body { max-width:100%; margin:0; padding:0 12px; }
+    body { max-width:100%; margin:0; padding:0 12px; font-size:11px; }
+
+    /* Keep heading + immediately following content together */
+    h1, h2, h3 {
+      break-after: avoid;
+      page-break-after: avoid;
+      color:#2c6fad !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    /* Avoid breaking inside tables, stat boxes, type-bar, biomarker blocks */
+    .table { break-inside: avoid; page-break-inside: avoid; font-size:10px; }
     .table th { background:#2c6fad !important; -webkit-print-color-adjust:exact;
                 print-color-adjust:exact; }
-    .table { page-break-inside:avoid; font-size:11px; }
-    h1, h2 { color:#2c6fad !important; -webkit-print-color-adjust:exact;
-             print-color-adjust:exact; }
+    .stat-box { break-inside: avoid; page-break-inside: avoid; }
+    .type-bar { break-inside: avoid; page-break-inside: avoid; }
+
+    /* Section wrappers: keep heading + first element together */
+    #de-tables-section, #biomarker-section, #isoform-section {
+      break-inside: auto;
+    }
+    #de-tables-section h2, #biomarker-section h2, #isoform-section h2 {
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+
+    /* Plotly charts: scale to fit page width and avoid splitting */
+    .plotly-graph-div, [id$="-plot"], [id="main-heatmap-plot"],
+    [id="main-volcano-plot"] {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      max-width: 100% !important;
+      width: 100% !important;
+    }
+    /* Volcano and Heatmap: try to keep on one page */
+    h2 + p + .plotly-graph-div,
+    h2 + .plotly-graph-div { break-before: avoid; page-break-before: avoid; }
+
+    /* Venn diagram: keep together */
+    #biomarker-section + * div[style*="text-align:center"] {
+      break-inside: avoid;
+    }
+
+    /* Force page break before major sections for clean layout */
+    #de-tables-section { break-before: page; page-break-before: always; }
+
+    /* Two-column distribution plots: stack vertically for print */
+    div[style*="display:flex"] { display: block !important; }
   }
 </style>
 """
@@ -617,6 +691,159 @@ def _isoform_section(switching_file: Optional[str],
 """
 
 
+def _biomarker_score_dist(bm: pd.DataFrame) -> str:
+    """Ranked scatter plot of biomarker scores for all DE circRNAs."""
+    if not _PLOTLY or "biomarker_score" not in bm.columns or "circ_id" not in bm.columns:
+        return ""
+    import plotly.graph_objects as go
+
+    bm2 = bm.reset_index(drop=True).copy()
+    bm2["_rank"] = range(1, len(bm2) + 1)
+    top_n = 30
+
+    def _hover(r):
+        parts = [f"<b>#{int(r['_rank'])}</b>  {r['circ_id']}",
+                 f"Score: {r['biomarker_score']:.4f}"]
+        if "log2FC" in r and pd.notna(r["log2FC"]):
+            parts.append(f"log₂FC: {r['log2FC']:.3f}")
+        if "Type" in r and pd.notna(r["Type"]):
+            parts.append(f"Type: {r['Type']}")
+        if "in_circbase" in r and r["in_circbase"]:
+            cb = r.get("circbase_id", "")
+            parts.append(f"circBase: {cb}")
+        return "<br>".join(parts)
+
+    bm2["_hover"] = bm2.apply(_hover, axis=1)
+    top = bm2.iloc[:top_n]
+    rest = bm2.iloc[top_n:]
+
+    fig = go.Figure()
+    if not rest.empty:
+        fig.add_trace(go.Scatter(
+            x=rest["_rank"], y=rest["biomarker_score"],
+            mode="markers", name=f"Rank {top_n+1}–{len(bm2)}",
+            marker=dict(color="rgba(120,120,120,0.45)", size=5),
+            hovertext=rest["_hover"], hoverinfo="text",
+        ))
+    fig.add_trace(go.Scatter(
+        x=top["_rank"], y=top["biomarker_score"],
+        mode="markers", name=f"Top {top_n} (table)",
+        marker=dict(color="#d62728", size=7, line=dict(color="white", width=0.8)),
+        hovertext=top["_hover"], hoverinfo="text",
+    ))
+    # Elbow line
+    fig.add_shape(type="line", x0=top_n + 0.5, x1=top_n + 0.5,
+                  y0=0, y1=1, yref="paper",
+                  line=dict(dash="dot", color="#d62728", width=1.2))
+    fig.add_annotation(x=top_n + 1.5, y=0.98, yref="paper",
+                       text=f"Top {top_n}", showarrow=False,
+                       font=dict(size=10, color="#d62728"), xanchor="left")
+
+    score_min = float(bm2["biomarker_score"].min())
+    score_max = float(bm2["biomarker_score"].max())
+    fig.update_layout(
+        xaxis=dict(title="Rank", tickmode="auto"),
+        yaxis=dict(title="Biomarker Score",
+                   range=[max(0, score_min - 0.05), min(1, score_max + 0.05)]),
+        height=320,
+        margin=dict(t=20, b=60, l=70, r=40),
+        legend=dict(x=0.75, y=0.95, bgcolor="rgba(255,255,255,0.8)"),
+        plot_bgcolor="white", paper_bgcolor="white",
+        hovermode="closest",
+    )
+    return fig.to_html(include_plotlyjs=False, full_html=False)
+
+
+def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
+    """Histogram + fitted normal curve + Shapiro-Wilk test for biomarker score distribution."""
+    if not _PLOTLY or "biomarker_score" not in bm.columns:
+        return ""
+    import plotly.graph_objects as go
+    import numpy as np
+
+    scores = bm["biomarker_score"].dropna().values
+    n = len(scores)
+    mu, sd = float(scores.mean()), float(scores.std())
+
+    # Shapiro-Wilk (n ≤ 5000); fallback to KS for larger sets
+    sw_text = ""
+    conclusion = ""
+    try:
+        from scipy import stats as _stats
+        if n <= 5000:
+            W, p_sw = _stats.shapiro(scores)
+            sw_text = f"Shapiro-Wilk: W = {W:.4f}, p = {p_sw:.4e}"
+        else:
+            D, p_sw = _stats.kstest(scores, "norm", args=(mu, sd))
+            sw_text = f"KS test: D = {D:.4f}, p = {p_sw:.4e}"
+        conclusion = ("✗ 非常態分佈" if p_sw < 0.05 else "✓ 常態分佈") + "（α = 0.05）"
+    except ImportError:
+        sw_text = "scipy 未安裝，無法執行常態檢定"
+
+    # Histogram
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=scores, nbinsx=30, name="觀測分布",
+        marker_color="rgba(44,119,214,0.55)",
+        marker_line=dict(color="rgba(44,119,214,0.9)", width=0.8),
+        histnorm="probability density",
+    ))
+
+    # Fitted normal curve
+    x_norm = np.linspace(scores.min() - 0.05, scores.max() + 0.05, 300)
+    try:
+        from scipy.stats import norm as _norm
+        y_norm = _norm.pdf(x_norm, mu, sd)
+    except ImportError:
+        y_norm = (1 / (sd * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - mu) / sd) ** 2)
+
+    fig.add_trace(go.Scatter(
+        x=x_norm.tolist(), y=y_norm.tolist(),
+        mode="lines", name=f"Normal(μ={mu:.3f}, σ={sd:.3f})",
+        line=dict(color="#d62728", width=2),
+    ))
+
+    # Mean ± 1SD / ± 2SD reference lines
+    ref_lines = [
+        (mu,        "μ",    "solid", "#555", 1.2),
+        (mu - sd,   "μ−σ",  "dot",   "#888", 1.0),
+        (mu + sd,   "μ+σ",  "dot",   "#888", 1.0),
+        (mu - 2*sd, "μ−2σ", "dash",  "#bbb", 0.8),
+        (mu + 2*sd, "μ+2σ", "dash",  "#bbb", 0.8),
+    ]
+    for xv, lbl, dash, col, lw in ref_lines:
+        fig.add_shape(type="line", x0=xv, x1=xv, y0=0, y1=1, yref="paper",
+                      line=dict(color=col, width=lw, dash=dash))
+        fig.add_annotation(x=xv, y=1.02, yref="paper", text=lbl, showarrow=False,
+                           font=dict(size=9, color=col), xanchor="center")
+
+    sw_color = "#d62728" if "非常態" in conclusion else "#2CA02C"
+    fig.update_layout(
+        xaxis=dict(title="Biomarker Score"),
+        yaxis=dict(title="Probability Density"),
+        height=320,
+        margin=dict(t=40, b=90, l=70, r=40),
+        legend=dict(x=0.65, y=0.95, bgcolor="rgba(255,255,255,0.85)"),
+        plot_bgcolor="white", paper_bgcolor="white",
+        annotations=[dict(
+            x=0.5, y=-0.28, xref="paper", yref="paper",
+            text=f"{sw_text}    <b style='color:{sw_color}'>{conclusion}</b>",
+            showarrow=False, align="center", xanchor="center", yanchor="top",
+            bgcolor="rgba(255,255,255,0.88)", bordercolor="#ccc", borderwidth=1,
+            font=dict(size=10),
+        )],
+    )
+    chart_html = fig.to_html(include_plotlyjs=False, full_html=False)
+    caption = (
+        "<p style='font-size:11px;color:#888;margin:2px 0 0;line-height:1.6'>"
+        "垂直線：<b>實線</b> = μ（{mu:.3f}）；"
+        "<b>點線</b> = μ ± σ（{lo1:.3f} – {hi1:.3f}，涵蓋約 68% 資料）；"
+        "<b>虛線</b> = μ ± 2σ（{lo2:.3f} – {hi2:.3f}，涵蓋約 95% 資料）"
+        "</p>"
+    ).format(mu=mu, lo1=mu - sd, hi1=mu + sd, lo2=mu - 2*sd, hi2=mu + 2*sd)
+    return chart_html + caption
+
+
 def _biomarker_section(biomarker_file: Optional[str],
                        interactions: Optional[dict] = None) -> str:
     if not biomarker_file or not Path(biomarker_file).exists():
@@ -637,6 +864,9 @@ def _biomarker_section(biomarker_file: Optional[str],
     else:
         score_desc = "Score = mean of: −log₁₀(p-value), |log₂FC|, confidence score, circBase known bonus (each normalised 0–1; 4D)."
 
+    dist_html = _biomarker_score_dist(bm)
+    norm_html = _biomarker_normality_plot(bm)
+
     disp = _fmt_floats(bm[show_cols].head(30).copy())
     if "circ_id" in disp.columns and interactions is not None:
         def _link(v: str) -> str:
@@ -650,9 +880,25 @@ def _biomarker_section(biomarker_file: Optional[str],
         "tbl_biomarker", "biomarker_candidates.csv"
     )
 
+    n_total = len(bm)
+    dist_section = ""
+    if dist_html or norm_html:
+        dist_section = f"<h3 style='font-size:14px;color:#444;margin:16px 0 4px'>Score Distribution — all {n_total} significant DE circRNAs</h3>"
+        if dist_html and norm_html:
+            dist_section += (
+                "<div style='display:flex;gap:16px;flex-wrap:wrap'>"
+                f"<div style='flex:1;min-width:320px'><p style='font-size:12px;color:#666;margin:0 0 4px'>Ranked Score</p>{dist_html}</div>"
+                f"<div style='flex:1;min-width:320px'><p style='font-size:12px;color:#666;margin:0 0 4px'>Histogram + Normal Fit</p>{norm_html}</div>"
+                "</div>"
+            )
+        else:
+            dist_section += dist_html or norm_html
+
     return f"""
-  <h2>Biomarker Candidates (top {min(len(bm), 30)} by composite score)</h2>
+  <h2>Biomarker Candidates (top {min(n_total, 30)} by composite score)</h2>
   <p style="font-size:13px;color:#555;margin-bottom:8px;">{score_desc}</p>
+  {dist_section}
+  <h3 style="font-size:14px;color:#444;margin:20px 0 4px">Top {min(n_total, 30)} Biomarker Candidates</h3>
   <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_id</strong> to view exon diagram, miRNA and RBP binding sites.</p>
   {table_html}
 """
@@ -838,12 +1084,11 @@ def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
         hovertemplate="<b>%{y}</b><br>%{x}<br>z-score: %{z:.2f}<extra></extra>",
     ))
     fig.update_layout(
-        title=dict(text=f"Top {n_up} up + {n_dn} down DE circRNAs — Heatmap (normal-centered z-score)",
-                   font_size=14),
+        title=dict(text=""),
         yaxis=dict(tickfont=dict(size=8), autorange="reversed"),
-        height=max(420, len(avail) * 22 + 120),
+        height=max(420, len(avail) * 22 + 130),
         plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(t=60, l=300),
+        margin=dict(t=70, l=300),
     )
     return fig.to_html(include_plotlyjs=False, full_html=False, div_id="main-heatmap-plot")
 
@@ -1251,7 +1496,7 @@ function _dlTabCSV(containerId, fname) {{
     cells.forEach(function(c) {{ cols.push('"' + c.innerText.replace(/"/g,'""') + '"'); }});
     lines.push(cols.join(','));
   }});
-  const blob = new Blob([lines.join('\n')], {{type:'text/csv;charset=utf-8;'}});
+  const blob = new Blob([lines.join('\\n')], {{type:'text/csv;charset=utf-8;'}});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = fname;
@@ -1523,13 +1768,17 @@ function _buildMiniHeatmap(circId) {{
     el.innerHTML='<p class="no-data">Heatmap data not available.</p>';return;
   }}
   const _inTop=_hmd.rows[circId]!=null;
-  const allIds=Object.keys(_hmd.rows);
+  // Limit mini-heatmap to top 10 up + 10 down; always include current circId
+  const _upIds=(_hmd.up_order||[]).slice(0,10);
+  const _dnIds=(_hmd.dn_order||[]).slice(0,10);
+  let allIds=[..._upIds,..._dnIds].filter(id=>_hmd.rows[id]);
+  if(_hmd.rows[circId]&&!allIds.includes(circId))allIds.push(circId);
   const tIdx=allIds.indexOf(circId);
   const samps=_hmd.samples||[];
   const zMatrix=allIds.map(id=>_hmd.rows[id].z);
   const yLabels=allIds.map(id=>_hmd.rows[id].label||id);
   const conds=_hmd.conditions||{{}};
-  const TUMOR_COL='#d62728', NORMAL_COL='#2c6fad';
+  const TUMOR_COL='#d62728', NORMAL_COL='#2CA02C';
   // merge consecutive samples of same condition into one labelled bar
   const grps=[];let cur=null;
   samps.forEach((s,i)=>{{
@@ -1672,8 +1921,13 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
   }};
 
   const _absPos=v=>{{
-    if(!chrom||!v||v==='—') return v;
-    const pm=String(v).match(/(\\d+)[–-](\\d+)/);
+    if(!v||v==='—') return v;
+    const sv=String(v);
+    // ENCORI: already absolute "chrN:start-end" → pass through as-is
+    if(/^chr[^\s:]+:\d/.test(sv)) return sv.replace(/[–-]/,'-');
+    // CircInteractome: relative "start–end" → add chromStart
+    if(!chrom) return v;
+    const pm=sv.match(/(\\d+)[–-](\\d+)/);
     if(!pm) return v;
     const a=chromStart+parseInt(pm[1])-1;
     const b=chromStart+parseInt(pm[2])-1;
@@ -1684,7 +1938,39 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
     +(tableType==='mirna'
       ?'8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1\\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1'
       :'bindingSites log2×2 (max+3), internal=+2\\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1');
-  let html='<table class="itable"><thead><tr>';
+
+  // miRNA seed type info banner
+  const seedNote = tableType==='mirna' ? `
+  <div style="background:#f0f6ff;border:1px solid #c5d9f0;border-radius:6px;padding:8px 12px;
+              margin-bottom:10px;font-size:12px;line-height:1.6;color:#444">
+    <span style="font-weight:bold;color:#2c6fad">ℹ miRNA Seed Type 說明</span>
+    &nbsp;&mdash;&nbsp;miRNA 與靶點結合的強度由 seed 區（miRNA 2–8 nt）的配對完整度決定：
+    <table style="margin-top:5px;border-collapse:collapse;font-size:11.5px">
+      <tr>
+        <td style="padding:1px 8px 1px 0;font-weight:bold;color:#1a6e3c;white-space:nowrap">8mer</td>
+        <td>seed（位置 2–8）+ 位置 8 配對 + 位置 1 為 A &nbsp;→&nbsp;
+          <span style="color:#1a6e3c;font-weight:bold">最強</span>，TargetScan 最高可信度</td>
+      </tr>
+      <tr>
+        <td style="padding:1px 8px 1px 0;font-weight:bold;color:#3a7ebf;white-space:nowrap">7mer-m8</td>
+        <td>seed（位置 2–8）+ 位置 8 配對，無位置 1 限制 &nbsp;→&nbsp;
+          <span style="color:#3a7ebf;font-weight:bold">強</span></td>
+      </tr>
+      <tr>
+        <td style="padding:1px 8px 1px 0;font-weight:bold;color:#e07b39;white-space:nowrap">7mer-1A</td>
+        <td>seed（位置 2–7）+ 位置 1 為 A，無位置 8 限制 &nbsp;→&nbsp;
+          <span style="color:#e07b39;font-weight:bold">中等</span></td>
+      </tr>
+      <tr>
+        <td style="padding:1px 8px 1px 0;font-weight:bold;color:#888;white-space:nowrap">6mer</td>
+        <td>僅 seed（位置 2–7）配對，最短 seed &nbsp;→&nbsp;
+          <span style="color:#888;font-weight:bold">弱</span>，誤報率較高</td>
+      </tr>
+    </table>
+    <span style="font-size:11px;color:#888">Priority score：seed 強度（8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1）+ CLIP 實驗支持（+3）+ ENCORI 收錄（+2）+ 位於 circRNA 內（+1）</span>
+  </div>` : '';
+
+  let html= seedNote + '<table class="itable"><thead><tr>';
   headers.forEach((h,i)=>{{
     const tip=i===0?` title="${{priTitle}}"`:' title="Click to sort"';
     html+=`<th style="cursor:pointer;user-select:none" onclick="_sortITable(this)"${{tip}}>${{h}}${{i===0?' ▼':''}}</th>`;
@@ -1705,15 +1991,24 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
       if(k==='circ_pos') v=_absPos(v);
       if(k==='_seq_logo') {{
         const rawPos=String(r.circ_pos||'');
-        const pm=rawPos.match(/(\\d+)[–-](\\d+)/);
-        if(pm&&chrom) {{
-          const s0=chromStart+parseInt(pm[1])-1;
-          const e0=chromStart+parseInt(pm[2]);
-          const len=e0-s0;
+        // ENCORI: absolute coord "chrN:start-end"
+        const absM=rawPos.match(/^(chr[^\s:]+):(\d+)[–-](\d+)/);
+        // CircInteractome: relative "start–end"
+        const relM=!absM&&rawPos.match(/(\\d+)[–-](\\d+)/);
+        let seqChrom='', seqS=0, seqE=0;
+        if(absM) {{
+          seqChrom=absM[1]; seqS=parseInt(absM[2]); seqE=parseInt(absM[3]);
+        }} else if(relM&&chrom) {{
+          seqChrom=chrom;
+          seqS=chromStart+parseInt(relM[1])-1;
+          seqE=chromStart+parseInt(relM[2]);
+        }}
+        if(seqChrom) {{
+          const len=seqE-seqS;
           if(len>80)
             v=`<span style="color:#aaa;font-size:10px">${{len}}bp</span>`;
           else
-            v=`<span class="_seqCell" data-chrom="${{chrom}}" data-s="${{s0}}" data-e="${{e0}}"
+            v=`<span class="_seqCell" data-chrom="${{seqChrom}}" data-s="${{seqS}}" data-e="${{seqE}}"
                  style="color:#aaa;font-size:10px;font-family:monospace">⟳</span>`;
         }} else {{ v='—'; }}
       }}
@@ -1827,7 +2122,7 @@ function updateMainHeatmap() {{
   const yLabels=validIds.map(id=>rows[id].label||id);
   const nUp=upIds.filter(id=>rows[id]).length;
   const nDn=dnIds.filter(id=>rows[id]).length;
-  const TUMOR_COL='#d62728',NORMAL_COL='#2c6fad';
+  const TUMOR_COL='#d62728',NORMAL_COL='#2CA02C';
   const grps=[];let cur=null;
   samps.forEach((s,i)=>{{
     const c=conds[s]||'';
@@ -1835,21 +2130,21 @@ function updateMainHeatmap() {{
     if(!cur||cur.c!==c){{cur={{c,col,s:i,e:i}};grps.push(cur);}}else cur.e=i;
   }});
   const groupShapes=grps.map(g=>{{return{{type:'rect',xref:'x',yref:'paper',
-    x0:g.s-0.45,x1:g.e+0.45,y0:1.02,y1:1.055,fillcolor:g.col,line:{{width:0}}}}}});
-  const groupAnno=grps.map(g=>{{return{{xref:'x',yref:'paper',x:(g.s+g.e)/2,y:1.0375,
+    x0:g.s-0.45,x1:g.e+0.45,y0:1.04,y1:1.09,fillcolor:g.col,line:{{width:0}}}}}});
+  const groupAnno=grps.map(g=>{{return{{xref:'x',yref:'paper',x:(g.s+g.e)/2,y:1.065,
     yanchor:'middle',xanchor:'center',text:g.c,showarrow:false,
-    font:{{size:9,color:'white',family:'sans-serif'}}}}}});
+    font:{{size:13,color:'white',family:'sans-serif'}}}}}});
   Plotly.react('main-heatmap-plot',[{{
     type:'heatmap',z:zMatrix,x:samps,y:yLabels,
     colorscale:[[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']],
     zmid:0,colorbar:{{title:'z-score<br>(normal-<br>centered)'}},
     hovertemplate:'<b>%{{y}}</b><br>%{{x}}<br>z-score: %{{z:.2f}}<extra></extra>',
   }}],{{
-    title:{{text:`Top ${{nUp}} up + ${{nDn}} down DE circRNAs — Heatmap (normal-centered z-score)`,font:{{size:14}}}},
+    title:{{text:''}},
     yaxis:{{tickfont:{{size:8}},autorange:'reversed'}},
-    height:Math.max(420,validIds.length*22+120),
+    height:Math.max(420,validIds.length*22+130),
     plot_bgcolor:'white',paper_bgcolor:'white',
-    margin:{{t:60,l:300}},
+    margin:{{t:70,l:300}},
     shapes:groupShapes,
     annotations:groupAnno,
   }});
@@ -1911,10 +2206,88 @@ function switchDEMethod(method) {{
     }});
   }}
   // Update heatmap data cache and re-render
+  // Conditions (sample→group mapping) are identical across all DE methods;
+  // fall back to FULL_HEATMAP_DATA.conditions if the alternate method's is empty.
   if(md.heatmap){{
-    _HEATMAP_DATA_CACHE=md.heatmap;
+    const _hm=Object.assign({{}},md.heatmap);
+    if((!_hm.conditions||!Object.keys(_hm.conditions).length)&&FULL_HEATMAP_DATA){{
+      _hm.conditions=FULL_HEATMAP_DATA.conditions;
+    }}
+    _HEATMAP_DATA_CACHE=_hm;
     updateMainHeatmap();
   }}
+  // Re-render Top DE tables
+  _renderDETables(method, md);
+  // Gray out biomarker rows not significant under this method
+  _updateBiomarkerHighlight(md.sig_ids||[]);
+}}
+
+function _renderDETables(method, md) {{
+  const sec=document.getElementById('de-tables-section');
+  if(!sec)return;
+  const dt=md.de_table||{{}};
+  const cols=dt.cols||[];
+  const mLabels={{'edgeR_ciriquant':'edgeR (FSJ offset)','deseq2':'DESeq2','limma':'limma-voom'}};
+  const mName=mLabels[method]||method;
+  const s=md.stats||{{}};
+  const heading=document.getElementById('de-tables-heading');
+  if(heading)heading.innerHTML=`Top Differentially Expressed circRNAs <span class="method-tag">${{mName}}</span>`;
+
+  function _mkTable(rows,direction) {{
+    if(!rows||!rows.length)return '<p style="color:#aaa;font-size:13px">No significant circRNAs.</p>';
+    const color=direction==='up'?'#d62728':'#2CA02C';
+    const arrow=direction==='up'?'&#8593;':'&#8595;';
+    const label=direction==='up'?`Up-regulated — ${{rows.length}} circRNAs`:`Down-regulated — ${{rows.length}} circRNAs`;
+    let html=`<h3 style="color:${{color}}">${{arrow}} ${{label}}</h3><div style="overflow-x:auto"><table class="table" border="0"><thead><tr>`;
+    cols.forEach(c=>{{ html+=`<th>${{c}}</th>`; }});
+    html+='</tr></thead><tbody>';
+    rows.forEach(row=>{{
+      html+='<tr>';
+      row.forEach((v,i)=>{{
+        const col=cols[i]||'';
+        if(col==='circ_id'&&v){{
+          html+=`<td><a class="circ-link" onclick="showCircDetail('${{v}}')">${{v}}</a></td>`;
+        }} else if(col==='log2FC'&&v!=null){{
+          html+=`<td>${{(+v).toFixed(3)}}</td>`;
+        }} else if(col==='p-value'&&v!=null){{
+          html+=`<td>${{(+v).toExponential(3)}}</td>`;
+        }} else {{
+          html+=`<td>${{v==null?'—':v}}</td>`;
+        }}
+      }});
+      html+='</tr>';
+    }});
+    html+='</tbody></table></div>';
+    return html;
+  }}
+  const upHtml=_mkTable(dt.up,'up');
+  const dnHtml=_mkTable(dt.dn,'dn');
+  // Replace only the table content, keep the heading div
+  const tableWrap=sec.querySelector('#de-dynamic-tables');
+  if(tableWrap){{ tableWrap.innerHTML=upHtml+dnHtml; }}
+  else {{
+    const wrap=document.createElement('div');
+    wrap.id='de-dynamic-tables';
+    wrap.innerHTML=upHtml+dnHtml;
+    // Remove static tables, headings, and CSV download bar divs
+    const staticTbls=sec.querySelectorAll('table,h3,.tbl-dl-bar');
+    staticTbls.forEach(el=>el.remove());
+    sec.appendChild(wrap);
+  }}
+}}
+
+function _updateBiomarkerHighlight(sigIds) {{
+  const sigSet=new Set(sigIds);
+  const bmSec=document.getElementById('biomarker-section');
+  if(!bmSec)return;
+  const rows=bmSec.querySelectorAll('table tbody tr');
+  rows.forEach(row=>{{
+    const link=row.querySelector('a.circ-link');
+    const m=link&&link.getAttribute('onclick')&&link.getAttribute('onclick').match(/'([^']+)'/);
+    const cid=m?m[1]:null;
+    row.style.opacity=(cid&&!sigSet.has(cid))?'0.25':'1';
+    row.title=(cid&&!sigSet.has(cid))?'在所選方法下不顯著':'';
+  }});
 }}
 
 document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}});
@@ -1988,15 +2361,22 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
 
   {type_html}
 
+  <div id="biomarker-section">
   {biomarker_html}
+  </div>
 
+  <div id="isoform-section">
   {isoform_html}
+  <p style="font-size:11px;color:#999;margin:-4px 0 8px">&#8505; Isoform switching 依據 IUI 計算，不受 DE 方法切換影響。</p>
+  </div>
 
   {"<h2>三方法 DE 結果 Venn Diagram</h2><p style='font-size:13px;color:#555'>比較三種方法（edgeR FSJ offset、DESeq2、limma-voom）在相同閾值下的顯著 DE circRNA 交集。</p>" + venn_html if venn_html else ""}
 
-  <h2>Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
+  <div id="de-tables-section">
+  <h2 id="de-tables-heading">Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
   <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_position</strong> to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>
   {_de_split_tables(top_table, tumor_label=tumor_label, normal_label=normal_label, interactions=interactions)}
+  </div>
 
   <h2>Volcano Plot</h2>
   <p style="font-size:12px;color:#888">&#9711; Heatmap top {heatmap_top_n} up + {heatmap_top_n} down markers: use the toggle button in the chart to show/hide.</p>

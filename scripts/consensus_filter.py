@@ -149,8 +149,11 @@ def parse_circexplorer2(path: str, min_bsj: int) -> CoordMap:
 def parse_find_circ(path: str, min_bsj: int) -> CoordMap:
     """Parse find_circ splice_sites.bed output.
 
-    Format (BED 0-based): chrom start end name n_reads strand [n_uniq ...]
+    Format (BED 0-based): chrom start end name n_reads strand n_uniq uniq_bridges
+      best_qual_left best_qual_right tissues tiss_counts edits anchor_overlap
+      breakpoints signal strandmatch category
     Column 4 (n_reads) = BSJ read count.
+    Column 17 (category) must contain 'CIRCULAR' — filters out LINEAR/AMBIGUOUS junctions.
     Start is converted to 1-based to match CIRIquant GTF coordinates.
     """
     coords: CoordMap = {}
@@ -160,6 +163,9 @@ def parse_find_circ(path: str, min_bsj: int) -> CoordMap:
                 continue
             parts = line.strip().split("\t")
             if len(parts) < 5:
+                continue
+            # Filter to CIRCULAR category only (col 17); skip if column absent
+            if len(parts) >= 18 and "CIRCULAR" not in parts[17]:
                 continue
             try:
                 chrom = parts[0]
