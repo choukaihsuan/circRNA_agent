@@ -126,16 +126,17 @@ def main() -> None:
 
     if has_real_data:
         ciriquant_wall = step_times.get("ciriquant", 0)
-        # STAR+DCC runs in parallel with CIRIquant (Snakemake DAG); total = max of parallel branches
-        star_dcc_wall  = step_times.get("star", 0) + step_times.get("dcc", 0)
+        star_wall      = step_times.get("star", 0)
+        dcc_wall       = step_times.get("dcc", 0)
         cons_wall      = step_times.get("consensus", 0)
-        align_wall     = max(ciriquant_wall, star_dcc_wall)  # parallel execution
-        total_wall     = align_wall + cons_wall
+        # Sum of individual tool wall times (sequential benchmark, no parallelism assumed)
+        align_wall  = ciriquant_wall + star_wall + dcc_wall
+        total_wall  = align_wall + cons_wall
         star_dcc_reconstructed = (args.our_star_wall_min is not None or
                                   args.our_dcc_wall_min is not None)
         if star_dcc_reconstructed:
             source_str = ("This study (CIRIquant measured with /usr/bin/time -v; "
-                          "STAR+DCC wall time reconstructed from STAR Log.final.out timestamps)")
+                          "STAR×3+DCC wall time reconstructed from STAR Log.final.out timestamps)")
         else:
             source_str = "This study (measured with /usr/bin/time -v)"
     else:
@@ -276,7 +277,8 @@ def main() -> None:
     _c4_find_circ  = (nfcore_times.get("fc_map", 224.5) +
                       nfcore_times.get("fc_detect", 161.1))
     _c4_ce2        = nfcore_times.get("circexplorer2", 0.1)
-    _c4_total      = max(_c4_ciriquant, _c4_star_dcc, _c4_find_circ, _c4_ce2)
+    # Sum of all individual tool wall times (sequential benchmark)
+    _c4_total      = _c4_ciriquant + _c4_star_dcc + _c4_find_circ + _c4_ce2
     _c4_ram        = round(peak_ram if peak_ram else 49.1, 1)  # CIRIquant dominates RAM
     _c4_cores      = args.our_cores
 
@@ -294,8 +296,8 @@ def main() -> None:
             "STAR+DCC wall time reconstructed from STAR Log.final.out timestamps)"
         ),
         "Note": (
-            f"Parallel execution: CIRIquant={_c4_ciriquant}min (bottleneck), "
-            f"STAR+DCC={_c4_star_dcc}min, find_circ={round(_c4_find_circ,1)}min, "
+            f"Sum of individual tool wall times: CIRIquant={_c4_ciriquant}min, "
+            f"STAR×3+DCC={_c4_star_dcc}min, find_circ={round(_c4_find_circ,1)}min, "
             f"CIRCexplorer2={_c4_ce2}min; slop=10 bp, no BSJ/FSJ pseudo-circ QC"
         ),
     }
