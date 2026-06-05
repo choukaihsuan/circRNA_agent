@@ -621,8 +621,17 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 **已知實測時間**（SRR444655，8 cores，HPC NFS）：
 - CIRCexplorer2：0:05.99（6 秒，0.13 GB RAM）
 - find_circ_map：3:44:29（3.54 GB RAM）
-- find_circ detect：約 3 小時（進行中）
-- CIRIquant：約 90 分鐘（待測）
+- find_circ detect：2:41:05（5.14 GB RAM）
+- CIRIquant：**11:41:07（47.2 GB RAM）** ← NFS I/O 瓶頸（HISAT2 5h8m + BWA-MEM 3h5m + CIRI2 56m + de novo quant 1h22m）
+
+**CIRIquant 步驟分解**（NFS 環境，SAM/BAM 寫入放大效應）：
+- HISAT2 genome alignment：00:01 → 05:09（5h 8min；unmapped.sam 124 GB 寫入 NFS）
+- Gene abundance：05:09 → 05:22（13 min）
+- BWA-MEM：05:22 → 08:27（3h 5min）
+- CIRI2.pl detection：08:27 → 09:23（56 min）
+- Build circular index：09:23 → 09:31（8 min）
+- De novo HISAT2 alignment：09:31 → 10:15（44 min）
+- BSJ/FSJ detection & quantification：10:15 → 11:42（87 min）
 
 ### 輸出報告
 
@@ -895,15 +904,15 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | rank_biomarkers | ✅ 完成（482 candidates；**6D score**：sig+FC+conf+circbase+miRNA+RBP） |
 | report | ✅ 完成 v2（動態 DE 表格切換；Biomarker 分布圖 + 常態檢定；Venn diagram 修正；列印排版）|
 | benchmark accuracy | ✅ 完成（4-method + Our_no_QC ablation；report.html 更新）|
-| benchmark compute cost | 🔄 nf-core 實測計時中（find_circ detect + CIRIquant，預計再 3-4h；完成後自動更新 report）|
+| benchmark compute cost | ✅ 完成（CIRIquant 實測 11:41:07 on HPC NFS；compute_cost.tsv + comparison_report.html 已更新）|
 
 **主要數值結果**：
 - 偵測：9,349 consensus circRNAs → filterByExpr 後 4,630 tested
 - DE（edgeR_ciriquant）：482 significant（nominal p < 0.05，|log2FC| > 1）；min Storey q = 0.384（underpowered）
 - DE（DESeq2 baseline）：409 significant；DE（limma-voom）：736 significant
 - Isoform switching：66 events（within-gene FDR < 0.1，|ΔIUI| > 0.1）
-- Biomarker score：6D（sig, FC, confidence, circBase, #miRNA, #RBP），50 circRNAs 有 interaction data
-- Top 1 biomarker：chr8:116631359|116635985（score=0.7126，51 miRNA，8 RBP binders）
+- Biomarker score：6D（sig, FC, confidence, circBase, #miRNA, #RBP），87 circRNAs 有 interaction data（interactions.json May 29 更新）
+- Top 1 biomarker：chr10:5836848|5842668（hsa_circ_0002665，GDI2；score=0.8202，83 miRNA，118 RBP binders，log2FC=7.48，Type_I）；interactions.json 於 May 29 重跑後更新，118 RBP binders 為資料集最大值（rbp_n=1.0）
 - Benchmark（含 CirComPara2_4tools + Our_no_QC 消融）：
 
 | Method | Precision | Recall | F1 | Specificity | AUC-PR |
