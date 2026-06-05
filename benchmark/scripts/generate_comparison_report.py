@@ -639,7 +639,7 @@ def build_report(
     <div class="lbl">Our sig. DE circRNAs</div>
   </div>
   <div class="stat-box">
-    <div class="num">5</div>
+    <div class="num">3</div>
     <div class="lbl">Pipelines compared</div>
   </div>
 </div>
@@ -649,7 +649,7 @@ def build_report(
 <div class="card">
 <h2>1. Feature Comparison</h2>
 <p style="color:#666; font-size:13px">
-  功能面比較：五種 pipeline 的設計目標與技術能力差異。
+  功能面比較：三種 pipeline 的設計目標與技術能力差異。
 </p>
 {_feature_table()}
 </div>
