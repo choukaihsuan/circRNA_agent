@@ -591,8 +591,8 @@ def build_report(
     _SINGLE_TOOL_PIPE = {"circRNA-sponging", "CLEAR"}
     comp = comp[~comp["Pipeline"].isin(_SINGLE_TOOL_PIPE)].reset_index(drop=True)
     comp_display = comp[["Pipeline", "Tool_combination", "Alignment_wall_min",
-                          "Total_wall_min", "Peak_RAM_GB", "CPU_cores",
-                          "CPU_hours", "Source"]].copy()
+                          "Total_wall_min", "Peak_RAM_GB", "Parallel_Peak_RAM_GB",
+                          "CPU_cores", "CPU_hours", "Source"]].copy()
 
     de_display_cols = [c for c in [
         "Method", "DE_method", "Total_input_circRNAs", "Sig_DE_circRNAs",
@@ -712,8 +712,8 @@ def build_report(
 
 {_bar_chart(comp_display, "Total_wall_min", label_col="Pipeline",
             title="Total Wall Time (min) — lower is better")}
-{_bar_chart(comp_display, "Peak_RAM_GB", label_col="Pipeline",
-            title="Peak RAM (GB) — lower is better")}
+{_bar_chart(comp_display, "Parallel_Peak_RAM_GB", label_col="Pipeline",
+            title="Parallel Execution Peak RAM (GB) — lower is better (realistic Snakemake usage)")}
 </div>
 
 

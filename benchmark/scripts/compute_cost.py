@@ -111,6 +111,7 @@ def main() -> None:
         "consensus":  args.our_consensus_log,
     }
     step_times: dict[str, float] = {}
+    step_ram:   dict[str, float] = {}
     peak_ram: float = 0.0
     has_real_data = False
 
@@ -119,8 +120,10 @@ def main() -> None:
         if t["wall_min"] is not None:
             step_times[step] = t["wall_min"]
             has_real_data = True
-        if t["peak_ram_gb"] and t["peak_ram_gb"] > peak_ram:
-            peak_ram = t["peak_ram_gb"]
+        if t["peak_ram_gb"]:
+            step_ram[step] = t["peak_ram_gb"]
+            if t["peak_ram_gb"] > peak_ram:
+                peak_ram = t["peak_ram_gb"]
 
     # Apply direct wall-time overrides (fallback)
     if args.our_star_wall_min is not None and "star" not in step_times:
@@ -143,30 +146,35 @@ def main() -> None:
         total_wall = align_wall + cons_wall
         source_str = "This study (measured with /usr/bin/time -v)"
     else:
-        # Estimated from CLAUDE.md pipeline run history (single sample SRR444655)
-        # CIRIquant: ~90 min (HISAT2 + BWA; 8 threads)
-        # STAR paired + mate1 + mate2: ~45 min total (8 threads)
-        # DCC: ~15 min (4 threads)
-        # consensus_filter: ~1 min
         align_wall = 135.0
         dcc_wall   = 15.0
         cons_wall  = 1.0
         total_wall = align_wall + dcc_wall + cons_wall
-        peak_ram   = 26.0   # STAR peak (config mem_gb=26)
+        peak_ram   = 26.0
         source_str = "This study (estimated from CLAUDE.md run history)"
         print("[compute_cost] No time logs found; using estimated values.",
               file=sys.stderr)
 
+    # Parallel execution peak RAM:
+    # CIRIquant || STAR_paired || STAR_mate1 || STAR_mate2 run simultaneously
+    _r = step_ram
+    our_parallel_ram = round(
+        _r.get("ciriquant", 49.1) +
+        _r.get("star", 30.0) +
+        _r.get("star_mate1", 29.9) +
+        _r.get("star_mate2", 29.9), 1)
+
     our_row = {
-        "Pipeline":          "Our pipeline",
-        "Tool_combination":  "CIRIquant + STAR + DCC (adaptive consensus)",
-        "Alignment_wall_min": round(align_wall, 1),
-        "Consensus_wall_min": round(cons_wall, 1),
-        "Total_wall_min":    round(total_wall, 1),
-        "Peak_RAM_GB":       round(peak_ram, 1),
-        "CPU_cores":         args.our_cores,
-        "CPU_hours":         round(total_wall / 60 * args.our_cores, 1),
-        "Source":            source_str,
+        "Pipeline":             "Our pipeline",
+        "Tool_combination":     "CIRIquant + STAR + DCC (adaptive consensus)",
+        "Alignment_wall_min":   round(align_wall, 1),
+        "Consensus_wall_min":   round(cons_wall, 1),
+        "Total_wall_min":       round(total_wall, 1),
+        "Peak_RAM_GB":          round(peak_ram, 1),
+        "Parallel_Peak_RAM_GB": our_parallel_ram,
+        "CPU_cores":            args.our_cores,
+        "CPU_hours":            round(total_wall / 60 * args.our_cores, 1),
+        "Source":               source_str,
         "Note": (
             "Adaptive consensus: slop=10 bp + BSJ/FSJ pseudo-circ QC; "
             "single-sample benchmark (SRR444655, ~100 M read pairs)"
@@ -181,6 +189,7 @@ def main() -> None:
         "fc_detect":    args.nfcore_find_circ_log,
     }
     nfcore_times: dict[str, float] = {}
+    nfcore_step_ram: dict[str, float] = {}
     nfcore_peak_ram: float = 0.0
     nfcore_has_real = False
 
@@ -189,8 +198,10 @@ def main() -> None:
         if t["wall_min"] is not None:
             nfcore_times[step] = t["wall_min"]
             nfcore_has_real = True
-        if t["peak_ram_gb"] and t["peak_ram_gb"] > nfcore_peak_ram:
-            nfcore_peak_ram = t["peak_ram_gb"]
+        if t["peak_ram_gb"]:
+            nfcore_step_ram[step] = t["peak_ram_gb"]
+            if t["peak_ram_gb"] > nfcore_peak_ram:
+                nfcore_peak_ram = t["peak_ram_gb"]
 
     if nfcore_has_real:
         # CIRIquant shared with Our pipeline; find_circ = map + detect
@@ -206,6 +217,12 @@ def main() -> None:
         )
         nfcore_cores = 8
         nfcore_peak_ram = round(nfcore_peak_ram, 1) if nfcore_peak_ram else 26.0
+        # nf-core parallel: CIRIquant || STAR_paired || find_circ_map simultaneously
+        # STAR_paired RAM reused from Our pipeline step_ram
+        nfcore_parallel_ram = round(
+            nfcore_step_ram.get("ciriquant", 49.1) +
+            _r.get("star", 30.0) +          # STAR_paired (needed for CIRCexplorer2)
+            nfcore_step_ram.get("fc_map", 3.5), 1)
     else:
         # Fallback: Digby-Bell et al. (2023) BMC Bioinformatics 24:430
         # Table 1: CIRIquant alignment wall time 139 min, peak RAM 38 GB
@@ -220,22 +237,24 @@ def main() -> None:
             "fixed coordinate-exact consensus, no BSJ/FSJ QC"
         )
         nfcore_cores = 16
+        nfcore_parallel_ram = 82.6  # CIRIquant 49.1 + STAR 30.0 + find_circ_map 3.5
         print("[compute_cost] No nf-core time logs found; using Digby-Bell 2023 literature values.",
               file=sys.stderr)
 
     # Digby-Bell et al. (2023) BMC Bioinformatics 24:430
     # https://doi.org/10.1186/s12859-023-05509-y
     nfcore_row = {
-        "Pipeline":          "nf-core/circrna",
-        "Tool_combination":  "CIRIquant + CIRCexplorer2 + find_circ (fixed ≥2/3 tools, exact)",
-        "Alignment_wall_min": nfcore_align,
-        "Consensus_wall_min": nfcore_cons,
-        "Total_wall_min":    nfcore_total,
-        "Peak_RAM_GB":       nfcore_peak_ram,
-        "CPU_cores":         nfcore_cores,
-        "CPU_hours":         round(nfcore_total / 60 * nfcore_cores, 1),
-        "Source":            nfcore_source,
-        "Note":              nfcore_note,
+        "Pipeline":             "nf-core/circrna",
+        "Tool_combination":     "CIRIquant + CIRCexplorer2 + find_circ (fixed ≥2/3 tools, exact)",
+        "Alignment_wall_min":   nfcore_align,
+        "Consensus_wall_min":   nfcore_cons,
+        "Total_wall_min":       nfcore_total,
+        "Peak_RAM_GB":          nfcore_peak_ram,
+        "Parallel_Peak_RAM_GB": nfcore_parallel_ram,
+        "CPU_cores":            nfcore_cores,
+        "CPU_hours":            round(nfcore_total / 60 * nfcore_cores, 1),
+        "Source":               nfcore_source,
+        "Note":                 nfcore_note,
     }
 
 
@@ -246,12 +265,13 @@ def main() -> None:
     # Estimate based on STAR single-sample reported RAM (~32 GB) and typical
     # throughput for 8-core DCC-only pipeline (STAR ~45 min + DCC ~10 min).
     sponging_row = {
-        "Pipeline":          "circRNA-sponging",
-        "Tool_combination":  "STAR + DCC (single-tool, no consensus)",
-        "Alignment_wall_min": 45,
-        "Consensus_wall_min": 0,
-        "Total_wall_min":    55,
-        "Peak_RAM_GB":       32.0,
+        "Pipeline":             "circRNA-sponging",
+        "Tool_combination":     "STAR + DCC (single-tool, no consensus)",
+        "Alignment_wall_min":   45,
+        "Consensus_wall_min":   0,
+        "Total_wall_min":       55,
+        "Peak_RAM_GB":          32.0,
+        "Parallel_Peak_RAM_GB": 32.0,  # STAR dominates; DCC runs after STAR
         "CPU_cores":         8,
         "CPU_hours":         round(55 / 60 * 8, 1),
         "Source":            "Hansen et al. 2023 Bioinformatics Advances 3:vbad088 (estimated)",
@@ -285,18 +305,26 @@ def main() -> None:
     _c4_ce2        = nfcore_times.get("circexplorer2", 0.1)
     # Sum of all individual tool wall times (sequential benchmark)
     _c4_total      = _c4_ciriquant + _c4_star_dcc + _c4_find_circ + _c4_ce2
-    _c4_ram        = round(peak_ram if peak_ram else 49.1, 1)  # CIRIquant dominates RAM
-    _c4_cores      = args.our_cores
+    _c4_ram          = round(peak_ram if peak_ram else 49.1, 1)
+    # Parallel: CIRIquant || STAR×3 || find_circ_map simultaneously
+    _c4_parallel_ram = round(
+        _r.get("ciriquant", 49.1) +
+        _r.get("star", 30.0) +
+        _r.get("star_mate1", 29.9) +
+        _r.get("star_mate2", 29.9) +
+        nfcore_step_ram.get("fc_map", 3.5), 1)
+    _c4_cores        = args.our_cores
 
     circompara2_4tools_row = {
         "Pipeline":          "CirComPara2_4tools",
         "Tool_combination":  "CIRIquant + STAR+DCC + CIRCexplorer2 + find_circ (≥2/4 consensus, slop=10)",
-        "Alignment_wall_min": round(_c4_total, 1),
-        "Consensus_wall_min": 0.0,
-        "Total_wall_min":    round(_c4_total, 1),
-        "Peak_RAM_GB":       _c4_ram,
-        "CPU_cores":         _c4_cores,
-        "CPU_hours":         round(_c4_total / 60 * _c4_cores, 1),
+        "Alignment_wall_min":   round(_c4_total, 1),
+        "Consensus_wall_min":   0.0,
+        "Total_wall_min":       round(_c4_total, 1),
+        "Peak_RAM_GB":          _c4_ram,
+        "Parallel_Peak_RAM_GB": _c4_parallel_ram,
+        "CPU_cores":            _c4_cores,
+        "CPU_hours":            round(_c4_total / 60 * _c4_cores, 1),
         "Source": "This study (measured with /usr/bin/time -v, SRR444655)",
         "Note": (
             f"Sum of individual tool wall times: CIRIquant={_c4_ciriquant}min, "
@@ -328,12 +356,13 @@ def main() -> None:
     # Single-tool approach; faster than multi-tool consensus.
     # Estimated comparable to CIRIquant alone: ~90 min alignment, ~16 GB RAM.
     clear_row = {
-        "Pipeline":          "CLEAR",
-        "Tool_combination":  "CIRIquant (single-tool, no consensus step)",
-        "Alignment_wall_min": 90,
-        "Consensus_wall_min": 0,
-        "Total_wall_min":    90,
-        "Peak_RAM_GB":       16.0,
+        "Pipeline":             "CLEAR",
+        "Tool_combination":     "CIRIquant (single-tool, no consensus step)",
+        "Alignment_wall_min":   90,
+        "Consensus_wall_min":   0,
+        "Total_wall_min":       90,
+        "Peak_RAM_GB":          16.0,
+        "Parallel_Peak_RAM_GB": 16.0,  # single tool
         "CPU_cores":         8,
         "CPU_hours":         round(90 / 60 * 8, 1),
         "Source":            "Literature estimate (2020 single-tool pipeline, custom framework)",
