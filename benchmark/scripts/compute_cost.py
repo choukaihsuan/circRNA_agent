@@ -338,7 +338,7 @@ def main() -> None:
         ),
     }
 
-    df = pd.DataFrame([our_row, circompara2_4tools_row, circompara2_row, nfcore_row, sponging_row, clear_row])
+    df = pd.DataFrame([our_row, circompara2_4tools_row, nfcore_row, sponging_row, clear_row])
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, sep="\t", index=False)
     print(f"[compute_cost] Written → {args.output}", file=sys.stderr)

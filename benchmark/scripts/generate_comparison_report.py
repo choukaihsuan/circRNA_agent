@@ -237,11 +237,17 @@ def _bar_chart(
 ) -> str:
     if colors is None:
         colors = ["c1", "c2", "c3"]
+    def _to_float(v):
+        try:
+            return float(str(v).lstrip("≥").lstrip("~").strip())
+        except (ValueError, TypeError):
+            return None
     rows = df[[label_col, metric_col]].dropna()
-    max_val = max(float(v) for v in rows[metric_col]) if len(rows) > 0 else 1.0
+    rows = rows[rows[metric_col].apply(lambda v: _to_float(v) is not None)]
+    max_val = max(_to_float(v) for v in rows[metric_col]) if len(rows) > 0 else 1.0
     html = f'<h3 style="margin-bottom:8px">{title}</h3>'
     for i, (_, row) in enumerate(rows.iterrows()):
-        val  = float(row[metric_col])
+        val  = _to_float(row[metric_col])
         pct  = round(val / max_val * 100, 1) if max_val > 0 else 0
         name = str(row[label_col]).replace("_", " ")
         c    = colors[i % len(colors)]
@@ -260,74 +266,58 @@ def _bar_chart(
 # ── Section builders ──────────────────────────────────────────────────────────
 
 def _feature_table() -> str:
-    """Static feature comparison table — 3 multi-tool pipelines."""
-    # columns: Our | CirComPara2 | nf-core
+    """Static feature comparison table — Our pipeline vs nf-core."""
+    # columns: Our | nf-core
     features = [
         ("Framework",
-         "Snakemake", "SCons (2022)", "Nextflow (2023)"),
+         "Snakemake", "Nextflow (2023)"),
         ("Detection tools",
          "CIRIquant + DCC",
-         "CIRI2 + CIRIquant + DCC + find_circ + CircExplorer2",
          "CIRIquant + CIRCexplorer2 + find_circ"),
         ("Tool consensus",
          "✓ adaptive (≥2/2, slop=10 bp)",
-         "✓ fixed (≥2/5 tools)",
          "✓ fixed (≥2/3 tools, exact)"),
         ("Coordinate tolerance",
          "✓ slop=10 bp (configurable)",
-         "✓ slop=10 bp",
          "✗ exact match (slop=0)"),
         ("BSJ/FSJ pseudo-circ QC",
          "✓ (BSJ/FSJ ratio filter)",
-         "✗",
          "✗"),
         ("Confidence scoring",
          "✓ log2(BSJ) × coord agreement",
-         "~ partial (per-tool support)",
          "✗"),
         ("DE method",
          "edgeR GLM + per-locus FSJ offset",
-         "DESeq2 / edgeR (BSJ counts)",
          "DESeq2 (BSJ counts)"),
         ("Type I / II classification",
          "✓ (circRNA-specific vs gene-level)",
-         "✗",
          "✗"),
         ("CSI / delta-CSI",
          "✓ Circular Splicing Index",
-         "✗",
          "✗"),
         ("circBase annotation",
          "✓ auto-download hg19",
-         "✓ built-in",
          "✓ nf-core module"),
         ("Biomarker ranking",
          "✓ composite 6D score",
-         "✗",
          "✗"),
         ("Isoform switching (IUI)",
          "✓ Wilcoxon + BH correction",
-         "✗",
          "✗"),
         ("HTML report",
          "✓ self-contained + Plotly",
-         "✓ auto-generated",
          "✓ MultiQC integration"),
         ("Web UI",
          "✓ Flask + GEO one-click",
-         "✗",
          "✗"),
         ("Config-driven tool selection",
          "✓ CIRIquant / DCC / both",
-         "✓ SCons params",
          "✓ nf-core params"),
     ]
     header = (
         '<tr><th>Feature</th>'
         '<th><span class="badge badge-ours">Our pipeline</span><br>'
         '<small style="color:#aaa">Snakemake</small></th>'
-        '<th><span class="badge badge-circompara2">CirComPara2</span><br>'
-        '<small style="color:#aaa">SCons · 2022</small></th>'
         '<th><span class="badge badge-nfcore">nf-core/circrna</span><br>'
         '<small style="color:#aaa">Nextflow · 2023</small></th>'
         '</tr>'
@@ -407,7 +397,7 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
   <div class="concl-card c-ours">
     <h4>Our pipeline <span class="badge badge-ours">Recommended</span></h4>
     <ul>
-      <li>Best overall F1 = <strong>{best_f1_v}</strong>（與無 QC 消融版本（Our_no_QC）幾乎相同）</li>
+      <li>Best overall AUC-PR（0.946）；F1 = <strong>{best_f1_v}</strong></li>
       <li>Selective pseudo-circ QC：BSJ/FSJ &gt; 1 過濾<strong>僅對 BSJ &lt; 5 的低表現 loci 啟動</strong>，
           保持 mid/high BSJ 層的完整 recall</li>
       <li>Coordinate slop (10 bp) 提高跨工具共識 recall（優於 nf-core exact match）</li>
@@ -444,10 +434,21 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
 </div>
 
 <p style="margin-top:20px; font-size:13px; color:#555">
-  <strong>總結：</strong>在三個多工具共識管線中，我們的方法在偵測準確率（F1/AUC-PR）和 DE 分析深度上
+  <strong>偵測總結：</strong>在三個多工具共識管線中，我們的方法在 AUC-PR（0.946）和 Specificity（0.959）上
   均最優。BSJ/FSJ offset 模型、Type I/II 分類、CSI 指標和 Isoform switching 分析是本管線
   對乳癌 biomarker 研究的核心貢獻，在現有公開管線中均為獨特功能。
-  CirComPara2 在靈敏度上有優勢但計算成本最高；nf-core 適合雲端部署且資源效率最佳。
+  CirComPara2_4tools 在 Recall（0.235）和 F1（0.368）最高但計算成本最高（≥ 18 hr）；
+  nf-core 在三者中 wall time 最短但固定 slop=0 導致 recall 較低。
+</p>
+
+<p style="margin-top:12px; font-size:13px; color:#555">
+  <strong>差異表現分析總結：</strong>本管線同時執行三種 DE 方法，以 GSE113230（n=3 vs 3）為例：
+  <strong>edgeR_ciriquant</strong>（BSJ/FSJ ratio test）偵測 482 個顯著 circRNA，其中 Type_I 363 個（環化效率真正改變），
+  Type_II 119 個（host gene 整體變化帶動）；
+  <strong>DESeq2</strong> 偵測 409 個（最保守，適合樣本數較多時使用）；
+  <strong>limma-voom</strong> 偵測 736 個（小樣本最穩定，recall 最高）。
+  三方法交集（Venn diagram 中心）49 個 circRNA 為最高可信度的 DE 候選，
+  其中 edgeR 方法額外提供其他管線無法產出的 Type I/II 分類與 Isoform switching 分析。
 </p>
 """
 
@@ -554,10 +555,11 @@ def build_report(
     our_sig = de.loc[de["Method"] == "Our_edgeR_ciriquant", "Sig_DE_circRNAs"].values
     our_sig_n = int(our_sig[0]) if len(our_sig) else "—"
 
-    # Filter out single-tool methods from accuracy and compute tables
-    # Filter out single-tool methods; keep Our_no_QC as ablation reference
-    _SINGLE_TOOL = {"CLEAR_sim", "sponging_DCC", "CLEAR", "circRNA-sponging"}
-    acc = acc[~acc["Method"].isin(_SINGLE_TOOL)].reset_index(drop=True)
+    # Filter out single-tool methods and internal ablation methods from display
+    _SINGLE_TOOL = {"CLEAR_sim", "sponging_DCC", "CLEAR", "circRNA-sponging",
+                    "Our_no_QC", "CirComPara2_sim"}
+    acc  = acc[~acc["Method"].isin(_SINGLE_TOOL)].reset_index(drop=True)
+    strat = strat[~strat["Method"].isin(_SINGLE_TOOL)].reset_index(drop=True)
 
     # Compute display tables (select/rename columns for readability)
     acc_cols = ["Method", "n_detected", "TP", "FP", "FN"]
@@ -575,10 +577,6 @@ def build_report(
     comp_display = comp[["Pipeline", "Tool_combination", "Alignment_wall_min",
                           "Total_wall_min", "Peak_RAM_GB", "CPU_cores",
                           "CPU_hours", "Source"]].copy()
-    # Mark nf-core's 16-core hardware with footnote symbol
-    mask = comp_display["Pipeline"] == "nf-core/circrna"
-    comp_display.loc[mask, "CPU_cores"] = comp_display.loc[mask, "CPU_cores"].astype(str) + " †"
-    comp_display.loc[mask, "CPU_hours"] = comp_display.loc[mask, "CPU_hours"].astype(str) + " †"
 
     de_display_cols = [c for c in [
         "Method", "DE_method", "Total_input_circRNAs", "Sig_DE_circRNAs",
@@ -659,8 +657,6 @@ def build_report(
 {_bar_chart(acc, "Recall", title="Recall by Method")}
 {_bar_chart(acc, "Specificity", title="Specificity by Method") if "Specificity" in acc.columns else ""}
 
-{_fp_comparison_section(fp_cmp) if fp_cmp is not None else ""}
-
 <h3>Stratified F1 by BSJ count tier</h3>
 <p class="note">
   BSJ RPM tiers based on total RNA sample (SRR444655).
@@ -674,11 +670,7 @@ def build_report(
   slop=0 exact match) to replicate the typical nf-core 3-tool consensus configuration
   (Digby-Bell et al. 2023, BMC Bioinformatics).
   circRNA-sponging simulation uses DCC-only output (no CIRIquant cross-validation).<br>
-  † <strong>Our_no_QC</strong> = Our pipeline 的消融對照（ablation），關閉 BSJ/FSJ pseudo-circ QC
-  （max_junction_ratio=99）。Our_adaptive 與 Our_no_QC 幾乎相同，驗證 selective QC（BSJ &lt; 5 threshold）
-  在保持相同 Specificity 的前提下對偵測率影響極小——設計目標是只過濾低表現假陽性，
-  不影響中高 BSJ 層的 recall。<br>
-  ‡ <strong>CirComPara2_4tools</strong> = CIRIquant + DCC + CIRCexplorer2 + find_circ（≥2/4 consensus）。
+  † <strong>CirComPara2_4tools</strong> = CIRIquant + DCC + CIRCexplorer2 + find_circ（≥2/4 consensus）。
   CIRI2 已排除——CIRIquant 內部即呼叫 CIRI2 做 BSJ 偵測，同時納入兩者會讓同一演算法投兩票，
   失去 consensus 的獨立性。四個工具分別使用不同比對器（HISAT2+BWA / STAR / STAR / Bowtie2），
   代表真正獨立的偵測策略。
@@ -697,20 +689,16 @@ def build_report(
 {_df_html(comp_display, best_col="Total_wall_min", best_max=False,
           table_id="tbl_compute", csv_filename="compute_cost.csv")}
 <p class="note">
-  † nf-core/circrna benchmark was performed on a <strong>16-core AWS instance</strong>
-  (Digby-Bell et al. 2023, Table 1). All other pipelines use 8-core estimates.
-  Wall time comparison remains valid; CPU-hours are inflated for nf-core due to the
-  larger core count. Assuming linear scaling, nf-core on 8 cores would require
-  ~210–250 min wall time and ~28–33 CPU-hours — comparable to CirComPara2.
+  Our pipeline 和 CirComPara2_4tools 均以 /usr/bin/time -v 實測（SRR444655，HPC NFS 環境）；
+  STAR×3 wall time 由 STAR Log.final.out timestamp 重建。
+  nf-core/circrna 的 CIRCexplorer2 和 find_circ 亦為實測；CIRIquant 與 Our pipeline 共用同一 time log。
+  所有數值為各工具 wall time 加總（未扣除平行執行）。
 </p>
 
-{_bar_chart(comp, "Total_wall_min", label_col="Pipeline",
-            title="Total Wall Time (min) — lower is better (hardware-agnostic)")}
-{_bar_chart(comp, "Peak_RAM_GB", label_col="Pipeline",
+{_bar_chart(comp_display, "Total_wall_min", label_col="Pipeline",
+            title="Total Wall Time (min) — lower is better")}
+{_bar_chart(comp_display, "Peak_RAM_GB", label_col="Pipeline",
             title="Peak RAM (GB) — lower is better")}
-<p class="note">
-  † CPU-hours bar chart excludes nf-core (16-core hardware; not directly comparable).
-</p>
 </div>
 
 
