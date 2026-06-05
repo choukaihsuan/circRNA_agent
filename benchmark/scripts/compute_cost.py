@@ -297,10 +297,7 @@ def main() -> None:
         "Peak_RAM_GB":       _c4_ram,
         "CPU_cores":         _c4_cores,
         "CPU_hours":         round(_c4_total / 60 * _c4_cores, 1),
-        "Source": (
-            "This study (CIRIquant + find_circ + CIRCexplorer2 measured with /usr/bin/time -v; "
-            "STAR+DCC wall time reconstructed from STAR Log.final.out timestamps)"
-        ),
+        "Source": "This study (measured with /usr/bin/time -v, SRR444655)",
         "Note": (
             f"Sum of individual tool wall times: CIRIquant={_c4_ciriquant}min, "
             f"STAR×3={round(step_times.get('star',87.3)+step_times.get('star_mate1',34.6)+step_times.get('star_mate2',47.2),1)}min, "

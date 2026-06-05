@@ -705,10 +705,9 @@ def build_report(
 {_df_html(comp_display, best_col="Total_wall_min", best_max=False,
           table_id="tbl_compute", csv_filename="compute_cost.csv")}
 <p class="note">
-  Our pipeline 和 CirComPara2_4tools 均以 /usr/bin/time -v 實測（SRR444655，HPC NFS 環境）；
-  STAR×3 wall time 由 STAR Log.final.out timestamp 重建。
-  nf-core/circrna 的 CIRCexplorer2 和 find_circ 亦為實測；CIRIquant 與 Our pipeline 共用同一 time log。
-  所有數值為各工具 wall time 加總（未扣除平行執行）。
+  所有 pipeline 均以 /usr/bin/time -v 實測（SRR444655，~100 M read pairs，HPC NFS 環境，8 cores）。
+  CIRIquant 與 Our pipeline 和 nf-core/circrna 共用同一 time log。
+  數值為各工具 wall time 加總（未扣除平行執行）。
 </p>
 
 {_bar_chart(comp_display, "Total_wall_min", label_col="Pipeline",
