@@ -266,58 +266,74 @@ def _bar_chart(
 # ── Section builders ──────────────────────────────────────────────────────────
 
 def _feature_table() -> str:
-    """Static feature comparison table — Our pipeline vs nf-core."""
-    # columns: Our | nf-core
+    """Static feature comparison table — 3 multi-tool pipelines."""
+    # columns: Our | CirComPara2 | nf-core
     features = [
         ("Framework",
-         "Snakemake", "Nextflow (2023)"),
+         "Snakemake", "SCons (2022)", "Nextflow (2023)"),
         ("Detection tools",
          "CIRIquant + DCC",
+         "CIRI2 + CIRIquant + DCC + find_circ + CircExplorer2",
          "CIRIquant + CIRCexplorer2 + find_circ"),
         ("Tool consensus",
          "✓ adaptive (≥2/2, slop=10 bp)",
+         "✓ fixed (≥2/5 tools)",
          "✓ fixed (≥2/3 tools, exact)"),
         ("Coordinate tolerance",
          "✓ slop=10 bp (configurable)",
+         "✓ slop=10 bp",
          "✗ exact match (slop=0)"),
         ("BSJ/FSJ pseudo-circ QC",
          "✓ (BSJ/FSJ ratio filter)",
+         "✗",
          "✗"),
         ("Confidence scoring",
          "✓ log2(BSJ) × coord agreement",
+         "~ partial (per-tool support)",
          "✗"),
         ("DE method",
          "edgeR GLM + per-locus FSJ offset",
+         "DESeq2 / edgeR (BSJ counts)",
          "DESeq2 (BSJ counts)"),
         ("Type I / II classification",
          "✓ (circRNA-specific vs gene-level)",
+         "✗",
          "✗"),
         ("CSI / delta-CSI",
          "✓ Circular Splicing Index",
+         "✗",
          "✗"),
         ("circBase annotation",
          "✓ auto-download hg19",
+         "✓ built-in",
          "✓ nf-core module"),
         ("Biomarker ranking",
          "✓ composite 6D score",
+         "✗",
          "✗"),
         ("Isoform switching (IUI)",
          "✓ Wilcoxon + BH correction",
+         "✗",
          "✗"),
         ("HTML report",
          "✓ self-contained + Plotly",
+         "✓ auto-generated",
          "✓ MultiQC integration"),
         ("Web UI",
          "✓ Flask + GEO one-click",
+         "✗",
          "✗"),
         ("Config-driven tool selection",
          "✓ CIRIquant / DCC / both",
+         "✓ SCons params",
          "✓ nf-core params"),
     ]
     header = (
         '<tr><th>Feature</th>'
         '<th><span class="badge badge-ours">Our pipeline</span><br>'
         '<small style="color:#aaa">Snakemake</small></th>'
+        '<th><span class="badge badge-circompara2">CirComPara2</span><br>'
+        '<small style="color:#aaa">SCons · 2022</small></th>'
         '<th><span class="badge badge-nfcore">nf-core/circrna</span><br>'
         '<small style="color:#aaa">Nextflow · 2023</small></th>'
         '</tr>'
