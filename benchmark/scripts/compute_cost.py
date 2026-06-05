@@ -80,6 +80,11 @@ def main() -> None:
                         help="/usr/bin/time -v log for DCC step")
     parser.add_argument("--our-consensus-log",   default=None,
                         help="/usr/bin/time -v log for consensus filter")
+    # Direct wall-time overrides (for reconstructed timing from STAR Log.final.out)
+    parser.add_argument("--our-star-wall-min",   type=float, default=None,
+                        help="STAR paired wall time in minutes (reconstructed from Log.final.out)")
+    parser.add_argument("--our-dcc-wall-min",    type=float, default=None,
+                        help="DCC wall time in minutes (reconstructed from file timestamps)")
     parser.add_argument("--our-cores",           type=int, default=8)
     # nf-core measured time logs (CIRIquant shared with Our pipeline)
     parser.add_argument("--nfcore-ciriquant-log",    default=None,
@@ -111,12 +116,28 @@ def main() -> None:
         if t["peak_ram_gb"] and t["peak_ram_gb"] > peak_ram:
             peak_ram = t["peak_ram_gb"]
 
+    # Apply direct wall-time overrides for STAR/DCC (reconstructed from timestamps)
+    if args.our_star_wall_min is not None:
+        step_times["star"] = args.our_star_wall_min
+        has_real_data = True
+    if args.our_dcc_wall_min is not None:
+        step_times["dcc"] = args.our_dcc_wall_min
+        has_real_data = True
+
     if has_real_data:
-        align_wall  = step_times.get("ciriquant", 0) + step_times.get("star", 0)
-        dcc_wall    = step_times.get("dcc", 0)
-        cons_wall   = step_times.get("consensus", 0)
-        total_wall  = align_wall + dcc_wall + cons_wall
-        source_str  = "This study (measured with /usr/bin/time -v)"
+        ciriquant_wall = step_times.get("ciriquant", 0)
+        # STAR+DCC runs in parallel with CIRIquant (Snakemake DAG); total = max of parallel branches
+        star_dcc_wall  = step_times.get("star", 0) + step_times.get("dcc", 0)
+        cons_wall      = step_times.get("consensus", 0)
+        align_wall     = max(ciriquant_wall, star_dcc_wall)  # parallel execution
+        total_wall     = align_wall + cons_wall
+        star_dcc_reconstructed = (args.our_star_wall_min is not None or
+                                  args.our_dcc_wall_min is not None)
+        if star_dcc_reconstructed:
+            source_str = ("This study (CIRIquant measured with /usr/bin/time -v; "
+                          "STAR+DCC wall time reconstructed from STAR Log.final.out timestamps)")
+        else:
+            source_str = "This study (measured with /usr/bin/time -v)"
     else:
         # Estimated from CLAUDE.md pipeline run history (single sample SRR444655)
         # CIRIquant: ~90 min (HISAT2 + BWA; 8 threads)
@@ -244,6 +265,41 @@ def main() -> None:
     # Estimated: 6× alignment runs, typical 8-core server.
     # CIRI2+CIRIquant+DCC+find_circ alignment ≈ 180 min; consensus ≈ 5 min.
     # Peak RAM dominated by STAR (find_circ/CircExplorer2) ≈ 32 GB.
+    # ── CirComPara2_4tools (This study – measured) ───────────────────────────────
+    # 4 independent tools: CIRIquant(HISAT2+BWA) + STAR+DCC + CIRCexplorer2 + find_circ
+    # All run in parallel; total = max(bottleneck across tools)
+    # Measured components: CIRIquant (11:41:07), CIRCexplorer2 (0:05.99),
+    #   find_circ_map (3:44:29), find_circ_detect (2:41:05)
+    # Reconstructed from timestamps: STAR_paired (10:10:23→11:35:27=85.1min), DCC (~14.4min)
+    _c4_ciriquant  = step_times.get("ciriquant", 701.1)   # measured
+    _c4_star_dcc   = 85.1 + 14.4                          # reconstructed from timestamps
+    _c4_find_circ  = (nfcore_times.get("fc_map", 224.5) +
+                      nfcore_times.get("fc_detect", 161.1))
+    _c4_ce2        = nfcore_times.get("circexplorer2", 0.1)
+    _c4_total      = max(_c4_ciriquant, _c4_star_dcc, _c4_find_circ, _c4_ce2)
+    _c4_ram        = round(peak_ram if peak_ram else 49.1, 1)  # CIRIquant dominates RAM
+    _c4_cores      = args.our_cores
+
+    circompara2_4tools_row = {
+        "Pipeline":          "CirComPara2_4tools",
+        "Tool_combination":  "CIRIquant + STAR+DCC + CIRCexplorer2 + find_circ (≥2/4 consensus, slop=10)",
+        "Alignment_wall_min": round(_c4_total, 1),
+        "Consensus_wall_min": 0.0,
+        "Total_wall_min":    round(_c4_total, 1),
+        "Peak_RAM_GB":       _c4_ram,
+        "CPU_cores":         _c4_cores,
+        "CPU_hours":         round(_c4_total / 60 * _c4_cores, 1),
+        "Source": (
+            "This study (CIRIquant + find_circ + CIRCexplorer2 measured with /usr/bin/time -v; "
+            "STAR+DCC wall time reconstructed from STAR Log.final.out timestamps)"
+        ),
+        "Note": (
+            f"Parallel execution: CIRIquant={_c4_ciriquant}min (bottleneck), "
+            f"STAR+DCC={_c4_star_dcc}min, find_circ={round(_c4_find_circ,1)}min, "
+            f"CIRCexplorer2={_c4_ce2}min; slop=10 bp, no BSJ/FSJ pseudo-circ QC"
+        ),
+    }
+
     circompara2_row = {
         "Pipeline":          "CirComPara2",
         "Tool_combination":  "CIRI2 + CIRIquant + DCC + find_circ + CircExplorer2 (≥2/5 consensus)",
@@ -280,7 +336,7 @@ def main() -> None:
         ),
     }
 
-    df = pd.DataFrame([our_row, circompara2_row, nfcore_row, sponging_row, clear_row])
+    df = pd.DataFrame([our_row, circompara2_4tools_row, circompara2_row, nfcore_row, sponging_row, clear_row])
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, sep="\t", index=False)
     print(f"[compute_cost] Written → {args.output}", file=sys.stderr)
