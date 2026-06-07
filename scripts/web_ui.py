@@ -330,6 +330,18 @@ def parse_log_progress(log_text: str) -> dict:
             "done":    done,
         })
 
+    # Second pass: if a later stage is running/done, all earlier pending stages
+    # must have completed (Snakemake skipped them because outputs already existed).
+    last_active_idx = -1
+    for i, s in enumerate(stages):
+        if s["status"] in ("running", "done"):
+            last_active_idx = i
+    for i in range(last_active_idx):
+        if stages[i]["status"] == "pending":
+            stages[i]["status"]  = "done"
+            stages[i]["started"] = 1
+            stages[i]["done"]    = 1
+
     return {
         "stages":         stages,
         "finished_count": finished_count,
