@@ -26,7 +26,7 @@ def _find_tool(name):
         f"{home}/miniconda",  f"{home}/anaconda3",
     ]
     # Check high-priority named envs first
-    for prio_env in ("sra_env", "circrna"):
+    for prio_env in ("sra_env", "circrna", "ciriquant"):
         for base in bases:
             c = f"{base}/envs/{prio_env}/bin/{name}"
             if os.path.isfile(c) and os.access(c, os.X_OK):

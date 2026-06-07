@@ -37,7 +37,7 @@ circRNA_agent/
 ├── workflow/
 │   ├── Snakefile                # 主 Snakefile，載入 rules，設定 target
 │   └── rules/
-│       ├── download.smk         # SRA 下載（prefetch + fasterq-dump）
+│       ├── download.smk         # SRA 下載（aria2c S3 > ascp > prefetch + fasterq-dump）
 │       ├── qc.smk               # FastQC + fastp + MultiQC
 │       ├── circrna.smk          # circRNA 偵測主規則（見下方詳述）
 │       └── de.smk               # 差異表現 + 圖表 + HTML 報告
@@ -73,7 +73,7 @@ circRNA_agent/
 SRA/GEO
   │
   ▼
-[download] prefetch + fasterq-dump
+[download] aria2c (S3, 16連線) > ascp (Aspera) > prefetch (HTTPS fallback)
   → raw_dir/{srr}_1.fastq.gz, {srr}_2.fastq.gz
   │
   ▼
@@ -343,8 +343,19 @@ threads: 8
 | CPU | 96 cores |
 | RAM | 377 GB |
 | 磁碟 | /home3：596 GB 可用 |
-| Conda env | `ciriquant`（CIRIquant 1.1.3, DCC 0.5.0, STAR, HISAT2, BWA, samtools, snakemake） |
+| Conda env | `ciriquant`（CIRIquant 1.1.3, DCC 0.5.0, STAR, HISAT2, BWA, samtools, snakemake, **aria2c 1.36.0**） |
 | Java | `/usr/bin/java`（不在 conda env 內，ciriquant.yaml 必須指定此路徑） |
+
+**SRA 下載優先順序**（`workflow/rules/download.smk`）：
+
+| 優先 | 方法 | 速度 | 說明 |
+|------|------|------|------|
+| 1 | **aria2c + S3**（預設）| ~25 MB/s（16 連線）| `srapath --location s3` 取 S3 URL → aria2c 多連線下載 |
+| 2 | ascp（Aspera）| ~50 MB/s | 需 Aspera key，目前 server 未安裝 |
+| 3 | prefetch（HTTPS）| ~0.5 MB/s | NCBI 單連線，最慢，S3 失敗時的 fallback |
+
+`_find_tool("aria2c")` 搜尋優先順序：`sra_env` → `circrna` → **`ciriquant`**（已加入）→ `which()`。
+若 `srapath returned no S3 URL`（NCBI API 暫時失敗），重啟 pipeline 即可；S3 URL 通常幾分鐘後恢復。
 
 **R packages（安裝在 conda env `ciriquant` 的 r-base 4.2.2）**：
 r-ggplot2, r-pheatmap, r-rcolorbrewer, r-dplyr, r-ggrepel, r-tibble, r-tidyr,
