@@ -188,7 +188,16 @@ PIPELINE_STAGES = [
 
 
 def parse_log_progress(log_text: str) -> dict:
-    """Parse a Snakemake log and return per-rule status + overall progress."""
+    """Parse a Snakemake log and return per-rule status + overall progress.
+    Only the last Snakemake run (last 'Building DAG' section) is parsed,
+    so re-runs and retries in the same log file don't pollute the counts.
+    """
+    # Split by "Building DAG" and take only the last run
+    dag_marker = "Building DAG of jobs"
+    parts = log_text.split(dag_marker)
+    if len(parts) > 1:
+        log_text = dag_marker + parts[-1]
+
     job_to_rule: dict[str, str] = {}
     rule_started: dict[str, int] = {}
     rule_done:    dict[str, int] = {}
@@ -575,6 +584,24 @@ def api_progress():
     data = parse_log_progress(log_text)
     data["running"] = pipeline_is_running()
     return jsonify(data)
+
+
+@app.route("/report/<job_id>")
+def serve_report(job_id: str):
+    """Serve the HTML report for a finished job."""
+    from flask import send_file, abort
+    registry = load_registry()
+    job = registry.get(job_id)
+    if not job:
+        abort(404)
+    gse_id = job["gse_id"]
+    cfg = load_project_config(gse_id)
+    results_dir = cfg.get("results_dir", "")
+    report_path = Path(results_dir) / "report.html"
+    if not report_path.exists():
+        abort(404)
+    return send_file(str(report_path), mimetype="text/html",
+                     as_attachment=False, download_name=f"{gse_id}_report.html")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
