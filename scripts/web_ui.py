@@ -23,6 +23,9 @@ from typing import Optional
 import yaml
 import csv
 import io
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent))
+
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 app = Flask(__name__, template_folder="templates")
@@ -433,6 +436,22 @@ def run_gse():
     cfg["project_id"] = gse_id
     cfg["threads"]    = cores
     cfg = _update_paths_for_project(cfg, gse_id)
+
+    # Pre-detect labels if metadata is already available (re-run scenario)
+    _meta_path = BASE_DIR / cfg.get("metadata", f"metadata/{gse_id}/library_info.csv")
+    if not _meta_path.exists():
+        _meta_path = BASE_DIR / "metadata" / gse_id / "library_info.csv"
+    if _meta_path.exists():
+        try:
+            import pandas as _pd
+            from prepare_metadata import detect_group_labels as _detect
+            _meta_df = _pd.read_csv(str(_meta_path))
+            _case, _ctrl = _detect(_meta_df)
+            cfg.setdefault("de", {})["tumor_label"]  = _case
+            cfg.setdefault("de", {})["normal_label"]  = _ctrl
+        except Exception:
+            pass
+
     save_project_snapshot(cfg)
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -619,6 +638,35 @@ def api_progress():
     data = parse_log_progress(log_text)
     data["running"] = pipeline_is_running()
     return jsonify(data)
+
+
+@app.route("/api/detect_labels")
+def api_detect_labels():
+    """Detect case/control labels from existing metadata for a given GSE."""
+    gse_id = request.args.get("gse", "").strip()
+    if not gse_id:
+        return jsonify({"error": "missing gse"}), 400
+
+    # Look for metadata in standard locations
+    candidates = [
+        BASE_DIR / "metadata" / gse_id / "library_info.csv",
+        BASE_DIR / "metadata" / "library_info.csv",
+    ]
+    meta_path = next((p for p in candidates if p.exists()), None)
+    if meta_path is None:
+        return jsonify({"detected": False, "case": "tumor", "control": "normal",
+                        "note": "metadata not found yet"})
+
+    try:
+        import pandas as _pd
+        from prepare_metadata import detect_group_labels as _detect
+        df = _pd.read_csv(str(meta_path))
+        case_label, ctrl_label = _detect(df)
+        return jsonify({"detected": True, "case": case_label, "control": ctrl_label,
+                        "rows": len(df)})
+    except Exception as exc:
+        return jsonify({"detected": False, "case": "tumor", "control": "normal",
+                        "error": str(exc)})
 
 
 @app.route("/report/<job_id>")

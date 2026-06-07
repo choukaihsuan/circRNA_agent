@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from download_geo import prepare_metadata
-from prepare_metadata import load_or_create
+from prepare_metadata import detect_group_labels, load_or_create
 from utils import ensure_dirs, generate_ciriquant_config, load_config, run_snakemake, save_config
 
 
@@ -44,14 +44,29 @@ def cmd_run(args: argparse.Namespace) -> None:
         cfg["project_id"] = args.gse
         cfg["results_dir"] = f"results/{args.gse}"
     cfg["threads"] = args.cores
+
+    # 2b. Auto-detect case/control labels from GEO metadata
+    print("\n── Step 1b: Detect group labels ─────────────────────", flush=True)
+    case_label, control_label = detect_group_labels(metadata_df)
+    existing_case    = cfg.get("de", {}).get("tumor_label", "tumor")
+    existing_control = cfg.get("de", {}).get("normal_label", "normal")
+    if case_label != existing_case or control_label != existing_control:
+        cfg.setdefault("de", {})["tumor_label"]  = case_label
+        cfg.setdefault("de", {})["normal_label"]  = control_label
+        print(f"   [detect] case={case_label!r}  control={control_label!r}  → config.yaml updated", flush=True)
+    else:
+        print(f"   [detect] case={case_label!r}  control={control_label!r}  (unchanged)", flush=True)
+
     save_config(cfg)
 
-    # 3. Assign tumor/normal groups
+    # 3. Assign case/control groups
     print("\n── Step 2: Sample grouping ──────────────────────────", flush=True)
     load_or_create(
-        metadata_file = cfg["metadata"],
-        groups_file   = cfg["groups"],
-        interactive   = args.interactive,
+        metadata_file  = cfg["metadata"],
+        groups_file    = cfg["groups"],
+        interactive    = args.interactive,
+        case_label     = case_label,
+        control_label  = control_label,
     )
 
     # 4. Generate CIRIquant config

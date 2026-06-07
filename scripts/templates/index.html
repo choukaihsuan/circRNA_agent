@@ -255,7 +255,8 @@
       <form method="POST" action="/run_gse" style="margin:0">
         <div class="geo-row">
           <input class="geo-input" type="text" name="gse_id" placeholder="GSE113230"
-                 value="{{ config.get('project_id', '') }}" required>
+                 value="{{ config.get('project_id', '') }}" required
+                 id="gse-id-input" oninput="scheduleDetect(this.value)">
           <input type="number" name="cores" value="{{ config.get('threads', 8) }}"
                  min="1" max="96" style="width:70px;padding:10px 8px;border:1px solid var(--border);
                  border-radius:8px;font-size:14px;text-align:center;" title="CPU cores">
@@ -282,12 +283,21 @@
           <label>Project ID
             <input type="text" name="project_id" placeholder="CUSTOM" value="{{ config.get('project_id', 'CUSTOM') }}" style="width:140px;">
           </label>
-          <label>Tumor label
-            <input type="text" name="tumor_label" value="{{ config.get('de', {}).get('tumor_label', 'tumor') }}" style="width:100px;">
+          <label>Case label
+            <input type="text" name="tumor_label"
+                   value="{{ config.get('de', {}).get('tumor_label', 'tumor') }}"
+                   id="tumor-label-input" style="width:120px;"
+                   title="實驗組 label（由 GEO metadata 自動偵測，可手動修改）">
           </label>
-          <label>Normal label
-            <input type="text" name="normal_label" value="{{ config.get('de', {}).get('normal_label', 'normal') }}" style="width:100px;">
+          <label>Control label
+            <input type="text" name="normal_label"
+                   value="{{ config.get('de', {}).get('normal_label', 'normal') }}"
+                   id="normal-label-input" style="width:120px;"
+                   title="對照組 label（由 GEO metadata 自動偵測，可手動修改）">
           </label>
+          <span id="label-detect-badge" style="font-size:11px;color:#16a34a;display:none;align-items:center;gap:4px;">
+            ✓ 自動偵測
+          </span>
           <label>CPU cores
             <input type="number" name="cores" value="{{ config.get('threads', 8) }}" min="1" max="96" style="width:70px;text-align:center;">
           </label>
@@ -410,6 +420,23 @@
     <div class="section">
       <div class="section-title">Step 2</div>
       <h2>差異表現分析方法</h2>
+
+      <!-- Always-run notice -->
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;
+                  background:#f0fdf4;border:1px solid #86efac;border-radius:8px;margin-bottom:16px">
+        <span style="font-size:18px">✅</span>
+        <div style="font-size:13px;color:#166534">
+          <strong>三種方法全部執行</strong>（edgeR + FSJ offset、DESeq2、limma-voom）<br>
+          <span style="font-size:12px;color:#15803d">
+            結果分別輸出為獨立 TSV，報告內可即時切換比較。
+          </span>
+        </div>
+      </div>
+
+      <!-- Primary display method selector -->
+      <div style="font-size:13px;color:#555;margin-bottom:8px;font-weight:600">
+        報告預設顯示方法（主方法）
+      </div>
       <div class="method-grid">
 
         <label class="method-card {% if de_method == 'edgeR_ciriquant' %}selected{% endif %}"
@@ -418,8 +445,7 @@
                  {% if de_method == 'edgeR_ciriquant' %}checked{% endif %}>
           <div class="method-name">edgeR + FSJ offset <span class="rec-badge">推薦</span></div>
           <div class="method-desc">
-            同 <code>CIRI_DE_replicate</code>：以 FSJ（linear reads）為 offset，
-            測試 BSJ/FSJ 比值是否改變，並輸出 Type I / II 分類。
+            BSJ/FSJ 比值測試；輸出 Type I / II 分類；最具 circRNA 生物意義。
           </div>
         </label>
 
@@ -428,7 +454,7 @@
           <input type="radio" name="de_method" value="deseq2"
                  {% if de_method == 'deseq2' %}checked{% endif %}>
           <div class="method-name">DESeq2</div>
-          <div class="method-desc">RLE normalisation + Wald test；適合小樣本</div>
+          <div class="method-desc">最保守；適合樣本數較多（n ≥ 5）或作為嚴格基準。</div>
         </label>
 
         <label class="method-card {% if de_method == 'limma' %}selected{% endif %}"
@@ -436,7 +462,7 @@
           <input type="radio" name="de_method" value="limma"
                  {% if de_method == 'limma' %}checked{% endif %}>
           <div class="method-name">limma-voom</div>
-          <div class="method-desc">voom 轉換後 linear model；計算速度快</div>
+          <div class="method-desc">小樣本（n = 3）最穩定；recall 最高；適合探索性分析。</div>
         </label>
 
       </div>
@@ -444,7 +470,7 @@
       <div style="margin-top:12px; padding:10px 14px; background:#fefce8; border:1px solid #fde047;
                   border-radius:8px; font-size:12px; color:#713f12;">
         ⚠️ <strong>edgeR + FSJ offset</strong> 需要 CIRIquant GTF 中有 FSJ 欄位（CIRIquant ≥ 1.1）。
-        若使用 DCC-only 模式，請改選 DESeq2 或 limma。
+        若使用 DCC-only 模式，建議改以 DESeq2 或 limma 作為主方法（三方法仍全數執行）。
       </div>
     </div>
 
@@ -632,6 +658,39 @@
       showFileName(inp);
     }
   }
+
+  // ── Auto-detect group labels from existing GEO metadata ──────────────────
+  let _detectTimer = null;
+  function scheduleDetect(gseId) {
+    clearTimeout(_detectTimer);
+    if (!gseId || gseId.length < 6) return;
+    _detectTimer = setTimeout(() => detectLabels(gseId), 800);
+  }
+
+  async function detectLabels(gseId) {
+    try {
+      const r = await fetch(`/api/detect_labels?gse=${encodeURIComponent(gseId)}`);
+      const d = await r.json();
+      if (!d.detected) return;
+      const caseInp = document.getElementById('tumor-label-input');
+      const ctrlInp = document.getElementById('normal-label-input');
+      const badge   = document.getElementById('label-detect-badge');
+      if (caseInp) caseInp.value = d.case;
+      if (ctrlInp) ctrlInp.value = d.control;
+      if (badge) {
+        badge.textContent = `✓ 自動偵測（${d.rows} 個樣本）`;
+        badge.style.display = 'inline-flex';
+        setTimeout(() => { badge.style.display = 'none'; }, 6000);
+      }
+      console.log(`[detect_labels] GSE=${gseId} case=${d.case} control=${d.control}`);
+    } catch (_) {}
+  }
+
+  // Run on page load if GSE ID is already filled
+  (function() {
+    const v = document.getElementById('gse-id-input');
+    if (v && v.value.trim().length >= 6) detectLabels(v.value.trim());
+  })();
 </script>
 </body>
 </html>

@@ -24,6 +24,99 @@ _CONTROL_KEYWORDS = ["normal", "control", "ctrl", "healthy", "adjacent", "non-tu
                      "scramble", "mock"]
 
 
+def _normalize_label(text: str) -> str:
+    """Clean a raw metadata value into a compact label (lowercase, underscores)."""
+    text = re.sub(r"[^a-zA-Z0-9\s_-]", "", text.strip().lower())
+    text = re.sub(r"\s+", "_", text)
+    return text[:30]  # cap at 30 chars
+
+
+def _match_case_kw(text: str) -> str | None:
+    """Return the matched case keyword (the actual keyword string) or None."""
+    text_lower = text.lower()
+    for kw in _CASE_KEYWORDS:
+        if re.search(r"\b" + kw + r"\b", text_lower):
+            return kw
+    return None
+
+
+def _match_control_kw(text: str) -> str | None:
+    """Return the matched control keyword (the actual keyword string) or None."""
+    text_lower = text.lower()
+    for kw in _CONTROL_KEYWORDS:
+        if re.search(r"\b" + kw + r"\b", text_lower):
+            return kw
+    return None
+
+
+def detect_group_labels(df: pd.DataFrame) -> tuple[str, str]:
+    """
+    Infer case/control labels from GEO metadata columns.
+
+    Strategy (in priority order):
+    1. Structured fields (disease_state, source_name, tissue): if exactly 2
+       distinct non-empty values exist, classify each as case/control and
+       use the actual value text as the label.
+    2. Keyword extraction from all text fields: find the dominant case/control
+       keyword across all samples and return those keyword strings.
+    3. Fallback: ("tumor", "normal").
+
+    Returns (case_label, control_label).
+    """
+    # ── Strategy 1: structured fields ────────────────────────────────────────
+    for col in ("disease_state", "source_name", "tissue"):
+        if col not in df.columns:
+            continue
+        vals = df[col].dropna().astype(str)
+        vals = vals[vals.str.strip() != ""]
+        unique_vals = vals.str.strip().str.lower().unique()
+        if len(unique_vals) != 2:
+            continue
+
+        # Classify each unique value as case or control
+        label_a, label_b = unique_vals[0], unique_vals[1]
+        a_is_case    = _match_case_kw(label_a) is not None
+        b_is_case    = _match_case_kw(label_b) is not None
+        a_is_control = _match_control_kw(label_a) is not None
+        b_is_control = _match_control_kw(label_b) is not None
+
+        if a_is_case and b_is_control:
+            return _normalize_label(label_a), _normalize_label(label_b)
+        if b_is_case and a_is_control:
+            return _normalize_label(label_b), _normalize_label(label_a)
+        # Ambiguous but exactly 2 values: still useful — pick shorter as label
+        if not (a_is_case or a_is_control or b_is_case or b_is_control):
+            # Can't classify by keyword; skip this field
+            continue
+        # One side matches, other doesn't — treat matched side as case
+        if a_is_case or (not b_is_case and a_is_control is False):
+            return _normalize_label(label_a), _normalize_label(label_b)
+        return _normalize_label(label_b), _normalize_label(label_a)
+
+    # ── Strategy 2: keyword extraction across all text fields ────────────────
+    scan_cols = [c for c in ("disease_state", "source_name", "tissue", "sample_name")
+                 if c in df.columns]
+    case_kw_counts:    dict[str, int] = {}
+    control_kw_counts: dict[str, int] = {}
+
+    for _, row in df.iterrows():
+        combined = " ".join(str(row.get(c, "")) for c in scan_cols)
+        kw = _match_case_kw(combined)
+        if kw:
+            case_kw_counts[kw] = case_kw_counts.get(kw, 0) + 1
+        kw = _match_control_kw(combined)
+        if kw:
+            control_kw_counts[kw] = control_kw_counts.get(kw, 0) + 1
+
+    case_label    = max(case_kw_counts,    key=case_kw_counts.__getitem__)    if case_kw_counts    else "tumor"
+    control_label = max(control_kw_counts, key=control_kw_counts.__getitem__) if control_kw_counts else "normal"
+
+    if case_label == control_label:
+        return "tumor", "normal"
+
+    return case_label, control_label
+
+
 def _detect_condition(name: str, case_label: str = "tumor",
                       control_label: str = "normal") -> str | None:
     """Return case_label or control_label if a keyword matches, else None."""
