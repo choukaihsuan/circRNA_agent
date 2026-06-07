@@ -187,75 +187,100 @@ PIPELINE_STAGES = [
 ]
 
 
-def parse_log_progress(log_text: str) -> dict:
-    """Parse a Snakemake log and return per-rule status + overall progress.
-    Only the last Snakemake run (last 'Building DAG' section) is parsed,
-    so re-runs and retries in the same log file don't pollute the counts.
+def _parse_one_run(run_text: str) -> tuple:
+    """Parse one Snakemake run section.
+    Returns (job_to_rule, rule_started, rule_done, rule_failed, finished_count, total_count).
     """
-    # Split by "Building DAG" and take only the last run
-    dag_marker = "Building DAG of jobs"
-    parts = log_text.split(dag_marker)
-    if len(parts) > 1:
-        log_text = dag_marker + parts[-1]
-
     job_to_rule: dict[str, str] = {}
     rule_started: dict[str, int] = {}
     rule_done:    dict[str, int] = {}
     rule_failed:  set[str]       = set()
-    current_rule: str | None     = None
+    current_rule: Optional[str] = None
     finished_count = total_count = 0
 
-    for line in log_text.splitlines():
-        # "rule ciriquant:" or "localrule all:"
+    for line in run_text.splitlines():
         m = re.match(r"\s*(?:local)?rule\s+(\w+)\s*:", line)
         if m:
             current_rule = m.group(1)
             continue
 
-        # "    jobid: 5"  (indented, follows immediately after rule block)
         if current_rule:
             m = re.match(r"\s+jobid:\s*(\d+)", line)
             if m:
                 jid = m.group(1)
-                job_to_rule[jid]      = current_rule
+                job_to_rule[jid] = current_rule
                 rule_started[current_rule] = rule_started.get(current_rule, 0) + 1
                 current_rule = None
                 continue
-            # Non-indented non-empty line → lost rule context
             if line and not line[0].isspace():
                 current_rule = None
 
-        # "Finished job 5."
         m = re.search(r"Finished job (\d+)\.", line)
         if m:
             rule = job_to_rule.get(m.group(1))
             if rule:
                 rule_done[rule] = rule_done.get(rule, 0) + 1
 
-        # "Error in rule ciriquant:"
         m = re.match(r"\s*Error in rule\s+(\w+)\s*:", line)
         if m:
             rule_failed.add(m.group(1))
 
-        # "3 of 19 steps (16%) done"
         m = re.search(r"(\d+) of (\d+) steps", line)
         if m:
             finished_count = int(m.group(1))
             total_count    = int(m.group(2))
+
+    return job_to_rule, rule_started, rule_done, rule_failed, finished_count, total_count
+
+
+def parse_log_progress(log_text: str) -> dict:
+    """Parse a Snakemake log and return per-rule status + overall progress.
+
+    Strategy: parse ALL runs to build the set of rules that ever completed
+    (handles steps done in early runs), then use the LAST run to determine
+    current active status (error/running).  This prevents re-run retries from
+    inflating started counts while still showing historical completions.
+    """
+    dag_marker = "Building DAG of jobs"
+    parts = log_text.split(dag_marker)
+    run_texts = [dag_marker + p for p in parts[1:]] if len(parts) > 1 else [log_text]
+
+    # Rules that ever had at least one Finished job across all runs
+    rule_ever_done: set[str] = set()
+    rule_ever_done_count: dict[str, int] = {}
+    for rt in run_texts:
+        _, _, rd, _, _, _ = _parse_one_run(rt)
+        for rule, cnt in rd.items():
+            rule_ever_done.add(rule)
+            rule_ever_done_count[rule] = rule_ever_done_count.get(rule, 0) + cnt
+
+    # Last run: authoritative for current started/done/failed/progress counts
+    _, rule_started, rule_done, rule_failed, finished_count, total_count = \
+        _parse_one_run(run_texts[-1])
 
     stages = []
     for rule_id, label in PIPELINE_STAGES:
         started = rule_started.get(rule_id, 0)
         done    = rule_done.get(rule_id, 0)
         failed  = rule_id in rule_failed
-        if failed:
+
+        if failed and done < started:
+            # Last run had an error and not all jobs finished → genuine failure
             status = "error"
         elif started > 0 and done >= started:
+            # Last run completed all its jobs for this rule
             status = "done"
         elif started > 0:
+            # Last run started but not done yet
             status = "running"
+        elif rule_id in rule_ever_done:
+            # Completed in an earlier run; not touched in last run
+            status = "done"
+            done    = rule_ever_done_count.get(rule_id, 1)
+            started = done
         else:
             status = "pending"
+
         stages.append({
             "id":      rule_id,
             "label":   label,
