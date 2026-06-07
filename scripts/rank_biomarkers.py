@@ -100,6 +100,8 @@ def rank_biomarkers(
     lfc:               float = 1.0,
     de_sig_by:         str   = "auto",
     interactions_file: str   = "",
+    de_deseq2:         str   = "",
+    de_limma:          str   = "",
 ) -> None:
     de    = pd.read_csv(de_file,    sep="\t")
     annot = pd.read_csv(annot_file, sep="\t")
@@ -182,6 +184,32 @@ def rank_biomarkers(
         print("[rank] score dimensions: sig + fc + conf + circbase (4D)", file=sys.stderr)
 
     sig["biomarker_score"] = sig["biomarker_score"].round(4)
+
+    # ── n_sig_methods: count across all three DE methods ──────────────────────
+    sig["n_sig_methods"] = 1  # primary method is always 1 (these are already sig)
+    for other_file in [de_deseq2, de_limma]:
+        if not other_file or not Path(other_file).exists():
+            continue
+        try:
+            other = pd.read_csv(other_file, sep="\t")
+            if "log2FC" not in other.columns and "log2FoldChange" in other.columns:
+                other = other.rename(columns={"log2FoldChange": "log2FC"})
+            o_col, o_thr = _resolve_sig(other, de_sig_by, fdr)
+            if o_col in other.columns and "log2FC" in other.columns and "circ_id" in other.columns:
+                other_ids = set(other.loc[
+                    other[o_col].notna() &
+                    (other[o_col] < o_thr) &
+                    (other["log2FC"].abs() > lfc), "circ_id"
+                ].tolist())
+                sig.loc[sig["circ_id"].isin(other_ids), "n_sig_methods"] += 1
+        except Exception as e:
+            print(f"[rank] warning: could not read {other_file}: {e}", file=sys.stderr)
+
+    sig["n_sig_methods"] = sig["n_sig_methods"].astype(int)
+    counts = sig["n_sig_methods"].value_counts().sort_index()
+    for n, c in counts.items():
+        print(f"[rank]   {c} circRNAs significant in {n}/3 method(s)", file=sys.stderr)
+
     sig = sig.sort_values("biomarker_score", ascending=False)
     sig.insert(sig.columns.get_loc("biomarker_score") + 1, "rank",
                range(1, len(sig) + 1))
@@ -205,6 +233,8 @@ def main() -> None:
     parser.add_argument("--output",       required=True, help="Output ranked TSV")
     parser.add_argument("--interactions", default="",
                         help="interactions.json from predict_interactions (optional; adds miRNA/RBP dimensions)")
+    parser.add_argument("--de-deseq2",   default="", help="DESeq2 DE results TSV (optional; for n_sig_methods)")
+    parser.add_argument("--de-limma",    default="", help="limma DE results TSV (optional; for n_sig_methods)")
     parser.add_argument("--fdr",          type=float, default=0.05)
     parser.add_argument("--lfc",          type=float, default=1.0)
     parser.add_argument("--de-sig-by",  default="auto",
@@ -227,6 +257,8 @@ def main() -> None:
         lfc                = args.lfc,
         de_sig_by          = de_sig_by,
         interactions_file  = args.interactions,
+        de_deseq2          = args.de_deseq2,
+        de_limma           = args.de_limma,
     )
 
 

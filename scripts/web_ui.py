@@ -579,6 +579,143 @@ def run_manual():
     return redirect(url_for("status_job", job_id=job_id))
 
 
+@app.route("/api/scan_fastq")
+def api_scan_fastq():
+    """Scan a server-side directory for paired FASTQ files."""
+    path = request.args.get("path", "").strip()
+    if not path:
+        return jsonify({"error": "未指定路徑"}), 400
+    p = Path(path)
+    if not p.exists():
+        return jsonify({"error": f"路徑不存在：{path}"}), 404
+    if not p.is_dir():
+        return jsonify({"error": f"非目錄：{path}"}), 400
+
+    PAIR_PATTERNS = [
+        ("_1.fastq.gz",      "_2.fastq.gz"),
+        ("_R1.fastq.gz",     "_R2.fastq.gz"),
+        ("_R1_001.fastq.gz", "_R2_001.fastq.gz"),
+        ("_1.fq.gz",         "_2.fq.gz"),
+        ("_R1.fq.gz",        "_R2.fq.gz"),
+        ("_1.fastq",         "_2.fastq"),
+        ("_R1.fastq",        "_R2.fastq"),
+    ]
+
+    seen: set = set()
+    samples: list = []
+    for r1_suf, r2_suf in PAIR_PATTERNS:
+        for r1 in sorted(p.glob(f"*{r1_suf}")):
+            r2 = p / (r1.name[: -len(r1_suf)] + r2_suf)
+            if not r2.exists():
+                continue
+            base = r1.name[: -len(r1_suf)]
+            if base in seen:
+                continue
+            seen.add(base)
+            samples.append({
+                "name":      base,
+                "r1":        str(r1),
+                "r2":        str(r2),
+                "r1_name":   r1.name,
+                "r2_name":   r2.name,
+                "condition": "tumor",
+            })
+
+    return jsonify({"samples": samples, "count": len(samples), "path": str(p)})
+
+
+@app.route("/run_local", methods=["POST"])
+def run_local():
+    """Start pipeline with local FASTQ files (server-side paths via symlinks)."""
+    project_id   = request.form.get("project_id",   "LOCAL").strip() or "LOCAL"
+    tumor_label  = request.form.get("tumor_label",  "tumor").strip() or "tumor"
+    normal_label = request.form.get("normal_label", "normal").strip() or "normal"
+    cores        = int(request.form.get("cores", 8))
+    samples_json = request.form.get("samples_json", "[]")
+
+    try:
+        samples = json.loads(samples_json)
+    except json.JSONDecodeError:
+        return "Invalid samples JSON", 400
+
+    if not samples:
+        return redirect(url_for("index"))
+
+    cfg     = load_project_config(project_id)
+    cfg     = _update_paths_for_project(cfg, project_id)
+    raw_dir = Path(cfg["raw_dir"])
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    rows: list = []
+    for s in samples:
+        name = (s.get("name") or "").strip()
+        r1   = (s.get("r1")   or "").strip()
+        r2   = (s.get("r2")   or "").strip()
+        cond = (s.get("condition") or "tumor").strip()
+        if not name or not r1:
+            continue
+        for link, target in [(raw_dir / f"{name}_1.fastq.gz", r1),
+                             (raw_dir / f"{name}_2.fastq.gz", r2)]:
+            if link.exists() or link.is_symlink():
+                link.unlink()
+            if target:
+                link.symlink_to(target)
+        rows.append({"srr_id": name, "condition": cond})
+
+    if not rows:
+        return redirect(url_for("index"))
+
+    meta_dir  = BASE_DIR / "metadata"
+    proj_meta = _project_meta_dir(project_id)
+    meta_dir.mkdir(exist_ok=True)
+    proj_meta.mkdir(parents=True, exist_ok=True)
+
+    for lp in (meta_dir / "library_info.csv", proj_meta / "library_info.csv"):
+        with open(lp, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["srr_id", "paired"])
+            w.writeheader()
+            for r in rows:
+                w.writerow({"srr_id": r["srr_id"], "paired": "true"})
+
+    for gp in (meta_dir / "sample_groups.csv", proj_meta / "sample_groups.csv"):
+        with open(gp, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["srr_id", "condition"])
+            w.writeheader()
+            for r in rows:
+                w.writerow({"srr_id": r["srr_id"], "condition": r["condition"]})
+
+    cfg["project_id"]                        = project_id
+    cfg["threads"]                           = cores
+    cfg["metadata"]                          = str((proj_meta / "library_info.csv").relative_to(BASE_DIR))
+    cfg["groups"]                            = str((proj_meta / "sample_groups.csv").relative_to(BASE_DIR))
+    cfg.setdefault("de", {})["tumor_label"]  = tumor_label
+    cfg["de"]["normal_label"]                = normal_label
+    notify_email = request.form.get("notify_email", "").strip()
+    if notify_email:
+        cfg.setdefault("notify", {})["email_to"] = notify_email
+    save_project_snapshot(cfg)
+
+    kill_pipeline()
+    _snake   = _snake_bin()
+    job_id   = generate_job_id(project_id)
+    log_path = job_log_path(job_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w") as log_f:
+        subprocess.Popen(
+            [_snake,
+             "--snakefile", "workflow/Snakefile",
+             "--configfile", _configfile_for(project_id),
+             "--cores", str(cores),
+             "--keep-going", "--rerun-incomplete"],
+            cwd=str(BASE_DIR),
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            env=_snake_env(),
+        )
+    register_job(job_id, project_id, log_path, cores)
+    return redirect(url_for("status_job", job_id=job_id))
+
+
 @app.route("/status")
 def status():
     registry = load_registry()

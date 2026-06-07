@@ -245,6 +245,7 @@
     <div class="launch-tabs">
       <button class="launch-tab active" onclick="switchTab('gse', this)">🌐 GEO 資料集</button>
       <button class="launch-tab" onclick="switchTab('manual', this)">✏️ 手動 SRR 清單</button>
+      <button class="launch-tab" onclick="switchTab('local', this)">📁 本地 FASTQ</button>
     </div>
 
     <!-- Panel A: GSE -->
@@ -358,6 +359,82 @@
 
       </form>
     </div><!-- /panel-manual -->
+
+    <!-- Panel C: Local FASTQ -->
+    <div class="launch-panel" id="panel-local">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+        指定 Server 上已存放 FASTQ 的目錄，系統自動偵測配對檔案並建立 symlink 後執行 pipeline。
+        支援格式：<code>*_1.fastq.gz / *_2.fastq.gz</code>、<code>*_R1.fastq.gz / *_R2.fastq.gz</code> 等。
+      </p>
+
+      <!-- Meta row -->
+      <div class="manual-meta" style="margin-bottom:14px;">
+        <label>Project ID
+          <input type="text" id="local-project-id" placeholder="LOCAL" style="width:140px;">
+        </label>
+        <label>Case label
+          <input type="text" id="local-tumor-label" value="tumor" style="width:120px;">
+        </label>
+        <label>Control label
+          <input type="text" id="local-normal-label" value="normal" style="width:120px;">
+        </label>
+        <label>CPU cores
+          <input type="number" id="local-cores" value="{{ config.get('threads', 8) }}" min="1" max="96" style="width:70px;text-align:center;">
+        </label>
+      </div>
+
+      <!-- Directory scan row -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+        <input type="text" id="local-path"
+               placeholder="/home3/username/mydata/fastq/"
+               style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:monospace;">
+        <button type="button" id="scan-btn" onclick="scanFastq()"
+                style="padding:9px 18px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">
+          🔍 掃描
+        </button>
+      </div>
+      <div id="scan-status" style="font-size:12px;color:var(--muted);margin-bottom:10px;"></div>
+
+      <!-- Detected samples table -->
+      <div id="local-samples-section" style="display:none;">
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">偵測到的樣本（可修改 Sample ID 與 Condition）</div>
+        <table class="srr-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Sample ID</th>
+              <th>R1 檔案</th>
+              <th>R2 檔案</th>
+              <th>Condition</th>
+            </tr>
+          </thead>
+          <tbody id="local-sample-rows"></tbody>
+        </table>
+
+        <!-- Notification email -->
+        <div style="margin:14px 0 0;">
+          <label style="font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-weight:600;min-width:100px;">通知 Email</span>
+            <input type="email" id="local-notify-email"
+                   placeholder="（選填）分析完成後寄送通知"
+                   style="flex:1;min-width:220px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+          </label>
+        </div>
+
+        <form id="local-form" method="POST" action="/run_local" style="margin-top:16px;">
+          <input type="hidden" id="local-samples-json" name="samples_json" value="[]">
+          <input type="hidden" id="lf-project-id"   name="project_id">
+          <input type="hidden" id="lf-tumor-label"  name="tumor_label">
+          <input type="hidden" id="lf-normal-label" name="normal_label">
+          <input type="hidden" id="lf-cores"        name="cores">
+          <input type="hidden" id="lf-notify-email" name="notify_email">
+          <button type="button" onclick="submitLocal()" class="btn btn-geo" {% if running %}disabled{% endif %}>
+            🚀 啟動分析
+          </button>
+        </form>
+      </div>
+    </div><!-- /panel-local -->
+
   </div>
 
   <form method="POST" action="/update">
@@ -616,6 +693,66 @@
     document.querySelectorAll('.launch-tab').forEach(b => b.classList.remove('active'));
     document.getElementById('panel-' + name).classList.add('active');
     btn.classList.add('active');
+  }
+
+  // ── Local FASTQ scan ─────────────────────────────────────────────────────────
+  let _localSamples = [];
+
+  async function scanFastq() {
+    const path = document.getElementById('local-path').value.trim();
+    if (!path) { alert('請輸入目錄路徑'); return; }
+    const btn = document.getElementById('scan-btn');
+    const status = document.getElementById('scan-status');
+    btn.textContent = '掃描中…'; btn.disabled = true;
+    status.textContent = '';
+    try {
+      const resp = await fetch('/api/scan_fastq?path=' + encodeURIComponent(path));
+      const data = await resp.json();
+      if (data.error) { status.textContent = '❌ ' + data.error; return; }
+      if (data.count === 0) { status.textContent = '⚠️ 未找到配對的 FASTQ 檔案，請確認檔名格式（_1/_2 或 _R1/_R2）'; return; }
+      status.textContent = `✅ 找到 ${data.count} 個樣本`;
+      _localSamples = data.samples;
+      renderLocalSamples(data.samples);
+    } catch (e) {
+      status.textContent = '❌ 掃描失敗：' + e.message;
+    } finally {
+      btn.textContent = '🔍 掃描'; btn.disabled = false;
+    }
+  }
+
+  function renderLocalSamples(samples) {
+    const tbody = document.getElementById('local-sample-rows');
+    tbody.innerHTML = '';
+    samples.forEach((s, i) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="color:var(--muted);font-size:12px">${i + 1}</td>
+        <td><input type="text" class="local-name" value="${s.name}"
+              style="width:160px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;"></td>
+        <td style="font-size:11px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${s.r1}">${s.r1_name}</td>
+        <td style="font-size:11px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${s.r2}">${s.r2_name}</td>
+        <td><select class="local-cond" style="padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+          <option value="tumor">tumor</option>
+          <option value="normal">normal</option>
+        </select></td>`;
+      tbody.appendChild(tr);
+    });
+    document.getElementById('local-samples-section').style.display = 'block';
+  }
+
+  function submitLocal() {
+    const names = [...document.querySelectorAll('.local-name')].map(e => e.value.trim());
+    const conds = [...document.querySelectorAll('.local-cond')].map(e => e.value);
+    const payload = _localSamples.map((s, i) => ({
+      name: names[i] || s.name, r1: s.r1, r2: s.r2, condition: conds[i]
+    }));
+    document.getElementById('local-samples-json').value = JSON.stringify(payload);
+    document.getElementById('lf-project-id').value   = document.getElementById('local-project-id').value.trim() || 'LOCAL';
+    document.getElementById('lf-tumor-label').value  = document.getElementById('local-tumor-label').value.trim() || 'tumor';
+    document.getElementById('lf-normal-label').value = document.getElementById('local-normal-label').value.trim() || 'normal';
+    document.getElementById('lf-cores').value        = document.getElementById('local-cores').value;
+    document.getElementById('lf-notify-email').value = document.getElementById('local-notify-email').value.trim();
+    document.getElementById('local-form').submit();
   }
 
   // ── Manual SRR table ─────────────────────────────────────────────────────────

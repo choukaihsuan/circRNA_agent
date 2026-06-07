@@ -203,6 +203,8 @@ rule consensus_filter:
         min_bsj           = config["consensus"]["min_bsj_reads"],
         max_junction_ratio = config["consensus"].get("max_junction_ratio", 1.0),
         qc_bsj_threshold   = config["consensus"].get("qc_bsj_threshold", 5),
+        adaptive_flag      = "--adaptive" if config["consensus"].get("adaptive", True) else "",
+        adaptive_ratio     = config["consensus"].get("adaptive_ratio", 0.1),
     log: "logs/consensus/{srr}.log"
     shell:
         """
@@ -216,6 +218,8 @@ rule consensus_filter:
             --min-bsj             {params.min_bsj} \
             --max-junction-ratio  {params.max_junction_ratio} \
             --qc-bsj-threshold    {params.qc_bsj_threshold} \
+            {params.adaptive_flag} \
+            --adaptive-ratio      {params.adaptive_ratio} \
             2>&1 | tee {log}
         """
 

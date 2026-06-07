@@ -59,9 +59,11 @@ rule annotate_circbase:
 
 
 rule rank_biomarkers:
-    """Rank DE circRNAs by composite biomarker score (6D when interactions available)."""
+    """Rank DE circRNAs by composite biomarker score (6D when interactions available) + n_sig_methods."""
     input:
         de           = RESULTS_DIR + "/de/de_results.tsv",
+        de_deseq2    = RESULTS_DIR + "/de/de_results_deseq2.tsv",
+        de_limma     = RESULTS_DIR + "/de/de_results_limma.tsv",
         annot        = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
         summary      = RESULTS_DIR + "/circRNA/count_matrix.tsv",
         interactions = RESULTS_DIR + "/de/interactions.json",
@@ -76,6 +78,8 @@ rule rank_biomarkers:
         """
         python scripts/rank_biomarkers.py \
             --de           {input.de} \
+            --de-deseq2    {input.de_deseq2} \
+            --de-limma     {input.de_limma} \
             --annot        {input.annot} \
             --output       {output} \
             --interactions {input.interactions} \
