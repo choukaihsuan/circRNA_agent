@@ -191,17 +191,20 @@ result_edger <- tryCatch({
   normal_idx <- which(condition == normal_label)
   csi_fn <- function(idx)
     rowMeans(bsj[, idx, drop = FALSE] / (bsj[, idx, drop = FALSE] + fsj[, idx, drop = FALSE] + 1))
-  csi_df <- data.frame(circ_id    = rownames(bsj),
-                        csi_tumor  = csi_fn(tumor_idx),
-                        csi_normal = csi_fn(normal_idx))
-  csi_df$delta_csi <- csi_df$csi_tumor - csi_df$csi_normal
+  csi_case_col    <- paste0("csi_", tumor_label)
+  csi_control_col <- paste0("csi_", normal_label)
+  csi_df <- data.frame(circ_id = rownames(bsj), stringsAsFactors = FALSE)
+  csi_df[[csi_case_col]]    <- csi_fn(tumor_idx)
+  csi_df[[csi_control_col]] <- csi_fn(normal_idx)
+  csi_df$delta_csi <- csi_df[[csi_case_col]] - csi_df[[csi_control_col]]
   res <- merge(res, csi_df, by = "circ_id", all.x = TRUE)
 
   res_df <- res %>%
     rename(log2FC = logFC_bsj, pvalue = PValue_bsj, padj = FDR_bsj,
            pvalue_fsj = PValue_fsj) %>%
     select(circ_id, log2FC, pvalue, padj,
-           logFC_fsj, pvalue_fsj, FDR_fsj, delta_csi, csi_tumor, csi_normal, logCPM) %>%
+           logFC_fsj, pvalue_fsj, FDR_fsj, delta_csi,
+           all_of(c(csi_case_col, csi_control_col)), logCPM) %>%
     arrange(padj)
 
   log_cpm <- cpm(dge, log = TRUE, offset = offset_mat)
@@ -224,7 +227,10 @@ result_deseq <- tryCatch({
   res_df <- as.data.frame(res)
   names(res_df)[names(res_df) == "log2FoldChange"] <- "log2FC"
   res_df <- res_df %>% tibble::rownames_to_column("circ_id") %>% arrange(padj)
-  vsd    <- vst(dds, blind = FALSE)
+  vsd <- tryCatch(
+    vst(dds, blind = FALSE),
+    error = function(e) varianceStabilizingTransformation(dds, blind = FALSE)
+  )
   list(res_df = res_df, log_cpm = assay(vsd), success = TRUE)
 }, error = function(e) {
   message("[WARN] DESeq2: ", conditionMessage(e))

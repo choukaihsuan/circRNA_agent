@@ -1,5 +1,5 @@
 """
-prepare_metadata.py – Assign tumor/normal group labels to samples.
+prepare_metadata.py – Assign case/control group labels to samples.
 
 Modes:
   1. Auto-detect: match common keywords in sample_name
@@ -14,24 +14,32 @@ from pathlib import Path
 
 import pandas as pd
 
-# Keywords used for auto-detection (case-insensitive)
-_TUMOR_KEYWORDS  = ["tumor", "cancer", "carcinoma", "malignant", "case", "patient"]
-_NORMAL_KEYWORDS = ["normal", "control", "healthy", "adjacent", "non-tumor", "benign"]
+# Keywords for auto-detection (case-insensitive).
+# Matches are mapped to the configured case/control labels (default: tumor/normal).
+_CASE_KEYWORDS    = ["tumor", "cancer", "carcinoma", "malignant", "case", "patient",
+                     "hypoxia", "treated", "treatment", "drug", "knockdown", "ko",
+                     "overexpression", "oe", "stimulated"]
+_CONTROL_KEYWORDS = ["normal", "control", "ctrl", "healthy", "adjacent", "non-tumor",
+                     "benign", "normoxia", "untreated", "vehicle", "wildtype", "wt",
+                     "scramble", "mock"]
 
 
-def _detect_condition(name: str) -> str | None:
-    """Return 'tumor' or 'normal' if a keyword matches, else None."""
+def _detect_condition(name: str, case_label: str = "tumor",
+                      control_label: str = "normal") -> str | None:
+    """Return case_label or control_label if a keyword matches, else None."""
     name_lower = name.lower()
-    for kw in _TUMOR_KEYWORDS:
+    for kw in _CASE_KEYWORDS:
         if re.search(kw, name_lower):
-            return "tumor"
-    for kw in _NORMAL_KEYWORDS:
+            return case_label
+    for kw in _CONTROL_KEYWORDS:
         if re.search(kw, name_lower):
-            return "normal"
+            return control_label
     return None
 
 
-def auto_assign(metadata: pd.DataFrame) -> pd.DataFrame:
+def auto_assign(metadata: pd.DataFrame,
+                case_label: str = "tumor",
+                control_label: str = "normal") -> pd.DataFrame:
     """
     Try to assign conditions from the 'sample_name' column.
     Returns a DataFrame with columns [srr_id, sample_name, condition].
@@ -42,7 +50,9 @@ def auto_assign(metadata: pd.DataFrame) -> pd.DataFrame:
 
     rows = []
     for _, row in metadata.iterrows():
-        condition = _detect_condition(str(row.get("sample_name", "")))
+        condition = _detect_condition(
+            str(row.get("sample_name", "")), case_label, control_label
+        )
         rows.append({
             "srr_id":      row["srr_id"],
             "sample_name": row.get("sample_name", ""),
@@ -56,25 +66,28 @@ def auto_assign(metadata: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def interactive_assign(metadata: pd.DataFrame) -> pd.DataFrame:
+def interactive_assign(metadata: pd.DataFrame,
+                       case_label: str = "tumor",
+                       control_label: str = "normal") -> pd.DataFrame:
     """
-    Walk through each sample and ask user to type 'tumor' or 'normal'.
+    Walk through each sample and ask user to assign a condition.
     Pre-fills auto-detected values so user can press Enter to accept.
+    Accepts any non-empty string (not limited to tumor/normal).
     """
-    groups = auto_assign(metadata)
+    groups = auto_assign(metadata, case_label, control_label)
 
     print("\n── Manual group assignment ──────────────────────────")
     print("Press Enter to accept the auto-detected value, or type a new one.")
-    print("Valid values: tumor | normal\n")
+    print(f"Typical values: {case_label} | {control_label}\n")
 
     updated = []
     for _, row in groups.iterrows():
         suggestion = row["condition"] or "?"
         user_input = input(
             f"  {row['srr_id']}  [{row['sample_name']}]  condition [{suggestion}]: "
-        ).strip().lower()
-        condition = user_input if user_input in ("tumor", "normal") else suggestion
-        if condition not in ("tumor", "normal"):
+        ).strip()
+        condition = user_input if user_input else suggestion
+        if not condition or condition == "?":
             condition = "unknown"
         updated.append({
             "srr_id":      row["srr_id"],
@@ -86,9 +99,11 @@ def interactive_assign(metadata: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_or_create(
-    metadata_file: str = "metadata/library_info.csv",
-    groups_file:   str = "metadata/sample_groups.csv",
-    interactive:   bool = False,
+    metadata_file:  str  = "metadata/library_info.csv",
+    groups_file:    str  = "metadata/sample_groups.csv",
+    interactive:    bool = False,
+    case_label:     str  = "tumor",
+    control_label:  str  = "normal",
 ) -> pd.DataFrame:
     """
     Return sample groups DataFrame.
@@ -101,7 +116,9 @@ def load_or_create(
         return df
 
     metadata = pd.read_csv(metadata_file)
-    groups   = interactive_assign(metadata) if interactive else auto_assign(metadata)
+    groups   = (interactive_assign(metadata, case_label, control_label)
+                if interactive
+                else auto_assign(metadata, case_label, control_label))
 
     Path(groups_file).parent.mkdir(parents=True, exist_ok=True)
     groups.to_csv(groups_file, index=False)
@@ -112,12 +129,17 @@ def load_or_create(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Assign tumor/normal labels to samples")
-    parser.add_argument("--metadata",    default="metadata/library_info.csv")
-    parser.add_argument("--groups",      default="metadata/sample_groups.csv")
-    parser.add_argument("--interactive", action="store_true",
+    parser = argparse.ArgumentParser(description="Assign case/control labels to samples")
+    parser.add_argument("--metadata",      default="metadata/library_info.csv")
+    parser.add_argument("--groups",        default="metadata/sample_groups.csv")
+    parser.add_argument("--interactive",   action="store_true",
                         help="Prompt user for each sample's condition")
+    parser.add_argument("--case-label",    default="tumor",
+                        help="Label for the case/treatment group (default: tumor)")
+    parser.add_argument("--control-label", default="normal",
+                        help="Label for the control group (default: normal)")
     args = parser.parse_args()
 
-    df = load_or_create(args.metadata, args.groups, args.interactive)
+    df = load_or_create(args.metadata, args.groups, args.interactive,
+                        args.case_label, args.control_label)
     print(df.to_string(index=False))

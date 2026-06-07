@@ -55,8 +55,8 @@ normal_samples <- intersect(
 )
 
 message(sprintf(
-  "[isoform_switching] %d tumor, %d normal samples in matrix",
-  length(tumor_samples), length(normal_samples)
+  "[isoform_switching] %d %s, %d %s samples in matrix",
+  length(tumor_samples), tumor_label, length(normal_samples), normal_label
 ))
 
 if (length(tumor_samples) == 0 || length(normal_samples) == 0) {
@@ -133,17 +133,18 @@ perform_switching_test <- function(mat, iso_grp,
         )
       )
 
-      gene_rows[[iso]] <- data.frame(
+      row_df <- data.frame(
         circ_id    = iso,
         gene_id    = gid,
         gene_name  = gene_meta$gene_name,
         n_isoforms = length(isoforms),
-        iui_tumor  = mean(iui_t),
-        iui_normal = mean(iui_n),
         delta_iui  = mean(iui_t) - mean(iui_n),
         p_value    = wt$p.value,
         stringsAsFactors = FALSE
       )
+      row_df[[paste0("iui_", tumor_label)]]  <- mean(iui_t)
+      row_df[[paste0("iui_", normal_label)]] <- mean(iui_n)
+      gene_rows[[iso]] <- row_df
     }
 
     if (length(gene_rows) > 0) {
@@ -180,15 +181,18 @@ switching_results <- perform_switching_test(
 
 # ── Build IUI combined matrix ─────────────────────────────────────────────────
 
+case_col    <- paste0("iui_", tumor_label)
+control_col <- paste0("iui_", normal_label)
+
 if (!is.null(iui_tumor) && !is.null(iui_normal)) {
   iui_combined <- full_join(
-    rename(iui_tumor,  iui_tumor  = mean_iui),
-    rename(iui_normal, iui_normal = mean_iui),
+    rename(iui_tumor,  !!case_col    := mean_iui),
+    rename(iui_normal, !!control_col := mean_iui),
     by = c("circ_id", "gene_id")
   ) %>%
-    mutate(delta_iui = iui_tumor - iui_normal)
+    mutate(delta_iui = .data[[case_col]] - .data[[control_col]])
 } else if (!is.null(iui_tumor)) {
-  iui_combined <- rename(iui_tumor, iui_tumor = mean_iui)
+  iui_combined <- rename(iui_tumor, !!case_col := mean_iui)
 } else {
   iui_combined <- data.frame()
 }

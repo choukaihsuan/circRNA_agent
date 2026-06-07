@@ -544,7 +544,9 @@ def _type_section(sig: pd.DataFrame) -> str:
 """
 
 
-def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
+def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10,
+                        case_label: str = "tumor",
+                        control_label: str = "normal") -> str:
     """Plotly stacked-bar of IUI for top switching genes; falls back to empty string."""
     try:
         import plotly.graph_objects as go  # type: ignore[import]
@@ -556,6 +558,10 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
         )
     if sig.empty or "gene_name" not in sig.columns:
         return ""
+
+    # Detect IUI column names (dynamic based on labels, fall back to tumor/normal)
+    iui_case_col    = f"iui_{case_label}"    if f"iui_{case_label}"    in sig.columns else "iui_tumor"
+    iui_control_col = f"iui_{control_label}" if f"iui_{control_label}" in sig.columns else "iui_normal"
 
     top_genes = (
         sig.groupby("gene_name")["padj_global"]
@@ -576,15 +582,15 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
             short = str(row["circ_id"]).split(":")[-1]
             fig.add_trace(go.Bar(
                 name        = f"{gene} | {short}",
-                x           = [[gene, gene], ["Normal", "Tumor"]],
-                y           = [row.get("iui_normal", 0), row.get("iui_tumor", 0)],
+                x           = [[gene, gene], [control_label.title(), case_label.title()]],
+                y           = [row.get(iui_control_col, 0), row.get(iui_case_col, 0)],
                 marker_color= colors[int(i) % len(colors)],
                 legendgroup = gene,
             ))
 
     fig.update_layout(
         barmode       = "stack",
-        title         = "Isoform Usage Index — Tumor vs Normal (significant switching only)",
+        title         = f"Isoform Usage Index — {case_label.title()} vs {control_label.title()} (significant switching only)",
         yaxis_title   = "Isoform Usage Index (IUI)",
         height        = 500,
         legend_title  = "Gene | BSJ coords",
@@ -597,8 +603,10 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10) -> str:
 
 
 def _isoform_section(switching_file: Optional[str],
-                     isoform_file:  Optional[str] = None,
-                     circbase_file: Optional[str] = None) -> str:
+                     isoform_file:   Optional[str] = None,
+                     circbase_file:  Optional[str] = None,
+                     case_label:     str = "tumor",
+                     control_label:  str = "normal") -> str:
     """Return HTML block for isoform switching results; empty string if unavailable."""
     if not switching_file or not Path(switching_file).exists():
         return ""
@@ -652,11 +660,13 @@ def _isoform_section(switching_file: Optional[str],
             return " · ".join(parts) if parts else "—"
         sig["exon_structure"] = sig.apply(_struct, axis=1)
 
-    plot_html = _plot_isoform_usage(sig)
+    plot_html = _plot_isoform_usage(sig, case_label=case_label, control_label=control_label)
 
+    iui_case_col    = f"iui_{case_label}"
+    iui_control_col = f"iui_{control_label}"
     show_cols = [c for c in
                  ["gene_name", "circ_id", "exon_structure", "circbase_id",
-                  "iui_normal", "iui_tumor", "delta_iui", "p_value"]
+                  iui_control_col, iui_case_col, "delta_iui", "p_value"]
                  if c in sig.columns]
     sort_keys = [c for c in ["gene_name", "p_value"] if c in sig.columns]
     table_html = (
@@ -689,6 +699,63 @@ def _isoform_section(switching_file: Optional[str],
   {plot_html}
   {table_html}
 """
+
+
+def _compute_score_dist_data(
+    de: pd.DataFrame,
+    p_col: str,
+    sig_thr: float,
+    lfc: float,
+    bm_lookup: dict,
+    method_label: str = "",
+) -> Optional[dict]:
+    """Pre-compute score distribution data for one DE method (for JS-side Plotly.react)."""
+    if p_col not in de.columns or "log2FC" not in de.columns or "circ_id" not in de.columns:
+        return None
+    mask = de[p_col].notna() & (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
+    sig = de[mask].copy()
+    if sig.empty:
+        return None
+    n = len(sig)
+    sig = sig.copy()
+    sig["_sig"] = sig[p_col].apply(lambda p: min(-math.log10(max(p, 1e-10)), 10))
+    sig["_fc"]  = sig["log2FC"].abs().clip(upper=5)
+    def _mn(s):
+        mn, mx = s.min(), s.max()
+        return (s - mn) / (mx - mn + 1e-10)
+    sig["_sig_n"] = _mn(sig["_sig"])
+    sig["_fc_n"]  = _mn(sig["_fc"])
+    use_ixn = any(bm_lookup.get(str(r), {}).get("mirna_n", 0) > 0 for r in sig["circ_id"])
+    ndim = 6.0 if use_ixn else 4.0
+    scores = []
+    for _, r in sig.iterrows():
+        lu = bm_lookup.get(str(r["circ_id"]), {})
+        base = r["_sig_n"] + r["_fc_n"] + lu.get("conf_n", 0) + lu.get("known", 0)
+        if use_ixn:
+            base += lu.get("mirna_n", 0) + lu.get("rbp_n", 0)
+        scores.append(round(float(base) / ndim, 4))
+    scores.sort(reverse=True)
+    try:
+        import numpy as _np
+        arr = _np.array(scores)
+        mu = float(arr.mean()); sd = float(arr.std())
+        x_n = _np.linspace(max(0, arr.min()-0.05), min(1, arr.max()+0.05), 200)
+        try:
+            from scipy.stats import norm as _norm, shapiro as _shap
+            y_n = _norm.pdf(x_n, mu, sd).tolist()
+            sw_w, sw_p = (_shap(arr) if n <= 5000 else (None, None))
+            sw_w = float(sw_w) if sw_w is not None else None
+            sw_p = float(sw_p) if sw_p is not None else None
+        except Exception:
+            y_n = [(1/(sd*(2*3.14159)**0.5))*math.exp(-0.5*((x-mu)/sd)**2) for x in x_n.tolist()]
+            sw_w = sw_p = None
+        return {"n": n, "label": method_label, "scores": scores,
+                "mu": round(mu,4), "sd": round(sd,4),
+                "x_norm": [round(float(x),4) for x in x_n],
+                "y_norm": [round(float(y),4) for y in y_n],
+                "sw_w": round(sw_w,4) if sw_w else None, "sw_p": sw_p}
+    except Exception:
+        return None
 
 
 def _biomarker_score_dist(bm: pd.DataFrame) -> str:
@@ -751,7 +818,7 @@ def _biomarker_score_dist(bm: pd.DataFrame) -> str:
         plot_bgcolor="white", paper_bgcolor="white",
         hovermode="closest",
     )
-    return fig.to_html(include_plotlyjs=False, full_html=False)
+    return fig.to_html(include_plotlyjs=False, full_html=False, div_id="bm-scatter-plot")
 
 
 def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
@@ -833,7 +900,7 @@ def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
             font=dict(size=10),
         )],
     )
-    chart_html = fig.to_html(include_plotlyjs=False, full_html=False)
+    chart_html = fig.to_html(include_plotlyjs=False, full_html=False, div_id="bm-hist-plot")
     caption = (
         "<p style='font-size:11px;color:#888;margin:2px 0 0;line-height:1.6'>"
         "垂直線：<b>實線</b> = μ（{mu:.3f}）；"
@@ -855,8 +922,8 @@ def _biomarker_section(biomarker_file: Optional[str],
     if bm.empty:
         return ""
     show_cols = [c for c in ["rank", "circ_id", "log2FC", "n_mirna", "n_rbp",
-                              "biomarker_score", "in_circbase", "circbase_id",
-                              "circbase_gene", "Type"]
+                              "biomarker_score", "n_sig_methods",
+                              "in_circbase", "circbase_id", "circbase_gene", "Type"]
                  if c in bm.columns]
     has_interactions = "n_mirna" in bm.columns and (bm["n_mirna"].max() + bm["n_rbp"].max()) > 0
     if has_interactions:
@@ -867,7 +934,9 @@ def _biomarker_section(biomarker_file: Optional[str],
     dist_html = _biomarker_score_dist(bm)
     norm_html = _biomarker_normality_plot(bm)
 
-    disp = _fmt_floats(bm[show_cols].head(30).copy())
+    n_total = len(bm)
+    bm_top = bm.head(30).copy()
+    disp = _fmt_floats(bm_top[show_cols].copy())
     if "circ_id" in disp.columns and interactions is not None:
         def _link(v: str) -> str:
             tip = "in interaction data" if str(v) in interactions else "no interaction data pre-fetched"
@@ -875,15 +944,60 @@ def _biomarker_section(biomarker_file: Optional[str],
                     f'title="{tip}">{v}</a>')
         disp["circ_id"] = disp["circ_id"].astype(str).apply(_link)
 
-    table_html = _dl_wrap(
-        disp.to_html(index=False, classes="table", border=0, na_rep="—", escape=False),
-        "tbl_biomarker", "biomarker_candidates.csv"
-    )
+    raw_html = disp.to_html(index=False, classes="table", border=0, na_rep="—", escape=False)
+    # Inject data-nsig into body <tr> tags.
+    # pandas renders the header as <tr style="text-align: right;"> which does NOT
+    # match plain <tr>, so every matched <tr> is a body row — no header skip needed.
+    if "n_sig_methods" in bm_top.columns:
+        import re as _re
+        nsig_vals = bm_top["n_sig_methods"].tolist()
+        _idx = [0]
+        def _inject(m):
+            v = nsig_vals[_idx[0]] if _idx[0] < len(nsig_vals) else 1
+            _idx[0] += 1
+            fw = 'font-weight:bold;' if int(v) >= 3 else ''
+            return f'<tr data-nsig="{v}" style="{fw}">'
+        raw_html = _re.sub(r'<tr>', _inject, raw_html)
 
-    n_total = len(bm)
+    table_html = _dl_wrap(raw_html, "tbl_biomarker", "biomarker_candidates.csv")
+
+    # Build filter UI (only when n_sig_methods column exists)
+    filter_ui = ""
+    if "n_sig_methods" in bm.columns:
+        n3 = int((bm.head(30)["n_sig_methods"] == 3).sum())
+        n2 = int((bm.head(30)["n_sig_methods"] >= 2).sum())
+        filter_ui = f"""
+  <div id="bm-filter-bar" style="display:flex;align-items:center;gap:8px;margin:10px 0 6px;flex-wrap:wrap">
+    <span style="font-size:12px;color:#666">顯示：</span>
+    <button class="bm-filter-btn active" onclick="filterBiomarker(0)"
+      style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
+             background:#2c6fad;color:white;cursor:pointer">全部（{min(n_total,30)}）</button>
+    <button class="bm-filter-btn" onclick="filterBiomarker(2)"
+      style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
+             background:white;color:#555;cursor:pointer">≥ 2 方法顯著（{n2}）</button>
+    <button class="bm-filter-btn" onclick="filterBiomarker(3)"
+      style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
+             background:white;color:#555;cursor:pointer">3 方法均顯著（{n3}）</button>
+    <span style="font-size:11px;color:#999;margin-left:4px">n_sig_methods = 1/2/3 種 DE 方法中顯著</span>
+  </div>
+  <script>
+  function filterBiomarker(minN) {{
+    document.querySelectorAll('.bm-filter-btn').forEach(function(b) {{
+      b.style.background = 'white'; b.style.color = '#555';
+    }});
+    event.currentTarget.style.background = '#2c6fad';
+    event.currentTarget.style.color = 'white';
+    var rows = document.querySelectorAll('#tbl_biomarker tbody tr');
+    rows.forEach(function(r) {{
+      var n = parseInt(r.getAttribute('data-nsig') || '1');
+      r.style.display = (minN === 0 || n >= minN) ? '' : 'none';
+    }});
+  }}
+  </script>"""
+
     dist_section = ""
     if dist_html or norm_html:
-        dist_section = f"<h3 style='font-size:14px;color:#444;margin:16px 0 4px'>Score Distribution — all {n_total} significant DE circRNAs</h3>"
+        dist_section = f"<h3 id='bm-dist-title' style='font-size:14px;color:#444;margin:16px 0 4px'>Score Distribution — all {n_total} significant DE circRNAs</h3>"
         if dist_html and norm_html:
             dist_section += (
                 "<div style='display:flex;gap:16px;flex-wrap:wrap'>"
@@ -900,6 +1014,7 @@ def _biomarker_section(biomarker_file: Optional[str],
   {dist_section}
   <h3 style="font-size:14px;color:#444;margin:20px 0 4px">Top {min(n_total, 30)} Biomarker Candidates</h3>
   <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_id</strong> to view exon diagram, miRNA and RBP binding sites.</p>
+  {filter_ui}
   {table_html}
 """
 
@@ -1080,7 +1195,7 @@ def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
     fig = go.Figure(go.Heatmap(
         z=z.values.tolist(), x=z.columns.tolist(), y=y_labels,
         colorscale=[[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']], zmid=0,
-        colorbar=dict(title="z-score<br>(normal-<br>centered)"),
+        colorbar=dict(title=f"z-score<br>({normal_label}-<br>centered)"),
         hovertemplate="<b>%{y}</b><br>%{x}<br>z-score: %{z:.2f}<extra></extra>",
     ))
     fig.update_layout(
@@ -1120,10 +1235,11 @@ def _plotly_pca(matrix: pd.DataFrame, groups_file: Optional[str] = None) -> str:
 
     samples    = matrix.columns.tolist()
     conditions = [condition_map.get(smp, "unknown") for smp in samples]
-    color_map  = {"tumor": "#d62728", "normal": "#2CA02C", "unknown": "#888"}
-    fallback   = ["#2563eb", "#e07b39", "#16a34a", "#9333ea", "#dc2626"]
-    for i, c in enumerate(sorted(set(conditions))):
-        color_map.setdefault(c, fallback[i % len(fallback)])
+    fallback   = ["#d62728", "#2CA02C", "#2563eb", "#e07b39", "#9333ea", "#dc2626"]
+    uniq_conds = sorted(set(conditions) - {"unknown"})
+    color_map: dict = {"unknown": "#888"}
+    for i, c in enumerate(uniq_conds):
+        color_map[c] = fallback[i % len(fallback)]
 
     fig = go.Figure()
     for cond in sorted(set(conditions)):
@@ -1344,6 +1460,50 @@ def build_report(
     if de_method not in sig_sets_venn:
         sig_sets_venn[de_method] = _sig_ids_from_de(de, p_col, sig_thr, lfc)
 
+    # ── Build bm_lookup for per-method score distribution ──────────────────────
+    _bm_lookup: dict = {}
+    if biomarker_file and Path(biomarker_file).exists():
+        try:
+            _bm_df = pd.read_csv(biomarker_file, sep="\t")
+            _conf_vals = pd.to_numeric(_bm_df.get("confidence_score", pd.Series()), errors="coerce").fillna(0)
+            _mirna_vals = pd.to_numeric(_bm_df.get("n_mirna", pd.Series(0)), errors="coerce").fillna(0)
+            _rbp_vals   = pd.to_numeric(_bm_df.get("n_rbp",   pd.Series(0)), errors="coerce").fillna(0)
+            _conf_mn, _conf_mx = _conf_vals.min(), _conf_vals.max()
+            _mirna_mx = _mirna_vals.max(); _rbp_mx = _rbp_vals.max()
+            for _, _br in _bm_df.iterrows():
+                _cid = str(_br.get("circ_id", ""))
+                if not _cid: continue
+                _c = float(pd.to_numeric(_br.get("confidence_score", 0), errors="coerce") or 0)
+                _bm_lookup[_cid] = {
+                    "conf_n":  (_c - _conf_mn) / (_conf_mx - _conf_mn + 1e-10),
+                    "known":   float(int(_br.get("in_circbase", 0) or 0)),
+                    "mirna_n": float(_br.get("n_mirna", 0) or 0) / (_mirna_mx + 1e-10),
+                    "rbp_n":   float(_br.get("n_rbp",   0) or 0) / (_rbp_mx   + 1e-10),
+                }
+        except Exception:
+            pass
+
+    # Add score_dist to each method's data (primary + alternates)
+    _msw_labels_sd = {"edgeR_ciriquant": "edgeR (FSJ offset)", "deseq2": "DESeq2", "limma": "limma-voom"}
+    # Primary method
+    _primary_sd = _compute_score_dist_data(de, p_col, sig_thr, lfc, _bm_lookup, _msw_labels_sd.get(de_method, de_method))
+    if de_method not in all_de_data:
+        all_de_data[de_method] = {}
+    all_de_data[de_method]["score_dist"] = _primary_sd
+    # Alternate methods
+    for _mkey, _mfile in (de_files or {}).items():
+        if _mkey not in all_de_data or not _mfile or not Path(_mfile).exists():
+            continue
+        try:
+            _m_de2 = pd.read_csv(_mfile, sep="\t")
+            if "log2FC" not in _m_de2.columns and "log2FoldChange" in _m_de2.columns:
+                _m_de2 = _m_de2.rename(columns={"log2FoldChange": "log2FC"})
+            _m_pcol2, _m_thr2, _ = _eff_sig(_m_de2, de_sig_by, fdr)
+            all_de_data[_mkey]["score_dist"] = _compute_score_dist_data(
+                _m_de2, _m_pcol2, _m_thr2, lfc, _bm_lookup, _msw_labels_sd.get(_mkey, _mkey))
+        except Exception:
+            pass
+
     all_de_methods_js = _json.dumps(all_de_data, ensure_ascii=False)
     venn_html = _venn_3_svg(sig_sets_venn, lfc) if len(sig_sets_venn) >= 2 else ""
 
@@ -1368,7 +1528,9 @@ def build_report(
     biomarker_html = _biomarker_section(biomarker_file, interactions=interactions)
     isoform_html   = _isoform_section(switching_file,
                                        isoform_file=isoform_file,
-                                       circbase_file=circbase_file)
+                                       circbase_file=circbase_file,
+                                       case_label=tumor_label,
+                                       control_label=normal_label)
 
     # Interactive Plotly charts; fall back to static PDF embeds when unavailable
     p_volcano = _plotly_volcano(de, fdr, lfc, de_method, p_col=p_col, sig_thr=sig_thr,
@@ -2137,7 +2299,7 @@ function updateMainHeatmap() {{
   Plotly.react('main-heatmap-plot',[{{
     type:'heatmap',z:zMatrix,x:samps,y:yLabels,
     colorscale:[[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']],
-    zmid:0,colorbar:{{title:'z-score<br>(normal-<br>centered)'}},
+    zmid:0,colorbar:{{title:'z-score<br>({normal_label}-<br>centered)'}},
     hovertemplate:'<b>%{{y}}</b><br>%{{x}}<br>z-score: %{{z:.2f}}<extra></extra>',
   }}],{{
     title:{{text:''}},
@@ -2220,6 +2382,8 @@ function switchDEMethod(method) {{
   _renderDETables(method, md);
   // Gray out biomarker rows not significant under this method
   _updateBiomarkerHighlight(md.sig_ids||[]);
+  // Update biomarker score distribution plots
+  _updateScoreDist(method, md);
 }}
 
 function _renderDETables(method, md) {{
@@ -2273,6 +2437,61 @@ function _renderDETables(method, md) {{
     const staticTbls=sec.querySelectorAll('table,h3,.tbl-dl-bar');
     staticTbls.forEach(el=>el.remove());
     sec.appendChild(wrap);
+  }}
+}}
+
+function _updateScoreDist(method, md) {{
+  const sd=md.score_dist;
+  if(!sd||typeof Plotly==='undefined')return;
+  const n=sd.scores.length;
+  const mLabels={{'edgeR_ciriquant':'edgeR (FSJ offset)','deseq2':'DESeq2','limma':'limma-voom'}};
+  // Update title
+  const t=document.getElementById('bm-dist-title');
+  if(t)t.textContent=`Score Distribution — all ${{n}} significant DE circRNAs (${{mLabels[method]||method}})`;
+  // Scatter plot
+  const top30=sd.scores.slice(0,30), rest=sd.scores.slice(30);
+  const xTop=top30.map((_,i)=>i+1), xRest=rest.map((_,i)=>i+31);
+  if(document.getElementById('bm-scatter-plot')){{
+    Plotly.react('bm-scatter-plot',[
+      {{x:xRest,y:rest,mode:'markers',name:`Rank 31–${{n}}`,
+        marker:{{color:'rgba(120,120,120,0.45)',size:5}}}},
+      {{x:xTop,y:top30,mode:'markers',name:'Top 30 (table)',
+        marker:{{color:'#d62728',size:7,line:{{color:'white',width:0.8}}}}}},
+    ],{{
+      xaxis:{{title:'Rank'}},
+      yaxis:{{title:'Biomarker Score',range:[Math.max(0,sd.scores[n-1]-0.05),Math.min(1,sd.scores[0]+0.05)]}},
+      height:320,margin:{{t:20,b:60,l:70,r:40}},
+      plot_bgcolor:'white',paper_bgcolor:'white',
+      shapes:[{{type:'line',x0:30.5,x1:30.5,y0:0,y1:1,yref:'paper',
+                line:{{dash:'dot',color:'#d62728',width:1.2}}}}],
+      annotations:[{{x:31.5,y:0.98,yref:'paper',text:'Top 30',showarrow:false,
+                     font:{{size:10,color:'#d62728'}},xanchor:'left'}}],
+      legend:{{x:0.75,y:0.95,bgcolor:'rgba(255,255,255,0.8)'}},
+    }});
+  }}
+  // Histogram
+  if(document.getElementById('bm-hist-plot')){{
+    const swColor=(sd.sw_p&&sd.sw_p<0.05)?'#d62728':'#2CA02C';
+    const swText=sd.sw_w?`Shapiro-Wilk: W = ${{sd.sw_w.toFixed(4)}}, p = ${{sd.sw_p.toExponential(2)}}`:'';
+    const swConc=sd.sw_p?(sd.sw_p<0.05?'✗ 非常態分佈':'✓ 常態分佈')+'（α = 0.05）':'';
+    Plotly.react('bm-hist-plot',[
+      {{x:sd.scores,type:'histogram',nbinsx:30,name:'觀測分布',histnorm:'probability density',
+        marker:{{color:'rgba(44,119,214,0.55)',line:{{color:'rgba(44,119,214,0.9)',width:0.8}}}}}},
+      {{x:sd.x_norm,y:sd.y_norm,mode:'lines',
+        name:`Normal(μ=${{sd.mu.toFixed(3)}}, σ=${{sd.sd.toFixed(3)}})`,
+        line:{{color:'#d62728',width:2}}}},
+    ],{{
+      xaxis:{{title:'Biomarker Score'}},
+      yaxis:{{title:'Probability Density'}},
+      height:320,margin:{{t:40,b:90,l:70,r:40}},
+      legend:{{x:0.65,y:0.95,bgcolor:'rgba(255,255,255,0.85)'}},
+      plot_bgcolor:'white',paper_bgcolor:'white',
+      annotations:[{{x:0.5,y:-0.28,xref:'paper',yref:'paper',
+        text:`${{swText}}    <b style="color:${{swColor}}">${{swConc}}</b>`,
+        showarrow:false,align:'center',xanchor:'center',yanchor:'top',
+        bgcolor:'rgba(255,255,255,0.88)',bordercolor:'#ccc',borderwidth:1,
+        font:{{size:10}}}}],
+    }});
   }}
 }}
 
