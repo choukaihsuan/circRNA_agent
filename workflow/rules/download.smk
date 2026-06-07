@@ -77,11 +77,13 @@ rule download_fastq:
         r1 = protected(RAW_DIR + "/{srr}_1.fastq.gz"),
         r2 = protected(RAW_DIR + "/{srr}_2.fastq.gz"),
     params:
-        sra_cache  = config["download"]["sra_cache_dir"],
-        tmp_dir    = config["download"]["tmp_dir"] + "/{srr}",
+        sra_cache  = config.get("download", {}).get("sra_cache_dir",
+                         str(Path(RAW_DIR).parent / "sra_cache")),
+        tmp_dir    = config.get("download", {}).get("tmp_dir",
+                         str(Path(RAW_DIR).parent / "sra_tmp")) + "/{srr}",
         out_dir    = RAW_DIR,
-        retry      = config["download"]["retry"],
-        ascp_speed = config["download"].get("ascp_speed", "500m"),
+        retry      = config.get("download", {}).get("retry", 3),
+        ascp_speed = config.get("download", {}).get("ascp_speed", "500m"),
     threads: min(config["threads"], 8)
     log: "logs/download/{srr}.log"
     run:

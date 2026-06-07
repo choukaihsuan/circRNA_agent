@@ -158,13 +158,25 @@ def _snake_env() -> dict:
 
 
 def _update_paths_for_project(cfg: dict, new_pid: str) -> dict:
-    """Replace the old project_id embedded in raw/trimmed/results paths."""
+    """Replace the old project_id embedded in raw/trimmed/results paths,
+    and ensure the download section exists with server-appropriate defaults."""
     old_pid = cfg.get("project_id", "")
-    if not old_pid or old_pid == new_pid:
-        return cfg
-    for key in ("raw_dir", "trimmed_dir", "results_dir"):
-        if key in cfg and old_pid in cfg[key]:
-            cfg[key] = cfg[key].replace(old_pid, new_pid)
+    if old_pid and old_pid != new_pid:
+        for key in ("raw_dir", "trimmed_dir", "results_dir"):
+            if key in cfg and old_pid in cfg[key]:
+                cfg[key] = cfg[key].replace(old_pid, new_pid)
+
+    # Ensure download section exists so download.smk doesn't KeyError
+    if "download" not in cfg:
+        # Derive a sensible cache dir from raw_dir (sibling directory)
+        raw = cfg.get("raw_dir", "")
+        parent = str(Path(raw).parent) if raw else str(Path.home())
+        cfg["download"] = {
+            "sra_cache_dir": parent + "/sra_cache",
+            "tmp_dir":       parent + "/sra_tmp",
+            "retry":         3,
+            "ascp_speed":    "500m",
+        }
     return cfg
 
 
