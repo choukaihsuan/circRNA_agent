@@ -209,13 +209,17 @@ rule download_fastq:
                 raise RuntimeError(f"fasterq-dump failed for {srr}. See {log_path}")
 
             # ── Compress with pigz (fallback: gzip), then move to out_dir ──
+            pigz_bin = _find_tool("pigz")
             for suffix in ("_1.fastq", "_2.fastq"):
                 fastq = fastq_stage / f"{srr}{suffix}"
                 if not fastq.exists():
                     raise RuntimeError(f"Expected file not found: {fastq}")
-                rc = run_cmd(["pigz", "-p", str(threads), str(fastq)], logf)
+                rc = 1
+                try:
+                    rc = run_cmd([pigz_bin, "-p", str(threads), str(fastq)], logf)
+                except (FileNotFoundError, OSError):
+                    logf.write("[WARN] pigz not available, falling back to gzip\n")
                 if rc != 0:
-                    logf.write("[WARN] pigz not found, falling back to gzip\n")
                     rc = run_cmd(["gzip", str(fastq)], logf)
                 if rc != 0:
                     raise RuntimeError(f"Compression failed for {fastq}")
