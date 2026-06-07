@@ -258,6 +258,10 @@ def parse_log_progress(log_text: str) -> dict:
     _, rule_started, rule_done, rule_failed, finished_count, total_count = \
         _parse_one_run(run_texts[-1])
 
+    # If generate_report ever completed, all prerequisite steps must be done
+    # (they were skipped by Snakemake because outputs already existed)
+    pipeline_finished = "generate_report" in rule_ever_done
+
     stages = []
     for rule_id, label in PIPELINE_STAGES:
         started = rule_started.get(rule_id, 0)
@@ -278,6 +282,12 @@ def parse_log_progress(log_text: str) -> dict:
             status = "done"
             done    = rule_ever_done_count.get(rule_id, 1)
             started = done
+        elif pipeline_finished:
+            # Never appeared in any log (Snakemake skipped because outputs exist)
+            # but the final step completed → infer this step was done
+            status = "done"
+            done    = 1
+            started = 1
         else:
             status = "pending"
 
@@ -627,6 +637,24 @@ def serve_report(job_id: str):
         abort(404)
     return send_file(str(report_path), mimetype="text/html",
                      as_attachment=False, download_name=f"{gse_id}_report.html")
+
+
+@app.route("/qc/<job_id>")
+def serve_qc(job_id: str):
+    """Serve the MultiQC report for a finished job."""
+    from flask import send_file, abort
+    registry = load_registry()
+    job = registry.get(job_id)
+    if not job:
+        abort(404)
+    gse_id = job["gse_id"]
+    cfg = load_project_config(gse_id)
+    results_dir = cfg.get("results_dir", "")
+    qc_path = Path(results_dir) / "qc" / "multiqc_report.html"
+    if not qc_path.exists():
+        abort(404)
+    return send_file(str(qc_path), mimetype="text/html",
+                     as_attachment=False, download_name=f"{gse_id}_multiqc_report.html")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

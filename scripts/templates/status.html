@@ -105,6 +105,7 @@
     .btn-back    { background:#f1f5f9; color:#1e293b; }
     .btn-refresh { background:var(--primary); color:white; }
     .btn-report  { background:#16a34a; color:white; }
+    .btn-qc      { background:#0891b2; color:white; }
   </style>
 </head>
 <body>
@@ -177,8 +178,11 @@
     <a href="/" class="btn btn-back">← 回到設定</a>
     <button onclick="refreshAll()" class="btn btn-refresh">↻ 立即更新</button>
     {% if job_id %}
+    <a href="/qc/{{ job_id }}" target="_blank" class="btn btn-qc" id="qc-btn" style="display:none">
+      🔬 QC 報告
+    </a>
     <a href="/report/{{ job_id }}" target="_blank" class="btn btn-report" id="report-btn" style="display:none">
-      📄 查看報告
+      📄 分析報告
     </a>
     {% endif %}
   </div>
@@ -269,6 +273,12 @@
 
       document.getElementById('stages-grid').innerHTML = renderStages(data.stages);
 
+      // Show QC button when multiqc stage is done
+      const qcBtn = document.getElementById('qc-btn');
+      if (qcBtn) {
+        const qcStage = data.stages && data.stages.find(s => s.id === 'multiqc');
+        qcBtn.style.display = (qcStage && qcStage.status === 'done') ? '' : 'none';
+      }
       // Show report button when generate_report stage is done
       const reportBtn = document.getElementById('report-btn');
       if (reportBtn) {
