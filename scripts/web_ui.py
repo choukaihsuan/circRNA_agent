@@ -269,9 +269,25 @@ def parse_log_progress(log_text: str) -> dict:
             rule_ever_done.add(rule)
             rule_ever_done_count[rule] = rule_ever_done_count.get(rule, 0) + cnt
 
+    # Find the last "main" Snakemake run start.
+    # Subprocess jobs also print "Building DAG..." but have no Snakemake timestamp
+    # entries ([Day Mon DD HH:MM:SS YYYY]) in their segment. We want the last
+    # Building DAG segment that IS followed by a timestamp — that is the real
+    # latest main-process run. We then use everything from that point onward as
+    # the authoritative "current run" text so that rules logged before subprocess
+    # Building DAG noise are still visible.
+    ts_re = re.compile(r'^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) ', re.MULTILINE)
+    dag_positions = [m.start() for m in re.finditer(re.escape(dag_marker), log_text)]
+    last_main_dag_pos = dag_positions[0] if dag_positions else 0
+    for i, pos in enumerate(dag_positions):
+        end = dag_positions[i + 1] if i + 1 < len(dag_positions) else len(log_text)
+        if ts_re.search(log_text[pos:end]):
+            last_main_dag_pos = pos
+    last_run_text = log_text[last_main_dag_pos:]
+
     # Last run: authoritative for current started/done/failed/progress counts
     _, rule_started, rule_done, rule_failed, finished_count, total_count = \
-        _parse_one_run(run_texts[-1])
+        _parse_one_run(last_run_text)
 
     # If generate_report ever completed, all prerequisite steps must be done
     # (they were skipped by Snakemake because outputs already existed)

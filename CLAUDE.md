@@ -404,6 +404,8 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 
 **功能**：
 - **GEO 一鍵啟動**（頂部卡片）：輸入 GSE ID + cores → POST `/run_gse` → 呼叫 `agent.py --gse {gse_id}` → 跳轉狀態頁
+- **手動 SRR 清單**：逐筆輸入 SRR ID + condition，或上傳 CSV（srr_id, condition）
+- **本地 FASTQ**（新功能）：指定 server 上 FASTQ 目錄路徑 → 自動偵測配對檔（支援 `_1/_2`、`_R1/_R2`、`_R1_001/_R2_001` 等格式）→ 使用者在表格中指定各 sample 的 condition → 系統在 `raw_dir/` 建立 symlink（`{name}_1.fastq.gz` → 原始路徑），讓 Snakemake 自動跳過 download 步驟直接從 QC 開始
 - Step 1：circRNA 工具選擇（CIRIquant / DCC / 兩者），自動顯示共識模式說明
 - Step 2：**三種 DE 方法全部執行**（固定）；選擇「報告預設顯示方法（主方法）」；各方法附適用情境說明（edgeR=circRNA 特異性、DESeq2=樣本多/保守、limma=小樣本穩定）
 - Step 3：進階參數（min_bsj, slop, **max_junction_ratio**, FDR, log2FC, threads）
@@ -415,9 +417,13 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 - `GET /` — 主設定頁
 - `POST /update` — 儲存設定（+ 可選執行 Snakemake）
 - `POST /run_gse` — GEO 一鍵啟動
+- `POST /run_manual` — 手動 SRR 清單或 CSV 上傳啟動
+- `GET /api/scan_fastq?path=...` — 掃描 server 目錄，回傳偵測到的 FASTQ 配對 JSON
+- `POST /run_local` — 本地 FASTQ 建立 symlink 後啟動 pipeline
 - `GET /status` — 狀態頁（進度條 + 18 stage 格 + collapsible log）
 - `GET /api/log` — log JSON（前端 polling 用）
 - `GET /api/progress` — Snakemake log 解析 JSON（stages 陣列 + finished/total count + running bool）
+- `GET /api/detect_labels?gse=...` — 自動偵測 case/control label
 
 ---
 
@@ -754,6 +760,9 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | RBP 分頁 Binding Seq 欄大多顯示 "N/A" | ENCORI 的 `circ_pos` 是絕對座標格式（`chr6:148390208-148390208`），CircInteractome 是相對座標（`156–191`）；`_absPos()` 把 ENCORI 絕對座標再加 `chromStart`，產生超出染色體長度的位置 → UCSC API 回傳無效 → "N/A" | `_absPos()` 和 `_seq_logo` 加偵測：若 `circ_pos` 以 `chr` 開頭則視為絕對座標直接使用，否則才加 `chromStart`（`generate_report.py`） |
 | benchmark `config_benchmark.yaml` BWA index 路徑錯誤 | `bwa_index: /home3/choukaihsuan/reference/hg19/bwa_index/hg19` 目錄不存在；實際 BWA index prefix 是 `hg19.fa` | 改為 `bwa_index: /home3/choukaihsuan/reference/hg19/hg19.fa` |
 | find_circ_map timing bowtie2 卡住 13+ 小時 | timing script 將 28GB unmapped reads 寫入 `/tmp`（掛載在 `/` 分區，98% 使用率），磁碟 I/O 極慢 | 改寫到 `/home3/choukaihsuan/timing_tmp/`（348GB 可用）；`/` 分區的 timing_tmp 清理後釋放 11GB |
+| `--adaptive` 沒有傳入 `consensus_filter.py` | `circrna.smk` 的 consensus_filter shell 指令從來沒帶 `--adaptive` flag；adaptive 只在腳本內部實作但未啟用 | `circrna.smk` 加入 `adaptive_flag = "--adaptive" if config["consensus"].get("adaptive", True) else ""`，預設開啟；同時加 `--adaptive-ratio` 參數 |
+| `vst()` 在少於 1000 circRNA 時失敗（GSE58135）| DESeq2 的 `vst()` 要求輸入行數 ≥ nsub（預設 1000）；小資料集（如 28 circRNA）呼叫 `vst()` 報錯：`less than 'nsub' rows` | `analysis.R` 改為 `tryCatch(vst(dds, blind=FALSE), error=function(e) varianceStabilizingTransformation(dds, blind=FALSE))`，自動 fallback |
+| GSE58135（50bp reads）consensus 只有 28 個 circRNA | DCC 在 50bp 讀長下每個 sample 只偵測到 3–17 個 circRNA（STAR chimeric 短讀限制），但 `--adaptive` 未傳入，min_tools=2 要求兩工具交集，結果全部 10 sample 只有 28 個 | 修復 `--adaptive` 傳入問題後，ratio ≈ 0.002 << 0.1，adaptive 自動降級 min_tools=1，結果 1,607 個 circRNA |
 
 ---
 
@@ -968,16 +977,59 @@ score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) /
 
 ### GSE58135（乳癌）
 
-**進行中。** SRA 下載中（10 個 SRR）；fasterq-dump 完成後繼續跑 QC → circRNA 偵測。
+**完成。** 報告位置：`~/GSE58135_results/report.html`（server）
+
+**特殊情況：50bp reads + CIRIquant/DCC 嚴重失衡**
+- Read length 50bp → STAR chimeric junction 偵測極差（DCC 僅 3–17 circRNA/sample）
+- CIRIquant vs DCC 比例 ≈ 0.002，遠低於 adaptive_ratio=0.1 閾值
+- `--adaptive` flag 先前未傳入 circrna.smk（bug 已修正）；修正後 adaptive fallback 觸發，min_tools 從 2 降為 1（CIRIquant-only 模式）
+- 最終共識：1,607 circRNAs；filterByExpr 後測試數量較小，DESeq2 vst() 失敗已以 varianceStabilizingTransformation() fallback 修正
 
 | 步驟 | 狀態 |
 |------|------|
-| prefetch + fasterq-dump | 🔄 進行中（10/10 SRR 已 prefetch） |
-| fastp QC/trim | ⏳ 待執行 |
-| CIRIquant | ⏳ 待執行 |
-| STAR / DCC | ⏳ 待執行 |
-| consensus → DE → report | ⏳ 待執行 |
+| prefetch + fasterq-dump | ✅ 10/10 完成 |
+| fastp QC/trim | ✅ 10/10 完成 |
+| CIRIquant | ✅ 10/10 完成 |
+| STAR / DCC | ✅ 10/10 完成（DCC 偵測數極少，adaptive 模式僅用 CIRIquant） |
+| consensus_filter（--adaptive）| ✅ 完成（1,607 circRNAs；CIRIquant-only 模式） |
+| merge_counts / assign_isoforms | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 15 / DESeq2 122 / limma 508 significant）|
+| report | ✅ 完成 |
+
+**注意**：edgeR_ciriquant 顯著數極少（15）是因為 50bp reads → circRNA 偵測數量有限 + 樣本間差異較大；limma-voom 在小樣本較穩定（508 significant）。
 
 **Server config**（`config/projects/GSE58135.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE58135/raw`
 - `results_dir: /home3/choukaihsuan/GSE58135_results`
+
+**中間檔案已清理**（保留報告、count matrix、DE 結果）；raw FASTQ 已刪除以釋放磁碟空間。
+
+---
+
+### GSE323364（TNBC cell line，EZH2 inhibitor）
+
+**計畫中（下一步）。** MDA-MB-436 TNBC cell line，EZH2 抑制劑 EPZ-6438 vs. DMSO，150bp PE，total RNA，各 3 replicates。
+
+| 步驟 | 狀態 |
+|------|------|
+| Condition list CSV | ✅ 完成（`/mnt/c/Users/User/Desktop/GSE323364_condition_list.csv`） |
+| 下載 SRA | ⏳ 待執行 |
+| fastp QC/trim | ⏳ 待執行 |
+| CIRIquant + DCC | ⏳ 待執行 |
+| consensus → DE → report | ⏳ 待執行 |
+
+**設定**：
+- case/control label：`EPZ6438` / `DMSO`
+- SRR 清單：SRR37484804–SRR37484809（6 個 sample；3 EPZ6438 + 3 DMSO）
+- genome：hg19（同 GSE113230）
+
+**Condition list CSV 格式**（6 行）：
+```
+srr_id,condition,gsm_id,description
+SRR37484809,EPZ6438,GSM9564370,MDA-MB-436 EPZ-6438 rep1
+SRR37484808,DMSO,GSM9564371,MDA-MB-436 DMSO rep1
+SRR37484807,EPZ6438,GSM9564372,MDA-MB-436 EPZ-6438 rep2
+SRR37484806,DMSO,GSM9564373,MDA-MB-436 DMSO rep2
+SRR37484805,EPZ6438,GSM9564374,MDA-MB-436 EPZ-6438 rep3
+SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
+```
