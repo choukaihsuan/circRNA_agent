@@ -348,11 +348,24 @@ threads: 8
 
 **SRA 下載優先順序**（`workflow/rules/download.smk`）：
 
-| 優先 | 方法 | 速度 | 說明 |
-|------|------|------|------|
-| 1 | **aria2c + S3**（預設）| ~25 MB/s（16 連線）| `srapath --location s3` 取 S3 URL → aria2c 多連線下載 |
+| 優先 | 方法 | 實測速度 | 說明 |
+|------|------|----------|------|
+| 1 | **aria2c + S3**（預設）| **~25–30 MB/s**（6–8 連線，NFS 環境）| `srapath --location s3` 取 S3 URL → aria2c 多連線下載；`-x 6 -s 6` 適合 NFS（過多連線反而限速）|
 | 2 | ascp（Aspera）| ~50 MB/s | 需 Aspera key，目前 server 未安裝 |
-| 3 | prefetch（HTTPS）| ~0.5 MB/s | NCBI 單連線，最慢，S3 失敗時的 fallback |
+| 3 | prefetch（HTTPS）| **~20–100 KB/s**（實測 22 KB/s）| NCBI 單連線，最慢；656MB 需 8+ 小時；S3 失敗時的 fallback |
+
+**後處理速度（6GB SRA file，NFS）**：
+
+| 步驟 | 工具 | 實測速度 | 說明 |
+|------|------|----------|------|
+| SRA → FASTQ | fasterq-dump `-e 6` | ~10–15 min/6GB | 多執行緒解壓縮；`--split-files` 輸出 PE |
+| FASTQ 壓縮 | **pigz** `-p 3` | **~15 min/15GB** | 多核 gzip，較快 |
+| FASTQ 壓縮 | gzip（單執行緒）| ~2h/15GB | pigz 未安裝時的 fallback |
+
+**aria2c 並行下載建議**：
+- 同時下載 10 個 SRR：`xargs -P 10`，每個 `-x 6 -s 6`（共 60 連線），NFS 環境不建議更多
+- S3 間歇性不可用（NCBI API）：`srapath --location s3` 回傳空字串，等待恢復後手動重啟
+- 下載時若 kill 中斷：aria2c 會留下 `.sra.aria2` resume 檔 → 重啟可斷點續傳；但若多次中斷導致 `.aria2` 狀態損壞，需刪除 `.sra` 和 `.aria2` 重新下載，否則 fasterq-dump 報 `rcBlob,rcCorrupt`
 
 `_find_tool("aria2c")` 搜尋優先順序：`sra_env` → `circrna` → **`ciriquant`**（已加入）→ `which()`。
 若 `srapath returned no S3 URL`（NCBI API 暫時失敗），重啟 pipeline 即可；S3 URL 通常幾分鐘後恢復。
@@ -1100,3 +1113,87 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 - NCBI S3 間歇性不可用（`srapath --location s3` 回傳空），直接用 aria2c 手動觸發（S3 URL 恢復後）
 - SRR11600334 初次下載失敗（HTTPS fallback ~22 KB/s），需重試
 - `pigz` 已安裝於 ciriquant env（`conda install -y -c conda-forge pigz`），gzip 壓縮從 ~2h 降至 ~15min/15GB
+
+---
+
+## GSE 資料集選擇指引
+
+### 已分析資料集比較
+
+| GSE ID | 樣本類型 | 對比組 | Reads | Read length | 樣本數 | 定序深度 | circRNA 偵測 | DE 顯著數（edgeR）| 評估 |
+|--------|----------|--------|-------|-------------|--------|----------|-------------|-------------------|------|
+| **GSE113230** | 組織（TNBC tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 6（3T+3N）| ~100M reads/sample | 9,349（consensus）| **482** | ✅ 最佳：read length 足、組織對比、深度夠 |
+| **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | **50bp PE** | 10（5T+5N）| ~50M reads/sample | 1,607（CIRIquant-only，adaptive）| **15** | ⚠️ 50bp 讀長對 circRNA 偵測不友善：STAR chimeric junction 偵測極差，DCC 幾乎全失效，需 adaptive fallback |
+| **GSE323364** | **細胞株**（MDA-MB-436 TNBC）| EPZ6438 vs. DMSO | Total RNA | 150bp PE | 6（3+3）| ~60M reads/sample | ~中等 | **15** | ⚠️ 細胞株 + 藥物處理：circRNA 絕對數量少，生物差異小；EZH2 抑制劑對 circRNA 影響有限 |
+| **GSE133998** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N）| ~80M reads/sample | 進行中 | 進行中 | ✅ 預期最佳：樣本數最多（6 vs 6）、配對設計（同患者 tumor+normal）、read length 足 |
+
+### 影響分析品質的關鍵因素
+
+#### 1. Read Length（讀長）
+
+| 讀長 | circRNA 偵測 | 說明 |
+|------|-------------|------|
+| **≥ 100bp PE**（建議）| ✅ 良好 | BSJ 需橫跨 back-splice junction，讀長越長越容易偵測；150bp 是目前標準 |
+| 75bp PE | ⚠️ 尚可 | CIRIquant 可用，DCC 偵測能力下降 |
+| **50bp PE** | ❌ 不佳 | STAR chimeric 幾乎無法偵測 BSJ；DCC 每 sample 只得 3–17 個 circRNA；需強制 CIRIquant-only 模式 |
+
+**判斷方法**：GEO Series → Library Strategy 欄位；或下載 SRA run info 查 `avgLength` 欄。
+
+#### 2. 樣本類型：組織 vs. 細胞株
+
+| 類型 | circRNA 數量 | DE 結果 | 適合問題 |
+|------|-------------|---------|---------|
+| **組織**（tumor vs. normal）| 較多（整體轉錄組豐富）| 較多顯著 circRNA | 腫瘤生物標記、臨床相關性 |
+| **細胞株**（drug treatment）| 較少（基因組背景單純）| 少量顯著（藥物效果有限）| 機制研究、pathway 分析 |
+| **細胞株**（KO/OE）| 視目標基因而定 | 通常較集中 | 單一分子機制 |
+
+**注意**：細胞株資料的 circRNA biomarker 臨床轉化性低，適合做機制驗證而非 biomarker 篩選。
+
+#### 3. RNA-Seq 方式
+
+| 方式 | circRNA 偵測 | 說明 |
+|------|-------------|------|
+| **Total RNA（rRNA-depleted）**（建議）| ✅ 最佳 | 保留 circRNA；rRNA-depleted 維持全轉錄組代表性 |
+| **Total RNA（RNase R enriched）**| ✅✅ 最高靈敏度 | 消化線性 RNA，富集 circRNA；用於 benchmark ground truth（GSE55872）|
+| poly-A selection | ❌ 不建議 | circRNA 無 poly-A tail → 幾乎偵測不到；若數據集用 poly-A，circRNA 數量會極少 |
+| strand-specific | ✅ 加分 | 可推斷 circRNA strand；非必要 |
+
+**判斷方法**：GEO → Library Selection 欄（`POLY_A`/`cDNA`/`other`）；Supplementary 找 library prep protocol。
+
+#### 4. 定序深度（sequencing depth）
+
+| 深度 | 說明 |
+|------|------|
+| **≥ 80M reads/sample**（建議）| circRNA 偵測靈敏度高；低豐度 circRNA 也能偵測 |
+| 50–80M | 可用，主流研究水準 |
+| < 30M | circRNA 偵測靈敏度明顯下降；少數 high-abundance circRNA 可用，但 DE 功率不足 |
+
+**查詢方式**：SRA run info 的 `spots` 欄（paired-end: spots × 2 = total reads）。
+
+#### 5. 樣本數與統計功率
+
+| 組別樣本數 | DE 方法建議 | 預期顯著數 | 說明 |
+|-----------|------------|-----------|------|
+| n ≥ 5 vs. 5 | edgeR / DESeq2 | FDR 校正可用 | BH 校正有效；padj < 0.05 有意義 |
+| n = 3 vs. 3（小樣本）| edgeR + nominal p | 需用 pvalue（未校正）| BH 校正後幾乎全不顯著（min padj ≈ 0.4）；論文需說明限制 |
+| **配對設計**（tumor+normal same patient）| edgeR paired / limma blocking | 功率最高 | 消除個體差異；GSE133998 可加入配對項 |
+
+**GSE133998 特別說明**：H36–H42 為同一患者的 cancer tissue 與 adjacent normal，是**嚴格配對設計**。未來 DE 可加入 `blocking = patient_id`（limma）或 `design = ~patient + condition`（edgeR/DESeq2）以大幅提升統計功率。
+
+### 選擇新資料集的 Checklist
+
+在 GEO 找新 dataset 時確認以下條件（✅ = 必要，⚠️ = 建議）：
+
+- ✅ Read length ≥ 100bp（PE）
+- ✅ RNA-Seq library = Total RNA（rRNA-depleted or RNase R）
+- ✅ 每組 ≥ 3 replicates（建議 ≥ 5）
+- ✅ 有明確的 case vs. control（tumor/normal、treatment/vehicle）
+- ⚠️ 定序深度 ≥ 50M reads/sample
+- ⚠️ 組織樣本優先（而非細胞株），若要 biomarker 研究尤其重要
+- ⚠️ hg19 或 hg38 人類基因組（本 pipeline 以 hg19 為主）
+- ⚠️ 配對設計（paired tumor/normal）功率最高
+
+**排除條件**：
+- poly-A selection → circRNA 接近零
+- single-end reads → BSJ 偵測困難
+- < 30bp reads → 完全不可用
