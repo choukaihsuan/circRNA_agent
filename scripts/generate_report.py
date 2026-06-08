@@ -830,6 +830,8 @@ def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
 
     scores = bm["biomarker_score"].dropna().values
     n = len(scores)
+    if n == 0:
+        return ""
     mu, sd = float(scores.mean()), float(scores.std())
 
     # Shapiro-Wilk (n ≤ 5000); fallback to KS for larger sets
@@ -837,13 +839,17 @@ def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
     conclusion = ""
     try:
         from scipy import stats as _stats
-        if n <= 5000:
+        if n < 3:
+            sw_text = f"樣本數不足（n={n}），無法進行常態檢定"
+            conclusion = ""
+        elif n <= 5000:
             W, p_sw = _stats.shapiro(scores)
             sw_text = f"Shapiro-Wilk: W = {W:.4f}, p = {p_sw:.4e}"
+            conclusion = ("✗ 非常態分佈" if p_sw < 0.05 else "✓ 常態分佈") + "（α = 0.05）"
         else:
             D, p_sw = _stats.kstest(scores, "norm", args=(mu, sd))
             sw_text = f"KS test: D = {D:.4f}, p = {p_sw:.4e}"
-        conclusion = ("✗ 非常態分佈" if p_sw < 0.05 else "✓ 常態分佈") + "（α = 0.05）"
+            conclusion = ("✗ 非常態分佈" if p_sw < 0.05 else "✓ 常態分佈") + "（α = 0.05）"
     except ImportError:
         sw_text = "scipy 未安裝，無法執行常態檢定"
 

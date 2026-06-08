@@ -177,7 +177,7 @@ rule dcc:
             -mt1 {input.junc1} \
             -mt2 {input.junc2} \
             -D -an {input.gtf} \
-            -Pi -F -M -Nr 5 1 \
+            -Pi -F -M -Nr 2 1 \
             -G -B {input.bam} \
             -O {params.outdir} \
             -T {threads} ) \

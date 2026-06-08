@@ -142,7 +142,8 @@ rule download_fastq:
                         ], logf)
                     else:
                         rc = 1
-                    if rc == 0 and sra_file.exists():
+                    # Trust rc=0 from aria2c/curl; NFS stat() cache can lag
+                    if rc == 0:
                         downloaded = True
                         logf.write(f"[s3] Download complete\n")
                     else:

@@ -867,17 +867,25 @@ def serve_report(job_id: str):
 @app.route("/qc/<job_id>")
 def serve_qc(job_id: str):
     """Serve the MultiQC report for a finished job."""
-    from flask import send_file, abort
+    from flask import send_file
     registry = load_registry()
     job = registry.get(job_id)
     if not job:
-        abort(404)
+        return "<h2>找不到此 job。</h2>", 404
     gse_id = job["gse_id"]
     cfg = load_project_config(gse_id)
     results_dir = cfg.get("results_dir", "")
     qc_path = Path(results_dir) / "qc" / "multiqc_report.html"
     if not qc_path.exists():
-        abort(404)
+        return (
+            f"<html><head><meta charset='utf-8'></head><body style='font-family:sans-serif;padding:40px'>"
+            f"<h2>⏳ MultiQC 報告尚未產生</h2>"
+            f"<p>MultiQC 需要所有 sample 的 FastQC 完成後才會執行。<br>"
+            f"目前仍有 sample 正在 QC / 下載中，請等 pipeline 全部完成後再試。</p>"
+            f"<p style='color:#888'>預期路徑：{qc_path}</p>"
+            f"<a href='javascript:history.back()'>← 返回</a>"
+            f"</body></html>"
+        ), 202
     return send_file(str(qc_path), mimetype="text/html",
                      as_attachment=False, download_name=f"{gse_id}_multiqc_report.html")
 

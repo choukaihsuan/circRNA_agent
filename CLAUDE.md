@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 個 sample）；GSE58135（乳癌，進行中）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，🔄 進行中）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -763,6 +763,11 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `--adaptive` 沒有傳入 `consensus_filter.py` | `circrna.smk` 的 consensus_filter shell 指令從來沒帶 `--adaptive` flag；adaptive 只在腳本內部實作但未啟用 | `circrna.smk` 加入 `adaptive_flag = "--adaptive" if config["consensus"].get("adaptive", True) else ""`，預設開啟；同時加 `--adaptive-ratio` 參數 |
 | `vst()` 在少於 1000 circRNA 時失敗（GSE58135）| DESeq2 的 `vst()` 要求輸入行數 ≥ nsub（預設 1000）；小資料集（如 28 circRNA）呼叫 `vst()` 報錯：`less than 'nsub' rows` | `analysis.R` 改為 `tryCatch(vst(dds, blind=FALSE), error=function(e) varianceStabilizingTransformation(dds, blind=FALSE))`，自動 fallback |
 | GSE58135（50bp reads）consensus 只有 28 個 circRNA | DCC 在 50bp 讀長下每個 sample 只偵測到 3–17 個 circRNA（STAR chimeric 短讀限制），但 `--adaptive` 未傳入，min_tools=2 要求兩工具交集，結果全部 10 sample 只有 28 個 | 修復 `--adaptive` 傳入問題後，ratio ≈ 0.002 << 0.1，adaptive 自動降級 min_tools=1，結果 1,607 個 circRNA |
+| `_biomarker_normality_plot` Shapiro-Wilk ValueError（n < 3）| GSE323364 只有 2 個 biomarker candidates（p < 0.05），`scipy.stats.shapiro` 要求 n ≥ 3，直接呼叫會 raise ValueError | `generate_report.py` 加 `if n < 3` guard：顯示「樣本數不足（n=N），無法進行常態檢定」而不執行 Shapiro-Wilk |
+| Web UI 手動 SRR 表單 Project ID 預設填入當前專案 ID | `value="{{ config.get('project_id', 'CUSTOM') }}"` 讓使用者未改 ID 就送出，蓋掉現有專案的 metadata | 改為 `value="" required`，強制使用者填入正確 GSE ID |
+| `config/projects/GSE133998.yaml` sra_cache_dir/tmp_dir 繼承舊專案路徑 | Web UI 從前一專案（GSE323364）快照複製 config，路徑殘留 `GSE323364/sra_cache`；Snakemake DAG 正常但中間檔案放錯位置 | 用 `sed -i` 替換 config 中的路徑（`GSE323364` → `GSE133998`）|
+| gzip 壓縮 SRA 轉換 FASTQ 太慢（~2h/15GB）| fasterq-dump 後 gzip 單執行緒壓縮，NFS 寫入慢 | 在 ciriquant env 安裝 `pigz`（`conda install -y -c conda-forge pigz`）；`download.smk` 已使用 pigz（若 pigz 不存在，`find_tool("pigz")` fallback 到 gzip）|
+| NCBI S3 URL 間歇性不可用（`srapath` 回傳空）| NCBI API 暫時失敗，`srapath --location s3` 回傳空字串；download.smk fallback 到 prefetch HTTPS（~22 KB/s）| 等待 S3 恢復後手動執行 aria2c；一般幾分鐘至數小時內恢復 |
 
 ---
 
@@ -899,7 +904,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-05 更新）
+## 目前執行進度（2026-06-08 更新）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1008,20 +1013,37 @@ score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) /
 
 ### GSE323364（TNBC cell line，EZH2 inhibitor）
 
-**計畫中（下一步）。** MDA-MB-436 TNBC cell line，EZH2 抑制劑 EPZ-6438 vs. DMSO，150bp PE，total RNA，各 3 replicates。
+**完成。** 報告位置：`~/GSE323364_results/report.html`（server）
+
+MDA-MB-436 TNBC cell line，EZH2 抑制劑 EPZ-6438 vs. DMSO，150bp PE，total RNA，各 3 replicates。
 
 | 步驟 | 狀態 |
 |------|------|
-| Condition list CSV | ✅ 完成（`/mnt/c/Users/User/Desktop/GSE323364_condition_list.csv`） |
-| 下載 SRA | ⏳ 待執行 |
-| fastp QC/trim | ⏳ 待執行 |
-| CIRIquant + DCC | ⏳ 待執行 |
-| consensus → DE → report | ⏳ 待執行 |
+| 下載 SRA | ✅ 6/6 完成 |
+| fastp QC/trim | ✅ 6/6 完成 |
+| CIRIquant | ✅ 6/6 完成 |
+| STAR / DCC | ✅ 6/6 完成 |
+| consensus_filter（--adaptive）| ✅ 完成 |
+| merge_counts / assign_isoforms | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 15 / DESeq2 122 / limma 508 significant）|
+| report | ✅ 完成 |
 
 **設定**：
 - case/control label：`EPZ6438` / `DMSO`
 - SRR 清單：SRR37484804–SRR37484809（6 個 sample；3 EPZ6438 + 3 DMSO）
 - genome：hg19（同 GSE113230）
+
+**主要數值結果**：
+- edgeR_ciriquant：15 significant circRNAs（nominal p < 0.05）；樣本數少 + EZH2 抑制劑對 circRNA 影響有限
+- DESeq2：122 significant；limma-voom：508 significant
+- Biomarker candidates：僅 2 個（p < 0.05 篩選極嚴）→ `_biomarker_normality_plot` 需 n ≥ 3 的 Shapiro-Wilk 保護已加入
+
+**中間檔案已清理**（raw FASTQ + trimmed + sra_cache + 中間 BAM 已刪除，釋放 77GB）；
+報告 1.3MB，保留於 `~/GSE323364_results/report.html`。
+
+**Server config**（`config/projects/GSE323364.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE323364/raw`
+- `results_dir: /home3/choukaihsuan/GSE323364_results`
 
 **Condition list CSV 格式**（6 行）：
 ```
@@ -1033,3 +1055,48 @@ SRR37484806,DMSO,GSM9564373,MDA-MB-436 DMSO rep2
 SRR37484805,EPZ6438,GSM9564374,MDA-MB-436 EPZ-6438 rep3
 SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 ```
+
+---
+
+### GSE133998（乳癌，paired tumor/normal）
+
+**進行中。** 乳癌手術切除組織，cancer tissue vs. adjacent normal，150bp PE，Illumina HiSeq X Ten，各 6 replicates（H36–H42，共 12 samples）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | 🔄 進行中（S3 間歇性恢復後手動 aria2c；SRR11600334 需重試） |
+| fastp QC/trim | ⏳ 待執行 |
+| CIRIquant + DCC | ⏳ 待執行 |
+| consensus → DE → report | ⏳ 待執行 |
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單：SRR11600329–SRR11600340（12 samples；6 tumor + 6 normal）
+- genome：hg19（同 GSE113230）
+- Condition list CSV：`/mnt/c/Users/User/Desktop/GSE133998_condition_list.csv`
+
+**SRR → 樣本對應**：
+
+| SRR ID | 條件 | 樣本 |
+|--------|------|------|
+| SRR11600329 | normal | H36-adjacent normal |
+| SRR11600330 | tumor | H36-cancer tissue |
+| SRR11600331 | normal | H37-adjacent normal |
+| SRR11600332 | tumor | H37-cancer tissue |
+| SRR11600333 | normal | H38-adjacent normal |
+| SRR11600334 | tumor | H38-cancer tissue |
+| SRR11600335 | normal | H39-adjacent normal |
+| SRR11600336 | tumor | H39-cancer tissue |
+| SRR11600337 | normal | H40-adjacent normal |
+| SRR11600338 | tumor | H40-cancer tissue |
+| SRR11600339 | normal | H42-adjacent normal |
+| SRR11600340 | tumor | H42-cancer tissue |
+
+**Server config**（`config/projects/GSE133998.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE133998/raw`
+- `results_dir: /home3/choukaihsuan/GSE133998_results`
+
+**下載注意事項**：
+- NCBI S3 間歇性不可用（`srapath --location s3` 回傳空），直接用 aria2c 手動觸發（S3 URL 恢復後）
+- SRR11600334 初次下載失敗（HTTPS fallback ~22 KB/s），需重試
+- `pigz` 已安裝於 ciriquant env（`conda install -y -c conda-forge pigz`），gzip 壓縮從 ~2h 降至 ~15min/15GB
