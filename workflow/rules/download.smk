@@ -128,9 +128,9 @@ rule download_fastq:
                     if aria2c:
                         rc = run_cmd([
                             aria2c,
-                            "-x", "16", "-s", "16", "-k", "10M",
+                            "-x", "4", "-s", "4", "-k", "10M",
                             "--file-allocation=none",
-                            "--retry-wait=5", "--max-tries=3",
+                            "--retry-wait=10", "--max-tries=5",
                             "-d", str(sra_dir),
                             "-o", f"{srr}.sra",
                             s3_url,
