@@ -261,6 +261,86 @@
     {% endif %}
   </div>
 
+  <!-- ── 資料集選擇指引 ── -->
+  <div class="section" id="dataset-guide-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer"
+         onclick="toggleGuide()">
+      <div>
+        <div class="section-title">選擇指引</div>
+        <h2 style="margin-bottom:0">📋 資料集選擇指引</h2>
+      </div>
+      <span id="guide-arrow" style="font-size:20px;color:var(--muted)">▶</span>
+    </div>
+    <div id="guide-body" class="guide-body">
+      <p style="font-size:13px;color:var(--muted);margin:12px 0 14px">
+        在 GEO 搜尋新資料集前，確認以下條件可大幅提升 circRNA 分析品質與 DE 顯著性。
+      </p>
+
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:#0f766e;">✅ 必要條件 Checklist</div>
+      <ul class="guide-checklist">
+        <li><span class="gi">✅</span><span><b>Read length ≥ 100 bp PE</b>（BSJ 偵測需跨 back-splice junction）</span></li>
+        <li><span class="gi">✅</span><span><b>Total RNA（rRNA-depleted）</b>，非 poly-A selection</span></li>
+        <li><span class="gi">✅</span><span><b>每組 ≥ 3 replicates</b>（建議 ≥ 5 以通過 FDR 校正）</span></li>
+        <li><span class="gi">✅</span><span><b>明確 case vs. control</b>（tumor/normal、treatment/vehicle）</span></li>
+        <li><span class="gi">⚠️</span><span>定序深度 <b>≥ 50 M reads/sample</b>（&lt;30M 偵測力明顯下降）</span></li>
+        <li><span class="gi">⚠️</span><span>組織樣本優先（cell line circRNA 較少，biomarker 轉化性低）</span></li>
+      </ul>
+
+      <div style="font-weight:700;font-size:13px;margin:14px 0 8px;color:#0f766e;">📊 關鍵因子速查</div>
+      <table class="guide-factor-table">
+        <thead>
+          <tr><th>因子</th><th class="gf-ok">✅ 推薦</th><th class="gf-warn">⚠️ 可接受</th><th class="gf-bad">❌ 避免</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Read length</b></td>
+            <td>≥ 150 bp PE</td>
+            <td>75–100 bp PE</td>
+            <td>50 bp PE（DCC 幾乎失效，需 adaptive fallback）</td>
+          </tr>
+          <tr>
+            <td><b>RNA-seq 方式</b></td>
+            <td>Total RNA（rRNA-depleted）</td>
+            <td>RNase R enriched（circRNA 超富集）</td>
+            <td>poly-A selection（circRNA ≈ 0）</td>
+          </tr>
+          <tr>
+            <td><b>樣本類型</b></td>
+            <td>組織（tumor vs. normal）</td>
+            <td>細胞株 KO/OE（機制研究）</td>
+            <td>細胞株藥物處理（circRNA 變化極少）</td>
+          </tr>
+          <tr>
+            <td><b>樣本數</b></td>
+            <td>≥ 5 vs. 5（FDR 校正有效）</td>
+            <td>3 vs. 3（需用 nominal p-value）</td>
+            <td>&lt; 3 per group（統計功率不足）</td>
+          </tr>
+          <tr>
+            <td><b>設計</b></td>
+            <td>配對（同患者 tumor+normal）</td>
+            <td>獨立樣本</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:14px;padding:10px 12px;background:#fef3c7;border-radius:8px;
+                  font-size:12px;color:#92400e;line-height:1.6;">
+        💡 <b>已分析資料集</b>：
+        <b>GSE113230</b>（TNBC，150bp，9,349 circRNAs，482 DE，✅ 最佳示範）・
+        <b>GSE58135</b>（乳癌，50bp，⚠️ DCC 失效→ adaptive fallback，1,607 circRNAs）・
+        <b>GSE323364</b>（TNBC 細胞株，150bp，⚠️ 藥物處理 DE 極少）・
+        <b>GSE133998</b>（乳癌，150bp，配對設計，10,979 circRNAs，✅ 樣本最多）
+      </div>
+
+      <div style="margin-top:10px;font-size:12px;color:var(--muted)">
+        <b>GEO 查詢方法</b>：Series 頁面 → Library Strategy（確認非 AMPLICON）、Library Selection（確認非 POLY_A）、
+        SRA run info 的 <code>avgLength</code> 欄（read length）、<code>spots</code> 欄（PE: spots×2 = total reads）
+      </div>
+    </div>
+  </div>
+
   <!-- ── 啟動分析 ── -->
   <div class="section" style="border-color:#99f6e4; background:linear-gradient(135deg,#f0fdfa,#fff);">
     <div class="section-title">快速入口</div>
@@ -293,73 +373,6 @@
         </div>
         <div class="geo-hint">⚙️ 使用目前 Step 1–3 的參數設定執行；啟動後可至「查看執行狀態」追蹤進度。</div>
       </form>
-
-      <!-- 資料集選擇指引 -->
-      <div>
-        <button type="button" class="guide-toggle" onclick="toggleGuide(this)">
-          <span class="guide-arrow">▶</span> 資料集選擇指引
-        </button>
-        <div class="guide-body">
-          <div style="font-weight:700;font-size:13px;margin-bottom:10px;color:#0f766e;">
-            ✅ 必要條件 Checklist
-          </div>
-          <ul class="guide-checklist">
-            <li><span class="gi">✅</span><span><b>Read length ≥ 100 bp PE</b>（BSJ 偵測需跨 back-splice junction）</span></li>
-            <li><span class="gi">✅</span><span><b>Total RNA（rRNA-depleted）</b>，非 poly-A selection</span></li>
-            <li><span class="gi">✅</span><span><b>每組 ≥ 3 replicates</b>（建議 ≥ 5 以通過 FDR 校正）</span></li>
-            <li><span class="gi">✅</span><span><b>明確 case vs. control</b>（tumor/normal、treatment/vehicle）</span></li>
-            <li><span class="gi">⚠️</span><span>定序深度 <b>≥ 50 M reads/sample</b>（&lt;30M 偵測力明顯下降）</span></li>
-            <li><span class="gi">⚠️</span><span>組織樣本優先（cell line circRNA 較少，biomarker 轉化性低）</span></li>
-          </ul>
-
-          <div style="font-weight:700;font-size:13px;margin:10px 0 8px;color:#0f766e;">
-            📊 關鍵因子速查
-          </div>
-          <table class="guide-factor-table">
-            <thead>
-              <tr><th>因子</th><th>推薦</th><th>可接受</th><th>避免</th></tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><b>Read length</b></td>
-                <td class="gf-ok">≥ 150 bp PE</td>
-                <td class="gf-warn">75–100 bp PE</td>
-                <td class="gf-bad">50 bp PE（DCC 幾乎失效，需 adaptive fallback）</td>
-              </tr>
-              <tr>
-                <td><b>RNA-seq 方式</b></td>
-                <td class="gf-ok">Total RNA（rRNA-depleted）</td>
-                <td class="gf-warn">Total RNA（RNase R enriched，circRNA 超富集）</td>
-                <td class="gf-bad">poly-A selection（circRNA ≈ 0）</td>
-              </tr>
-              <tr>
-                <td><b>樣本類型</b></td>
-                <td class="gf-ok">組織（tumor vs. normal）</td>
-                <td class="gf-warn">細胞株 KO/OE（機制研究）</td>
-                <td class="gf-bad">細胞株藥物處理（circRNA 變化極少）</td>
-              </tr>
-              <tr>
-                <td><b>樣本數</b></td>
-                <td class="gf-ok">≥ 5 vs. 5（FDR 校正有效）</td>
-                <td class="gf-warn">3 vs. 3（需用 nominal p-value）</td>
-                <td class="gf-bad">&lt; 3 per group（統計功率不足）</td>
-              </tr>
-              <tr>
-                <td><b>設計</b></td>
-                <td class="gf-ok">配對（同患者 tumor+normal）</td>
-                <td class="gf-warn">獨立樣本</td>
-                <td>—</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div style="margin-top:12px;padding:8px 10px;background:#fef3c7;border-radius:6px;
-                      font-size:12px;color:#92400e;">
-            💡 <b>已知資料集</b>：GSE113230（TNBC，150bp，✅ 最佳）、GSE58135（乳癌，50bp，⚠️ DCC 失效）、
-            GSE323364（細胞株，⚠️ 顯著數少）、GSE133998（配對設計，12 samples，✅ 最多樣本）
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- Panel B: Manual SRR -->
@@ -762,9 +775,9 @@
     arrow.textContent = open ? '▼' : '▶';
   }
 
-  function toggleGuide(btn) {
-    const body  = btn.nextElementSibling;
-    const arrow = btn.querySelector('.guide-arrow');
+  function toggleGuide() {
+    const body  = document.getElementById('guide-body');
+    const arrow = document.getElementById('guide-arrow');
     const open  = body.classList.toggle('open');
     arrow.textContent = open ? '▼' : '▶';
   }
