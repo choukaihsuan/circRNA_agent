@@ -258,9 +258,10 @@ FSJ counts → TMM normalization → per-locus FSJ CPM 作為 GLM offset
 
 **Type I / II / III 分類**：
 - **Type_I**：BSJ 顯著，FSJ 不顯著（或方向相反）→ circRNA 環化效率真正改變
-- **Type_II**：BSJ 顯著，FSJ 也顯著且同方向 → host gene 整體變化帶動
+- **Type_II**：BSJ/FSJ ratio 顯著（BSJ offset test）且 FSJ 獨立測試也顯著 → 兩種調控同時發生
 - **Type_III**：只有 FSJ 顯著 → 線性 mRNA 變化，不是 circRNA DE
-- `concordant` 判斷：FSJ logFC 方向相同（預設不設 minimum fold-change，`fsj_concordance_lfc: 0.0`）。舊設定 0.5 log2FC 會因 CIRIquant FSJ counts 是 junction-specific（非全 gene expression），fold-change 本來偏小，導致 Type II 幾乎為零。可調高閾值（例如 0.3）若需更嚴格篩選。
+- **不做方向一致性檢查**：offset approach 造成 log2FC（ratio 方向）與 logFC_fsj（FSJ 方向）天然反向相關（FSJ↑ → offset↑ → ratio log2FC 傾向負值），強制要求 sign 一致等同於把幾乎所有 Type II 歸入 Type I。正確判斷：`sig_bsj AND sig_fsj`（無方向條件）
+- `fsj_concordance_lfc`（config `de.fsj_concordance_lfc`，預設 `0.0`）：可設定最小 |logFC_fsj| 作為 FSJ 顯著的過濾條件（0 = 僅看統計顯著性）
 
 **重要欄位命名**：merge BSJ/FSJ 結果後，`PValue` 不加後綴（只有 `logFC`、`FDR` 因同時出現在兩表才加 `_bsj`/`_fsj`）。`bsj_sig_col` 必須用 `"PValue"`，不是 `"PValue_bsj"`。
 
@@ -792,7 +793,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | Heatmap tumor/normal 欄位混排 | 樣本欄依 SRR ID 字母順序排列，奇數偶數交錯（normal→tumor→normal…）| `_plotly_heatmap()` 和 `FULL_HEATMAP_DATA` 建立時，讀取 `sample_groups.csv` 按 condition 重排：tumor 欄在左、normal 欄在右 |
 | `analysis.R` `coef=2` 在配對設計下指向 patient 係數而非 condition | `model.matrix(~patient+condition)` 有多個 patient dummy；`coef=2` 指向第一個 patient，非 condition | 改為 `cond_coef = ncol(design)`（condition 永遠在最後一列）；`glmQLFTest(fit, coef=cond_coef)`、`topTable(fit, coef=cond_coef)` |
 | `download.smk` Python 3.7 不支援 `unlink(missing_ok=True)` | `missing_ok` 參數在 Python 3.8 才加入；CentOS 7 server 的 conda Python 3.7 執行時 TypeError | 改用 `try: lock.unlink() except OSError: pass` 相容寫法 |
-| Type II DE circRNA 幾乎全為零 | `concordant` 判斷加了 `abs(logFC_fsj) >= 0.5`，但 CIRIquant FSJ counts 是 locus-specific junction reads（非全 gene CPM），fold-change 偏小；真正 Type II（FSJ significant + 同方向但 logFC < 0.5）全被分到 Type I | 移除固定閾值，改為可設定的 `fsj_concordance_lfc`（config `de.fsj_concordance_lfc`），預設 `0.0`（只看方向 + 顯著性）；舊設定 0.5 可作為更嚴格模式 |
+| Type II DE circRNA 幾乎全為零 | 兩個根本原因：(1) `abs(logFC_fsj) >= 0.5` 閾值過嚴；(2) offset approach 造成 log2FC 與 logFC_fsj **反向相關**，`sign(log2FC)==sign(logFC_fsj)` 幾乎從不成立（73 sig_fsj 中只有 1 個同方向） | 移除方向一致性檢查，改為 `sig_bsj & sig_fsj`（BSJ ratio 顯著 AND FSJ 獨立顯著）；結果：GSE113230 從 0 → 73 Type_II（15.1%），GSE58135 → 2（13.3%），GSE133998 → 2（2.4%） |
 
 ---
 

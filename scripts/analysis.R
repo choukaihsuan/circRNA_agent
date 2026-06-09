@@ -133,16 +133,20 @@ add_type_col <- function(res_df, method_name, eff_col, eff_thr, fdr_cutoff, lfc_
   if (method_name == "edgeR_ciriquant" && "logFC_fsj" %in% colnames(res_df)) {
     fsj_sig_col <- if (eff_col == "padj") "FDR_fsj" else "pvalue_fsj"
     sig_bsj  <- !is.na(res_df[[eff_col]]) & res_df[[eff_col]] < eff_thr & abs(res_df$log2FC) >= lfc_cutoff
-    sig_fsj  <- !is.na(res_df[[fsj_sig_col]]) & res_df[[fsj_sig_col]] < fdr_cutoff
-    concordant <- with(res_df,
-      !is.na(logFC_fsj) & sign(log2FC) == sign(logFC_fsj) & abs(logFC_fsj) >= fsj_lfc_thr
-    )
+    # sig_fsj: FSJ independently significant AND fold-change >= fsj_lfc_thr.
+    # Note: direction concordance (sign check) is NOT used here because the BSJ/FSJ
+    # ratio test (offset model) creates an inherent anti-correlation between log2FC
+    # direction and logFC_fsj direction — checking sign equality produces near-zero
+    # Type II. Instead, Type II = BOTH ratio-test AND independent FSJ-test significant,
+    # regardless of direction; the offset already removes pure-FSJ-driven ratio changes.
+    sig_fsj  <- !is.na(res_df[[fsj_sig_col]]) &
+                res_df[[fsj_sig_col]] < fdr_cutoff &
+                (!is.na(res_df[["logFC_fsj"]]) & abs(res_df[["logFC_fsj"]]) >= fsj_lfc_thr)
     res_df$Type <- dplyr::case_when(
-      sig_bsj & !sig_fsj               ~ "Type_I",
-      sig_bsj & sig_fsj & concordant   ~ "Type_II",
-      sig_bsj & sig_fsj & !concordant  ~ "Type_I",
-      !sig_bsj & sig_fsj               ~ "Type_III",
-      TRUE                             ~ "NS"
+      sig_bsj & sig_fsj    ~ "Type_II",
+      sig_bsj & !sig_fsj   ~ "Type_I",
+      !sig_bsj & sig_fsj   ~ "Type_III",
+      TRUE                 ~ "NS"
     )
   } else {
     res_df$Type <- NA_character_
