@@ -35,6 +35,12 @@ normal_label <- snakemake@params[["normal_label"]]
 de_sig_by    <- tryCatch(snakemake@params[["de_sig_by"]], error = function(e) "auto")
 if (!is.character(de_sig_by) || !de_sig_by %in% c("auto", "pvalue", "padj", "qvalue"))
   de_sig_by <- if (isTRUE(de_sig_by)) "pvalue" else "auto"
+# Minimum |logFC_fsj| required for concordance (Type II classification).
+# 0.0 = direction match only; 0.5 = old strict setting.
+# CIRIquant FSJ counts are junction-specific (not whole-gene CPM), so
+# fold-changes tend to be small even when the host gene genuinely changes.
+fsj_lfc_thr  <- tryCatch(as.numeric(snakemake@params[["fsj_concordance_lfc"]]),
+                          error = function(e) 0.0)
 heatmap_top_n_raw <- tryCatch(snakemake@params[["heatmap_top_n"]], error = function(e) 10L)
 heatmap_top_n <- if (length(heatmap_top_n_raw) == 0 || is.null(heatmap_top_n_raw)) 10L else as.integer(heatmap_top_n_raw)
 circbase_annot_file <- tryCatch(snakemake@input[["circbase_annot"]], error = function(e) NULL)
@@ -122,13 +128,14 @@ do_cascade <- function(res_df, de_sig_by, fdr_cutoff) {
 }
 
 # Type I / II / III classification (edgeR_ciriquant only; NA for all others)
-add_type_col <- function(res_df, method_name, eff_col, eff_thr, fdr_cutoff, lfc_cutoff) {
+add_type_col <- function(res_df, method_name, eff_col, eff_thr, fdr_cutoff, lfc_cutoff,
+                         fsj_lfc_thr = 0.0) {
   if (method_name == "edgeR_ciriquant" && "logFC_fsj" %in% colnames(res_df)) {
     fsj_sig_col <- if (eff_col == "padj") "FDR_fsj" else "pvalue_fsj"
     sig_bsj  <- !is.na(res_df[[eff_col]]) & res_df[[eff_col]] < eff_thr & abs(res_df$log2FC) >= lfc_cutoff
     sig_fsj  <- !is.na(res_df[[fsj_sig_col]]) & res_df[[fsj_sig_col]] < fdr_cutoff
     concordant <- with(res_df,
-      !is.na(logFC_fsj) & sign(log2FC) == sign(logFC_fsj) & abs(logFC_fsj) >= 0.5
+      !is.na(logFC_fsj) & sign(log2FC) == sign(logFC_fsj) & abs(logFC_fsj) >= fsj_lfc_thr
     )
     res_df$Type <- dplyr::case_when(
       sig_bsj & !sig_fsj               ~ "Type_I",
@@ -291,7 +298,7 @@ for (mname in names(method_map)) {
 
   casc     <- do_cascade(r$res_df, de_sig_by, fdr_cutoff)
   final_df <- add_type_col(casc$res_df, mname, casc$eff_col, casc$eff_thr,
-                            fdr_cutoff, lfc_cutoff)
+                            fdr_cutoff, lfc_cutoff, fsj_lfc_thr)
   final_results[[mname]] <- list(
     res_df  = final_df,
     log_cpm = r$log_cpm,

@@ -20,13 +20,14 @@ rule de_analysis:
         heatmap  = RESULTS_DIR + "/plots/heatmap.pdf",
         pca      = RESULTS_DIR + "/plots/pca.pdf",
     params:
-        de_method     = DE_METHOD,
-        fdr           = config["de"]["fdr_cutoff"],
-        lfc           = config["de"]["log2fc_cutoff"],
-        tumor_label   = config["de"]["tumor_label"],
-        normal_label  = config["de"]["normal_label"],
-        de_sig_by     = config["de"].get("de_sig_by", "auto"),
-        heatmap_top_n = config["de"].get("heatmap_top_n", 10),
+        de_method            = DE_METHOD,
+        fdr                  = config["de"]["fdr_cutoff"],
+        lfc                  = config["de"]["log2fc_cutoff"],
+        tumor_label          = config["de"]["tumor_label"],
+        normal_label         = config["de"]["normal_label"],
+        de_sig_by            = config["de"].get("de_sig_by", "auto"),
+        heatmap_top_n        = config["de"].get("heatmap_top_n", 10),
+        fsj_concordance_lfc  = config["de"].get("fsj_concordance_lfc", 0.0),
     log: "logs/de_analysis.log"
     script:
         "../../scripts/analysis.R"
