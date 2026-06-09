@@ -612,6 +612,14 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 
 **評估指標**：Precision、Recall、F1、**Specificity**、**TN**、AUC-PR
 
+**AUC-PR 計算方式（重要）**：
+- 二元偵測（每個 circRNA 只有 detected/not detected，無連續分數）直接套用 `sklearn.average_precision_score` 會嚴重虛高 AUC-PR。
+- **根本原因**：Our_adaptive 偵測到的 circRNA 全部 score=1，未偵測的全部 score=0；ground truth 中 87.8% 的 TP 在 score=0 的大池（即 FN）；樂觀排序（label=1 排在 label=0 前面）把 2,953 個 FN 全部排在 1,997 個 TN 前面，產生長段假精確度，AUC-PR = 0.946（虛高）。
+- **正確方法**：門檻掃描（threshold sweep）。對 CIRI2 output 和 DCC `CircRNACount` 各取 `min_bsj` 門檻（1–50），重新建立共識 → 計算每個門檻下的 (Precision, Recall) → 繪製真實 PR 曲線 → trapezoid AUC。
+- **實測結果**：Our_adaptive **誠實 AUC-PR = 0.155**（最大 Recall 17.3%，Precision 維持 90.5%）；其他方法的 AUC-PR 仍為二元偵測值（尚未做門檻掃描，待後續補充）。
+- **新增 CLI 參數**：`accuracy_benchmark.py --ciri2-file <CIRI2 output> --dcc-count-file <CircRNACount> --output-pr-curve <pr_curve.tsv>`；`generate_comparison_report.py --pr-curve <pr_curve.tsv>`（在報告中插入 SVG PR 曲線圖）。
+- **SRR444655 無 CIRIquant GTF**：benchmark total RNA 樣本（SRR444655）只有 RNase R replicates 才有 CIRIquant GTF；門檻掃描改用 `SRR444655.ciri2` + `DCC/CircRNACount`（CIRI2 輸出 col 4 = BSJ count，DCC CircRNACount col 3 = junction count）。
+
 **分層分析**：依 Total RNA 中的 BSJ count 分三層：
 - Low：1–4 RPM
 - Mid：5–19 RPM
@@ -693,7 +701,7 @@ $PY ~/circRNA_agent/scripts/consensus_filter.py \
     --output $BENCH/detection/circompara2_4tools.bed --summary $BENCH/detection/circompara2_4tools_summary.tsv \
     --min-tools 2 --slop 10 --min-bsj 2 --max-junction-ratio 999
 
-# 2. accuracy benchmark
+# 2. accuracy benchmark（含門檻掃描 PR curve，需提供 CIRI2 output 和 DCC CircRNACount）
 $PY $SCRIPTS/accuracy_benchmark.py \
     --ground-truth $BENCH/rnaser/ground_truth.tsv \
     --our-bed $BENCH/detection/our_method.bed --our-summary $BENCH/detection/our_method_summary.tsv \
@@ -702,7 +710,10 @@ $PY $SCRIPTS/accuracy_benchmark.py \
     --circompara2-4tools-bed $BENCH/detection/circompara2_4tools.bed --circompara2-4tools-summary $BENCH/detection/circompara2_4tools_summary.tsv \
     --nfcore-bed $BENCH/detection/nfcore_3tools.bed --nfcore-summary $BENCH/detection/nfcore_3tools_summary.tsv \
     --output-summary $BENCH/accuracy_summary.tsv --output-stratified $BENCH/stratified_f1.tsv \
-    --output-fp-comparison $BENCH/fp_score_comparison.tsv --slop 10 --min-bsj 2
+    --output-fp-comparison $BENCH/fp_score_comparison.tsv --slop 10 --min-bsj 2 \
+    --ciri2-file $GS55/SRR444655.ciri2 \
+    --dcc-count-file $GS55/DCC/CircRNACount \
+    --output-pr-curve $BENCH/pr_curve.tsv
 
 # 3. DE baseline（mock snakemake，見 /tmp/run_de_baseline.R）
 conda run -n ciriquant Rscript /tmp/run_de_baseline.R
@@ -715,12 +726,13 @@ $PY $SCRIPTS/de_quality_benchmark.py \
     --fdr 0.05 --lfc 1.0 \
     --output-summary $BENCH/de_quality_summary.tsv --output-jaccard $BENCH/de_jaccard.tsv
 
-# 5. comparison report
+# 5. comparison report（加 --pr-curve 可在報告中插入 SVG PR 曲線圖）
 $PY $SCRIPTS/generate_comparison_report.py \
     --accuracy $BENCH/accuracy_summary.tsv --stratified $BENCH/stratified_f1.tsv \
     --compute $BENCH/compute_cost.tsv \
     --de-quality $BENCH/de_quality_summary.tsv --de-jaccard $BENCH/de_jaccard.tsv \
     --fp-comparison $BENCH/fp_score_comparison.tsv \
+    --pr-curve $BENCH/pr_curve.tsv \
     --output $BENCH/comparison_report.html
 ```
 
@@ -794,6 +806,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `analysis.R` `coef=2` 在配對設計下指向 patient 係數而非 condition | `model.matrix(~patient+condition)` 有多個 patient dummy；`coef=2` 指向第一個 patient，非 condition | 改為 `cond_coef = ncol(design)`（condition 永遠在最後一列）；`glmQLFTest(fit, coef=cond_coef)`、`topTable(fit, coef=cond_coef)` |
 | `download.smk` Python 3.7 不支援 `unlink(missing_ok=True)` | `missing_ok` 參數在 Python 3.8 才加入；CentOS 7 server 的 conda Python 3.7 執行時 TypeError | 改用 `try: lock.unlink() except OSError: pass` 相容寫法 |
 | Type II DE circRNA 幾乎全為零 | 兩個根本原因：(1) `abs(logFC_fsj) >= 0.5` 閾值過嚴；(2) offset approach 造成 log2FC 與 logFC_fsj **反向相關**，`sign(log2FC)==sign(logFC_fsj)` 幾乎從不成立（73 sig_fsj 中只有 1 個同方向） | 移除方向一致性檢查，改為 `sig_bsj & sig_fsj`（BSJ ratio 顯著 AND FSJ 獨立顯著）；結果：GSE113230 從 0 → 73 Type_II（15.1%），GSE58135 → 2（13.3%），GSE133998 → 2（2.4%） |
+| benchmark AUC-PR 0.946 虛高（二元偵測假象）| `sklearn.average_precision_score` 對 score ∈ {0,1} 做樂觀排序：ground truth 87.8% 的 TP 都在 score=0 大池（FN）；樂觀排序把 2,953 個 FN 全部排在 1,997 個 TN 前，產生假精確度長段，AUC-PR = 0.946 | 改用**門檻掃描**（threshold sweep）：對 CIRI2 + DCC CircRNACount 各取 min_bsj ∈ {1,2,3,...,50}，每個門檻計算真實 (Precision, Recall)，trapezoid AUC；誠實值 = **0.155**；新增 `--ciri2-file / --dcc-count-file / --output-pr-curve` CLI 參數至 `accuracy_benchmark.py`，`--pr-curve` 至 `generate_comparison_report.py` |
+| CirComPara2 工具數誤標（5→4 工具）| `generate_comparison_report.py` 的說明文字列出 CIRI2 + CIRIquant + DCC + find_circ + CIRCexplorer2 = 5 工具；但 CIRIquant 內部已呼叫 CIRI2 做 BSJ 偵測，兩者是同一演算法 | 修正為 4 工具（CIRIquant + DCC + find_circ + CIRCexplorer2）；Consensus 門檻改為「≥2/4 tools」；報告說明文字同步更新 |
 
 ---
 
@@ -969,13 +983,15 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 | Method | Precision | Recall | F1 | Specificity | AUC-PR |
 |--------|-----------|--------|----|-------------|--------|
-| Our_adaptive | 0.877 | 0.171 | 0.286 | 0.959 | 0.946 |
-| Our_no_QC | 0.879 | 0.173 | 0.290 | 0.959 | 0.946 |
-| CirComPara2_sim（2-tool ablation）| 0.879 | 0.173 | 0.290 | 0.959 | 0.946 |
-| **CirComPara2_4tools** | 0.852 | **0.235** | **0.368** | 0.930 | 0.921 |
-| nfcore_3tools | 0.873 | 0.182 | 0.301 | 0.955 | 0.943 |
+| **Our_adaptive** | 0.877 | 0.171 | 0.286 | 0.959 | **0.155**（門檻掃描，誠實值）|
+| Our_no_QC | 0.879 | 0.173 | 0.290 | 0.959 | 0.946†|
+| CirComPara2_sim（2-tool ablation）| 0.879 | 0.173 | 0.290 | 0.959 | 0.946†|
+| **CirComPara2_4tools** | 0.852 | **0.235** | **0.368** | 0.930 | 0.921†|
+| nfcore_3tools | 0.873 | 0.182 | 0.301 | 0.955 | 0.943†|
 
-CirComPara2_4tools Recall 最高但 Specificity 最低；Our pipeline AUC-PR 最優（0.946）。
+†：二元偵測樂觀 AUC-PR（score ∈ {0,1}，虛高；Our_adaptive 誠實值 = 0.155，見 AUC-PR 計算說明）
+
+CirComPara2_4tools Recall 最高但 Specificity 最低；Our pipeline Specificity 最優（0.959）。
 
 **Biomarker score 公式（6D）**：
 ```
