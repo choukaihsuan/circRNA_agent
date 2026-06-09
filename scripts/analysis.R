@@ -68,7 +68,18 @@ condition <- factor(groups$condition, levels = c(normal_label, tumor_label))
 counts <- data.matrix(round(counts))
 storage.mode(counts) <- "integer"
 counts <- counts[rowSums(counts) > 0, , drop = FALSE]
-design <- model.matrix(~ condition)
+
+has_patient <- "patient_id" %in% colnames(groups)
+if (has_patient) {
+  patient <- factor(groups$patient_id)
+  design  <- model.matrix(~ patient + condition)
+  message("[DE] Paired design: ~ patient + condition")
+} else {
+  design <- model.matrix(~ condition)
+  message("[DE] Unpaired design: ~ condition")
+}
+# condition coefficient is always the last column
+cond_coef <- ncol(design)
 
 message(sprintf("[DE] primary=%s  samples=%d  circRNAs=%d",
                 de_method, ncol(counts), nrow(counts)))
@@ -166,7 +177,7 @@ result_edger <- tryCatch({
   dge$offset <- offset_mat
   dge    <- estimateDisp(dge, design, robust = TRUE)
   fit    <- glmQLFit(dge, design, robust = TRUE)
-  qlf    <- glmQLFTest(fit, coef = 2)
+  qlf    <- glmQLFTest(fit, coef = cond_coef)
   res_bsj <- as.data.frame(topTags(qlf, n = Inf, sort.by = "none"))
 
   # Independent FSJ test
@@ -175,7 +186,7 @@ result_edger <- tryCatch({
   dge_fsj  <- calcNormFactors(dge_fsj, method = "TMM")
   dge_fsj  <- estimateDisp(dge_fsj, design, robust = TRUE)
   fit_fsj  <- glmQLFit(dge_fsj, design, robust = TRUE)
-  qlf_fsj  <- glmQLFTest(fit_fsj, coef = 2)
+  qlf_fsj  <- glmQLFTest(fit_fsj, coef = cond_coef)
   res_fsj  <- as.data.frame(topTags(qlf_fsj, n = Inf, sort.by = "none"))
 
   res_bsj$circ_id <- rownames(res_bsj)
@@ -221,7 +232,9 @@ result_edger <- tryCatch({
 result_deseq <- tryCatch({
   suppressPackageStartupMessages(library(DESeq2))
   col_data <- data.frame(row.names = common_samples, condition = condition)
-  dds <- DESeqDataSetFromMatrix(countData = counts, colData = col_data, design = ~ condition)
+  if (has_patient) col_data$patient <- patient
+  deseq_design <- if (has_patient) ~ patient + condition else ~ condition
+  dds <- DESeqDataSetFromMatrix(countData = counts, colData = col_data, design = deseq_design)
   dds <- DESeq(dds)
   res <- results(dds, contrast = c("condition", tumor_label, normal_label))
   res_df <- as.data.frame(res)
@@ -248,7 +261,7 @@ result_limma <- tryCatch({
   v      <- voom(dge, design, plot = FALSE)
   fit    <- lmFit(v, design)
   fit    <- eBayes(fit)
-  res    <- topTable(fit, coef = 2, n = Inf, sort.by = "P")
+  res    <- topTable(fit, coef = cond_coef, n = Inf, sort.by = "P")
   res_df <- res %>% tibble::rownames_to_column("circ_id")
   names(res_df)[names(res_df) == "logFC"]     <- "log2FC"
   names(res_df)[names(res_df) == "P.Value"]   <- "pvalue"

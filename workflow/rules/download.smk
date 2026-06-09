@@ -114,7 +114,13 @@ rule download_fastq:
             aria2c  = _find_tool("aria2c")   # searches miniconda3 + miniforge3 envs
             srapath = _find_sra_tool("srapath")
             curl    = _find_tool("curl")
-            if srapath and not sra_file.exists():
+            aria2_meta = sra_dir / f"{srr}.sra.aria2"
+            sra_partial = aria2_meta.exists()  # incomplete aria2c download
+            # Short-circuit: complete .sra already present — skip all network downloads
+            if sra_file.exists() and not sra_partial:
+                downloaded = True
+                logf.write(f"[skip] SRA already downloaded: {sra_file}\n")
+            if not downloaded and srapath and (not sra_file.exists() or sra_partial):
                 logf.write(f"[s3] Getting S3 URL for {srr}\n")
                 logf.flush()
                 result = subprocess.run(
@@ -128,9 +134,10 @@ rule download_fastq:
                     if aria2c:
                         rc = run_cmd([
                             aria2c,
-                            "-x", "4", "-s", "4", "-k", "10M",
+                            "-x", "8", "-s", "8", "-k", "10M",
                             "--file-allocation=none",
                             "--retry-wait=10", "--max-tries=5",
+                            "-c",  # resume partial download via .aria2 metadata
                             "-d", str(sra_dir),
                             "-o", f"{srr}.sra",
                             s3_url,
@@ -173,10 +180,17 @@ rule download_fastq:
             # ── 3. prefetch (NCBI HTTPS fallback) ────────────────
             if not downloaded:
                 # Remove stale lock files from previous interrupted downloads
+                # Use try/except for Python 3.7 compatibility (missing_ok added in 3.8)
                 for lock in sra_dir.glob("*.lock"):
-                    lock.unlink(missing_ok=True)
+                    try:
+                        lock.unlink()
+                    except OSError:
+                        pass
                 for tmp in sra_dir.glob("*.tmp"):
-                    tmp.unlink(missing_ok=True)
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
 
                 prefetch_bin = _find_sra_tool("prefetch")
                 for attempt in range(1, int(params.retry) + 1):

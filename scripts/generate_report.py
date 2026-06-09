@@ -104,69 +104,201 @@ def _sig_ids_from_de(de: pd.DataFrame, p_col: str, sig_thr: float, lfc: float) -
     return set(de.loc[mask, "circ_id"].dropna().astype(str))
 
 
-def _venn_3_svg(sig_sets: dict, lfc: float) -> str:
-    """Generate a 3-circle (or 2-circle) Venn SVG for DE method overlap."""
+def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
+    """Generate a 3-circle Venn SVG with clickable regions showing circRNA lists."""
+    import json as _json2
     methods = [k for k in ("edgeR_ciriquant", "deseq2", "limma") if k in sig_sets]
     if len(methods) < 2:
         return ""
     sets = [sig_sets[m] for m in methods]
-    # 7-region computation
     A, B = sets[0], sets[1]
     C = sets[2] if len(sets) > 2 else set()
     ab = A & B; ac = A & C; bc = B & C; abc = A & B & C
-    counts = {
-        "A":   len(A - B - C),  "B":  len(B - A - C),  "C":   len(C - A - B),
-        "AB":  len(ab - C),     "AC": len(ac - B),      "BC":  len(bc - A),
-        "ABC": len(abc),
+    regions_sets = {
+        "A":   A - B - C,  "B":  B - A - C,  "C":  C - A - B,
+        "AB":  ab - C,     "AC": ac - B,      "BC": bc - A,
+        "ABC": abc,
     }
+    counts = {k: len(v) for k, v in regions_sets.items()}
     total_union = len(A | B | C) if len(sets) > 2 else len(A | B)
-    # SVG layout (3-circle)
-    # Closer centers → larger overlaps.
-    # A=(170,128) B=(290,128) C=(230,210), r=90
-    # A-B dist=120; A-C dist≈101; C bottom=300; label→H=345
+
+    # Build per-region circRNA detail rows from de_lookup
+    method_labels = {"edgeR_ciriquant": "edgeR", "deseq2": "DESeq2", "limma": "limma"}
+    region_labels = {
+        "A":   f"edgeR only",        "B":   f"DESeq2 only",
+        "C":   f"limma only",        "AB":  f"edgeR ∩ DESeq2 only",
+        "AC":  f"edgeR ∩ limma only","BC":  f"DESeq2 ∩ limma only",
+        "ABC": f"三方法均顯著",
+    }
+    venn_region_data: dict = {}
+    if de_lookup:
+        # Build circ→{gene, lfc, pval, cb, methods[]} — collect ALL significant methods
+        circ_info: dict = {}
+        for m, df in de_lookup.items():
+            if df is None or df.empty:
+                continue
+            pcol = "pvalue" if "pvalue" in df.columns else ("PValue" if "PValue" in df.columns else None)
+            if pcol is None:
+                continue
+            mlabel = method_labels.get(m, m)
+            m_sig_set = sig_sets.get(m, set())
+            for _, row in df.iterrows():
+                cid = str(row.get("circ_id", ""))
+                if not cid:
+                    continue
+                pv = float(row.get(pcol, 1.0))
+                is_sig = cid in m_sig_set
+                if cid not in circ_info:
+                    circ_info[cid] = {
+                        "gene": str(row.get("gene_name", "")),
+                        "lfc":  round(float(row.get("log2FC", 0.0)), 3),
+                        "pval": pv,
+                        "cb":   str(row.get("circbase_id", "novel") or "novel"),
+                        "methods": [mlabel] if is_sig else [],
+                    }
+                else:
+                    # update best pval / lfc
+                    if pv < circ_info[cid]["pval"]:
+                        circ_info[cid]["pval"] = pv
+                        circ_info[cid]["lfc"]  = round(float(row.get("log2FC", 0.0)), 3)
+                    if is_sig and mlabel not in circ_info[cid]["methods"]:
+                        circ_info[cid]["methods"].append(mlabel)
+        for region, cid_set in regions_sets.items():
+            rows = []
+            for cid in cid_set:
+                info = circ_info.get(cid, {})
+                rows.append({
+                    "id":   cid,
+                    "gene": info.get("gene", ""),
+                    "lfc":  info.get("lfc", 0.0),
+                    "pval": info.get("pval", 1.0),
+                    "cb":   info.get("cb", "novel"),
+                    "m":    ", ".join(info.get("methods", [])),
+                })
+            rows.sort(key=lambda r: r["pval"])
+            venn_region_data[region] = {
+                "label": f"{region_labels[region]} ({counts[region]} 個)",
+                "circs": rows,
+            }
+
     W, H = 460, 345
     cx = [170, 290, 230]; cy = [128, 128, 210]; r = 90
-    colors = ["rgba(214,39,40,0.20)", "rgba(44,160,44,0.20)", "rgba(44,119,214,0.20)"]
+    colors  = ["rgba(214,39,40,0.20)", "rgba(44,160,44,0.20)", "rgba(44,119,214,0.20)"]
     strokes = ["#d62728", "#2CA02C", "#2c6fad"]
     labels  = {"edgeR_ciriquant": "edgeR (FSJ offset)", "deseq2": "DESeq2", "limma": "limma-voom"}
-    # Label positions: centered above/below each circle
-    lpos = [(170, 22), (290, 22), (230, 316)]
-    # Region count positions
-    # AB-only: A∩B half-chord≈67 → intersects at y≈61; C top at y=120 → midpoint≈90
-    rpos = {
-        "A":  (118, 118),  "B":  (342, 118),  "C":  (230, 263),
-        "AB": (230, 88),   "AC": (170, 190),  "BC": (280, 182),
+    lpos    = [(170, 22), (290, 22), (230, 316)]
+    rpos    = {
+        "A":  (118, 118), "B":  (342, 118), "C":  (230, 263),
+        "AB": (230, 88),  "AC": (170, 190), "BC": (280, 182),
         "ABC":(230, 163),
     }
     svg_parts = [f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
-                 f'xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;max-width:480px">']
-    # Circles
+                 f'id="venn-svg" xmlns="http://www.w3.org/2000/svg" '
+                 f'style="font-family:sans-serif;max-width:480px">']
     for i in range(min(len(methods), 3)):
         svg_parts.append(f'<circle cx="{cx[i]}" cy="{cy[i]}" r="{r}" '
                          f'fill="{colors[i]}" stroke="{strokes[i]}" stroke-width="2.5"/>')
-    # Method labels — all text-anchor="middle" to avoid clipping on either edge
     for i, m in enumerate(methods[:3]):
         lx, ly = lpos[i]
         svg_parts.append(f'<text x="{lx}" y="{ly}" font-size="11" font-weight="bold" '
-                         f'fill="{strokes[i]}" text-anchor="middle">'
-                         f'{labels.get(m, m)}</text>')
+                         f'fill="{strokes[i]}" text-anchor="middle">{labels.get(m,m)}</text>')
         svg_parts.append(f'<text x="{lx}" y="{ly+14}" font-size="10" '
-                         f'fill="{strokes[i]}" text-anchor="middle">'
-                         f'(n={len(sig_sets[m])})</text>')
-    # Region counts
+                         f'fill="{strokes[i]}" text-anchor="middle">(n={len(sig_sets[m])})</text>')
     for region, (rx, ry) in rpos.items():
         if len(methods) < 3 and region in ("C", "AC", "BC", "ABC"):
             continue
         v = counts[region]
         if v == 0:
             continue
+        has_data = bool(de_lookup) and region in venn_region_data
+        cursor    = "cursor:pointer" if has_data else ""
+        hover_tip = f'title="點擊查看 {v} 個 circRNA"' if has_data else ""
+        onclick   = f'onclick="showVennRegion(\'{region}\')"' if has_data else ""
+        # larger transparent click target
+        svg_parts.append(f'<rect x="{rx-16}" y="{ry-14}" width="32" height="28" '
+                         f'fill="transparent" rx="5" style="{cursor}" {onclick} {hover_tip}/>')
         svg_parts.append(f'<text x="{rx}" y="{ry}" font-size="15" font-weight="bold" '
                          f'text-anchor="middle" dominant-baseline="middle" '
-                         f'stroke="white" stroke-width="4" paint-order="stroke" fill="#333">{v}</text>')
+                         f'stroke="white" stroke-width="4" paint-order="stroke" fill="#333" '
+                         f'style="{cursor};text-decoration:{"underline" if has_data else "none"}" '
+                         f'{onclick} {hover_tip}>{v}</text>')
     svg_parts.append('</svg>')
-    note = (f'<p style="font-size:12px;color:#666;margin:4px 0 0">數字 = 各區域顯著 circRNA 數量'
-            f'（閾值：|log₂FC| &gt; {lfc}）；三方法聯集共 {total_union} 個。</p>')
-    return f'<div style="text-align:center">{"".join(svg_parts)}{note}</div>'
+    note = (f'<p style="font-size:12px;color:#666;margin:4px 0 0">'
+            f'數字 = 各區域顯著 circRNA 數量（閾值：|log₂FC| &gt; {lfc}）；'
+            f'三方法聯集共 {total_union} 個。'
+            f'{"<b>點擊數字</b>可查看對應 circRNA 清單。" if de_lookup else ""}</p>')
+
+    venn_js = _json2.dumps(venn_region_data, ensure_ascii=False)
+    detail_panel = f"""
+<div id="venn-detail" style="display:none;margin:12px auto;max-width:860px;
+     border:1px solid #dde;border-radius:8px;padding:14px;background:#fafbff">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <span id="venn-detail-title" style="font-weight:bold;font-size:14px;color:#2c6fad"></span>
+    <span>
+      <button id="venn-dl-btn" onclick="vennDownloadCSV()"
+        style="font-size:12px;padding:3px 10px;border:1px solid #2c6fad;border-radius:4px;
+               background:#fff;color:#2c6fad;cursor:pointer;margin-right:6px">&#11015; CSV</button>
+      <button onclick="document.getElementById('venn-detail').style.display='none';
+                       document.getElementById('venn-detail').dataset.active=''"
+        style="font-size:12px;padding:3px 8px;border:1px solid #ccc;border-radius:4px;
+               background:#fff;cursor:pointer">&#x2715; 關閉</button>
+    </span>
+  </div>
+  <div id="venn-detail-body" style="max-height:420px;overflow-y:auto">
+    <table id="venn-detail-tbl" class="table" style="font-size:12px;width:100%">
+      <thead><tr>
+        <th>#</th><th>circ_id</th><th>gene_name</th>
+        <th>log2FC</th><th>p-value</th><th>circbase_id</th><th>方法</th>
+      </tr></thead>
+      <tbody id="venn-detail-tbody"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const VENN_REGION_DATA = {venn_js};
+let _vennCSVRows = [];
+function showVennRegion(region) {{
+  const panel = document.getElementById('venn-detail');
+  if (panel.dataset.active === region) {{
+    panel.style.display = 'none'; panel.dataset.active = ''; return;
+  }}
+  panel.dataset.active = region;
+  const d = VENN_REGION_DATA[region];
+  if (!d) return;
+  document.getElementById('venn-detail-title').textContent = d.label;
+  const tbody = document.getElementById('venn-detail-tbody');
+  tbody.innerHTML = '';
+  _vennCSVRows = [['#','circ_id','gene_name','log2FC','p-value','circbase_id','method']];
+  d.circs.forEach((c, i) => {{
+    const tr = document.createElement('tr');
+    const cb = (c.cb && c.cb !== 'novel') ?
+      `<span style="color:#e07b39;font-weight:bold">${{c.cb}}</span>` : 'novel';
+    tr.innerHTML = `<td>${{i+1}}</td>
+      <td><a class="circ-link" onclick="showCircDetail('${{c.id}}')" title="查看詳細">${{c.id}}</a></td>
+      <td>${{c.gene||'—'}}</td>
+      <td style="color:${{c.lfc>0?'#d62728':'#2CA02C'}};font-weight:bold">${{c.lfc.toFixed(2)}}</td>
+      <td>${{c.pval < 0.001 ? c.pval.toExponential(2) : c.pval.toFixed(4)}}</td>
+      <td>${{cb}}</td><td style="color:#888">${{c.m}}</td>`;
+    tbody.appendChild(tr);
+    _vennCSVRows.push([i+1, c.id, c.gene||'', c.lfc, c.pval, c.cb||'novel', c.m]);
+  }});
+  panel.style.display = 'block';
+  panel.scrollIntoView({{behavior:'smooth', block:'nearest'}});
+}}
+function vennDownloadCSV() {{
+  const panel = document.getElementById('venn-detail');
+  const region = panel.dataset.active || 'venn';
+  const d = VENN_REGION_DATA[region];
+  const filename = 'GSE133998_venn_' + region + '.csv';
+  const csv = _vennCSVRows.map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = filename; a.click();
+}}
+</script>"""
+
+    return (f'<div style="text-align:center">{"".join(svg_parts)}{note}</div>'
+            + detail_panel)
 
 
 def _build_method_js_data(
@@ -1182,17 +1314,25 @@ def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
 
     # Normal-centered z-score: use normal group mean/SD as reference
     normal_cols = []
+    cond_map_hm: dict = {}
     if groups_file and Path(groups_file).exists():
         try:
             grp = pd.read_csv(groups_file)
-            cond_map = dict(zip(grp["srr_id"], grp["condition"]))
-            normal_cols = [c for c in log_sub.columns if cond_map.get(c, "") == normal_label]
+            cond_map_hm = dict(zip(grp["srr_id"], grp["condition"]))
+            normal_cols = [c for c in log_sub.columns if cond_map_hm.get(c, "") == normal_label]
         except Exception:
             pass
     ref_cols = normal_cols if normal_cols else log_sub.columns.tolist()
     row_mean = log_sub[ref_cols].mean(axis=1)       # center on normal mean
     row_std  = log_sub.std(axis=1).clip(lower=0.1)  # scale on all-sample SD
     z = log_sub.sub(row_mean, axis=0).div(row_std, axis=0)
+
+    # Reorder columns: tumor (non-normal) first, then normal
+    _t_cols = [c for c in z.columns if cond_map_hm.get(c, "") not in (normal_label, "")]
+    _n_cols = [c for c in z.columns if cond_map_hm.get(c, "") == normal_label]
+    _o_cols = [c for c in z.columns if c not in set(_t_cols) and c not in set(_n_cols)]
+    if _t_cols or _n_cols:
+        z = z[_t_cols + _n_cols + _o_cols]
 
     n_up = sum(i in up_ids for i in avail)
     n_dn = sum(i in dn_ids for i in avail)
@@ -1401,6 +1541,13 @@ def build_report(
                     _rmean = _log_hm[_rcols].mean(axis=1)
                     _rstd  = _log_hm.std(axis=1).clip(lower=0.1)
                     _z_hm  = _log_hm.sub(_rmean, axis=0).div(_rstd, axis=0)
+                    # Reorder: tumor (non-normal) first, then normal
+                    _t_samps = [c for c in _samps if _cmap_hm.get(c, "") not in (normal_label, "")]
+                    _n_samps = [c for c in _samps if _cmap_hm.get(c, "") == normal_label]
+                    _o_samps = [c for c in _samps if c not in set(_t_samps) and c not in set(_n_samps)]
+                    if _t_samps or _n_samps:
+                        _samps = _t_samps + _n_samps + _o_samps
+                        _z_hm  = _z_hm[_samps]
                     # circbase label map
                     _cb_map_hm = {}
                     if "circbase_id" in de.columns and "in_circbase" in de.columns:
@@ -1445,6 +1592,7 @@ def build_report(
     # ── Build ALL_DE_METHODS data (method switcher + Venn diagram) ──────────────
     all_de_data: dict = {}
     sig_sets_venn: dict = {}
+    de_lookup_venn: dict = {}   # method → enriched DataFrame for Venn clickable detail
     for _mkey, _mfile in (de_files or {}).items():
         if not _mfile or not Path(_mfile).exists():
             continue
@@ -1458,6 +1606,7 @@ def build_report(
                 _m_de, matrix, _m_pcol, _m_thr, lfc, groups_file, normal_label
             )
             sig_sets_venn[_mkey] = _sig_ids_from_de(_m_de, _m_pcol, _m_thr, lfc)
+            de_lookup_venn[_mkey] = _m_de
         except Exception as _exc:
             import sys as _sys
             print(f"[report] DE file for {_mkey} failed: {_exc}", file=_sys.stderr)
@@ -1465,6 +1614,8 @@ def build_report(
     # Ensure primary method is in venn sets
     if de_method not in sig_sets_venn:
         sig_sets_venn[de_method] = _sig_ids_from_de(de, p_col, sig_thr, lfc)
+    if de_method not in de_lookup_venn:
+        de_lookup_venn[de_method] = de
 
     # ── Build bm_lookup for per-method score distribution ──────────────────────
     _bm_lookup: dict = {}
@@ -1511,7 +1662,7 @@ def build_report(
             pass
 
     all_de_methods_js = _json.dumps(all_de_data, ensure_ascii=False)
-    venn_html = _venn_3_svg(sig_sets_venn, lfc) if len(sig_sets_venn) >= 2 else ""
+    venn_html = _venn_3_svg(sig_sets_venn, lfc, de_lookup_venn) if len(sig_sets_venn) >= 2 else ""
 
     # Build method switcher HTML
     _msw_methods = [de_method] + [m for m in all_de_data if m != de_method]
@@ -1683,8 +1834,9 @@ function _drawCircleRNA(circId, container) {{
   const info     = d.info || {{}};
   const mirnaList= d.mirna || [];
   const rbpList  = d.rbp   || [];
-  const totalLen = parseInt(info.spliced_length) || 0;
   const exonBds  = info.exon_boundaries || [];
+  const totalLen = parseInt(info.spliced_length) ||
+                   (exonBds.length > 0 ? (exonBds[exonBds.length-1].cum_end || 0) : 0);
 
   const W=480, H=440, cx=240, cy=210;
   const ROUT=148, RIN=115, MI_OUT=176, MI_IN=153, RBP_OUT=113, RBP_IN=90;

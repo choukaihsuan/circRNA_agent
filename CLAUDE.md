@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，🔄 進行中）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -363,7 +363,9 @@ threads: 8
 | FASTQ 壓縮 | gzip（單執行緒）| ~2h/15GB | pigz 未安裝時的 fallback |
 
 **aria2c 並行下載建議**：
-- 同時下載 10 個 SRR：`xargs -P 10`，每個 `-x 6 -s 6`（共 60 連線），NFS 環境不建議更多
+- **S3 per-IP 總連線數安全閾值**：≤ 30 連線（實測 32 連線可接受）；超過 60 會觸發 DNS SERVFAIL（AWS S3 throttle），持續約 2 小時
+- **當前 download.smk 設定**：`-x 8 -s 8`；Snakemake `threads: 8`，max 4 parallel → 4 × 8 = 32 連線（安全範圍上緣）
+- **勿手動腳本同時跑多個 SRR**：10 × 16 = 160 連線曾觸發 DNS 封鎖（GSE133998 教訓）
 - S3 間歇性不可用（NCBI API）：`srapath --location s3` 回傳空字串，等待恢復後手動重啟
 - 下載時若 kill 中斷：aria2c 會留下 `.sra.aria2` resume 檔 → 重啟可斷點續傳；但若多次中斷導致 `.aria2` 狀態損壞，需刪除 `.sra` 和 `.aria2` 重新下載，否則 fasterq-dump 報 `rcBlob,rcCorrupt`
 
@@ -781,6 +783,15 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `config/projects/GSE133998.yaml` sra_cache_dir/tmp_dir 繼承舊專案路徑 | Web UI 從前一專案（GSE323364）快照複製 config，路徑殘留 `GSE323364/sra_cache`；Snakemake DAG 正常但中間檔案放錯位置 | 用 `sed -i` 替換 config 中的路徑（`GSE323364` → `GSE133998`）|
 | gzip 壓縮 SRA 轉換 FASTQ 太慢（~2h/15GB）| fasterq-dump 後 gzip 單執行緒壓縮，NFS 寫入慢 | 在 ciriquant env 安裝 `pigz`（`conda install -y -c conda-forge pigz`）；`download.smk` 已使用 pigz（若 pigz 不存在，`find_tool("pigz")` fallback 到 gzip）|
 | NCBI S3 URL 間歇性不可用（`srapath` 回傳空）| NCBI API 暫時失敗，`srapath --location s3` 回傳空字串；download.smk fallback 到 prefetch HTTPS（~22 KB/s）| 等待 S3 恢復後手動執行 aria2c；一般幾分鐘至數小時內恢復 |
+| S3 aria2c DNS SERVFAIL（`DNS server returned general failure`）| 並行下載連線總數過多（例如 10 samples × 16 connections = 160）觸發 AWS S3 per-IP throttle，DNS 回傳 SERVFAIL；持續約 2 小時後自動恢復 | 限制總連線數 ≤ 30：`-x 8` × 4 parallel = 32（當前設定，可接受）；`-x 4` × 4 = 16（保守）；早上手動腳本 10 × 16 = 160 是觸發根因；恢復後重跑 pipeline 即可 |
+| `kill <PID>`（SIGTERM）殺掉 Snakemake 時刪除 output 檔 | Snakemake 收到 SIGTERM 執行 graceful shutdown，自動刪除所有「正在執行 job 的 output 檔案」以防止不完整輸出；若早先下載完成的 FASTQ 恰好被列為「執行中 job 的 output」（因未設 protected），就會被刪除 | **一律用 `kill -9 <PID>`（SIGKILL）終止 Snakemake**，SIGKILL 無法被捕捉，不觸發 cleanup；永遠不用 bare `kill` 或 `pkill` 不加 `-9`；GSE133998 因此損失 9 個 FASTQ（~63 GB），需重新下載 |
+| 修改 `.smk` 規則觸發所有 jobs 重跑（"Code has changed"）| Snakemake 預設追蹤 rule 的 code hash；修改任何 `.smk` 檔案後，Snakemake 在下次執行時標記該 rule 所有 jobs 為「Code has changed since last execution」→ 全部重跑，即使 output 已存在 | **只在 Snakemake 未執行時修改 `.smk`**；若需 mid-run 修改，加 `--rerun-triggers mtime` 旗標讓 Snakemake 只依時間戳判斷（忽略 code 變更）；GSE133998 因將 `-x 4` 改為 `-x 8` 而觸發所有 download_fastq 重跑 |
+| `--rerun-incomplete` + 未 protected output + SIGTERM = output 消失 | `--rerun-incomplete` 把被 kill 前的「未完成 job」全部重排；若這些 job 的 output（早先其實已完成）未被 Snakemake 的 `protected()` 標記（原始 run 被 kill -9 前來不及 chmod），Snakemake 視為「正在執行」；再次 SIGTERM 時 cleanup 刪除這些 output | 避免在有執行中 job 的情況下用 `--rerun-incomplete` 重啟；若必須重啟，先手動 `chmod 444` 保護重要 output 再重跑，**並且**確認 Snakemake metadata（`.snakemake/metadata/`）也記錄該檔案為 protected（光 chmod 不足，需 Snakemake 自己完成的 job 才記錄）|
+| Circular Structure 第一個分頁空白（無弧段）| interactions.json 的 `spliced_length` 欄位固定為 0；JS `if(totalLen>0)` guard 阻擋所有弧段繪製 | JS 改為：`const totalLen = parseInt(info.spliced_length) \|\| (exonBds.length>0 ? exonBds[exonBds.length-1].cum_end \|\| 0 : 0)`；從 `exon_boundaries[last].cum_end` 推算真實長度 |
+| Venn detail 「方法」欄顯示三個方法（包含不顯著的）| `_venn_3_svg` 建立 `circ_info` 時對每個方法的**全部** DE 行都加入 `mlabel`，不論該 circRNA 在該方法中是否顯著 | 加入 `is_sig = cid in m_sig_set` 判斷；只有當 circRNA 在 `sig_sets[m]`（顯著集合）中才加入 `methods` 清單 |
+| Heatmap tumor/normal 欄位混排 | 樣本欄依 SRR ID 字母順序排列，奇數偶數交錯（normal→tumor→normal…）| `_plotly_heatmap()` 和 `FULL_HEATMAP_DATA` 建立時，讀取 `sample_groups.csv` 按 condition 重排：tumor 欄在左、normal 欄在右 |
+| `analysis.R` `coef=2` 在配對設計下指向 patient 係數而非 condition | `model.matrix(~patient+condition)` 有多個 patient dummy；`coef=2` 指向第一個 patient，非 condition | 改為 `cond_coef = ncol(design)`（condition 永遠在最後一列）；`glmQLFTest(fit, coef=cond_coef)`、`topTable(fit, coef=cond_coef)` |
+| `download.smk` Python 3.7 不支援 `unlink(missing_ok=True)` | `missing_ok` 參數在 Python 3.8 才加入；CentOS 7 server 的 conda Python 3.7 執行時 TypeError | 改用 `try: lock.unlink() except OSError: pass` 相容寫法 |
 
 ---
 
@@ -852,21 +863,22 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 | **DE 方法切換器** | 頁面頂部三個按鈕（edgeR_ciriquant / DESeq2 / limma-voom）；切換時即時更新 stat-boxes、Volcano、Heatmap、**Top DE 表格**、**Biomarker 灰化**（`Plotly.react` 原地更新，無頁面 reload）|
 | Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down；id="stat-n-sig/up/dn"，供方法切換器更新 |
 | **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量 |
-| **3-method Venn diagram** | SVG 三圓 Venn；圓心 A=(170,128) B=(290,128) C=(230,210) r=90；交集數字加白色 halo（`paint-order="stroke"`）；高度 345px |
+| **3-method Venn diagram** | SVG 三圓 Venn；圓心 A=(170,128) B=(290,128) C=(230,210) r=90；交集數字加白色 halo（`paint-order="stroke"`）；高度 345px；**7 個區域均可點擊**，點擊後在 `div#venn-detail` 顯示對應 circRNA 清單（含 gene_name / log2FC / p-value / circbase_id / **方法欄**）；「⬇ CSV」下載各區域清單 |
 | **Biomarker 候選表** | top 30 表格；方法切換時非顯著行灰化（opacity 0.25）|
 | **Biomarker Score 分布圖** | 兩圖並排：① Ranked scatter（x=rank, y=score，Top 30 紅點）② Histogram + Normal fit + Shapiro-Wilk 檢定；垂直線 μ / μ±σ / μ±2σ；說明文字在圖下方 |
 | **Top DE table（分兩表）** | 方法切換時完全重繪（`_renderDETables()`）；欄位含 gene_name / strand / region / exon_span / circbase_id / log2FC / p-value / Type |
 | Volcano plot | **Plotly 互動式**；方法切換時 Plotly.react 更新 |
 | PCA | **Plotly 互動式**（tumor/normal 顏色區分）；numpy SVD |
 | **Heatmap top-N 控制** | 預設 10+10，最高 50+50；tumor=紅、normal=**綠**（`#2CA02C`） |
-| Heatmap | **Plotly 互動式**（top N DE，z-score 標準化）；方法切換時同步更新；Plotly 內建 title 移除，由 HTML h2 顯示 |
+| Heatmap | **Plotly 互動式**（top N DE，z-score 標準化）；方法切換時同步更新；Plotly 內建 title 移除，由 HTML h2 顯示；**欄位順序：tumor 在左、normal 在右**（按 `sample_groups.csv` condition 分類排列）|
 | Isoform Switching | Plotly 長條圖 + 顯著 switching 表格；**不隨 DE 方法切換更新**（IUI 計算固定）；section 下方有說明文字 |
 | **SVG Circular Diagram** | 每個 circRNA 的環狀圖（exon 結構 + miRNA/RBP binding site 弧段 + 流水號 badge）|
 
 **JS 全域狀態變數**：
 - `const ALL_DE_METHODS`：三方法的完整 volcano + stats + heatmap + **de_table + sig_ids** 資料
-- `const FULL_HEATMAP_DATA`：pool=50 up + 50 down，每 circRNA 含 `{z, pval, log2fc, label}`
+- `const FULL_HEATMAP_DATA`：pool=50 up + 50 down，每 circRNA 含 `{z, pval, log2fc, label}`；欄位順序 tumor 在左、normal 在右
 - `let _HEATMAP_DATA_CACHE`：目前顯示方法的 heatmap data（方法切換時更新）；若 `conditions` 為空則 fallback 到 `FULL_HEATMAP_DATA.conditions`
+- `const VENN_REGION_DATA`：7 個 Venn 區域的 circRNA 清單（`{label, circs:[{id, gene, lfc, pval, cb, m}]}`）
 
 **`switchDEMethod(method)`**：更新 stat-boxes → Plotly.react volcano → updateMainHeatmap → **`_renderDETables()`** → **`_updateBiomarkerHighlight()`**
 
@@ -881,7 +893,7 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 - flex 區塊改 block（雙欄分布圖垂直排列）
 
 **circRNA 詳細 modal（點擊任意 circ_id 開啟）**：
-- **⬛ Circular Structure**：SVG 環狀圖；底部「⬇ SVG」下載按鈕
+- **⬛ Circular Structure**：SVG 環狀圖；底部「⬇ SVG」下載按鈕；`totalLen` 由 `exon_boundaries[last].cum_end` 推算（interactions.json 的 `spliced_length` 欄位固定為 0，不可用）
 - **📺 miRNA Sponge**：互動表格（Priority 排序）；「⬇ CSV」下載；Binding Seq 欄自動從 UCSC hg19 REST API 獲取序列
 - **🧬 RBP Binding**：同上
 - **📈 Volcano / 🔥 Heatmap**：Plotly mini-chart；「⬇ PNG」下載
@@ -917,7 +929,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-08 更新）
+## 目前執行進度（2026-06-09 更新）
 
 ### GSE113230（三陰性乳癌）
 
@@ -940,7 +952,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | predict_interactions | ✅ 完成（top 50；CircInteractome；interactions.json） |
 | isoform switching | ✅ 完成（66 events，within-gene FDR < 0.1） |
 | rank_biomarkers | ✅ 完成（482 candidates；**6D score**：sig+FC+conf+circbase+miRNA+RBP） |
-| report | ✅ 完成 v2（動態 DE 表格切換；Biomarker 分布圖 + 常態檢定；Venn diagram 修正；列印排版）|
+| report | ✅ 完成 v3（動態 DE 表格切換；Biomarker 分布圖 + 常態檢定；Venn diagram 修正；列印排版；**Venn 可點擊區域**；Heatmap tumor 在左；Circular Structure totalLen 修正）|
 | benchmark accuracy | ✅ 完成（4-method + Our_no_QC ablation；report.html 更新）|
 | benchmark compute cost | ✅ 完成（CIRIquant 實測 11:41:07 on HPC NFS；compute_cost.tsv + comparison_report.html 已更新）|
 
@@ -1073,14 +1085,56 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 
 ### GSE133998（乳癌，paired tumor/normal）
 
-**進行中。** 乳癌手術切除組織，cancer tissue vs. adjacent normal，150bp PE，Illumina HiSeq X Ten，各 6 replicates（H36–H42，共 12 samples）。
+**完成。** 報告位置：`~/GSE133998_results/report.html`（server）
+
+乳癌手術切除組織，cancer tissue vs. adjacent normal，150bp PE，Illumina HiSeq X Ten，各 6 replicates（H36–H42，共 12 samples）。
 
 | 步驟 | 狀態 |
 |------|------|
-| 下載 SRA | 🔄 進行中（S3 間歇性恢復後手動 aria2c；SRR11600334 需重試） |
-| fastp QC/trim | ⏳ 待執行 |
-| CIRIquant + DCC | ⏳ 待執行 |
-| consensus → DE → report | ⏳ 待執行 |
+| 下載 SRA | ✅ 12/12 完成（aria2c S3 + prefetch fallback） |
+| fastp QC/trim | ✅ 12/12 完成 |
+| CIRIquant | ✅ 12/12 完成 |
+| STAR paired-end | ✅ 12/12 完成 |
+| STAR mate1 | ✅ 12/12 完成 |
+| STAR mate2 | ✅ 12/12 完成 |
+| DCC | ✅ 12/12 完成 |
+| consensus_filter（--adaptive）| ✅ 完成（10,979 circRNAs 總計） |
+| merge_counts / assign_isoforms | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 84 / DESeq2 194 / limma 674 significant）|
+| report | ✅ 完成 v3（Venn 可點擊區域；Heatmap tumor 在左；Circular Structure 修正）|
+
+**主要數值結果**：
+- 偵測：10,979 consensus circRNAs；filterByExpr 後 640 tested
+- DE（edgeR_ciriquant）：84 significant（nominal p < 0.05，|log2FC| ≥ 1）；上調 34 / 下調 50；**全部 Type_I**（無 Type_II）
+- DE（DESeq2）：194 significant；DE（limma-voom）：674 significant
+- Isoform switching：8,624 rows（within-gene BH FDR 分析）
+- Biomarker candidates：84 個
+
+**各 sample 共識 circRNA 數量**：
+
+| SRR ID | 條件 | 共識 circRNA |
+|--------|------|----------:|
+| SRR11600329 | normal | 871 |
+| SRR11600330 | tumor | 2,892 |
+| SRR11600331 | normal | 1,765 |
+| SRR11600332 | tumor | 597 |
+| SRR11600333 | normal | 3,089 |
+| SRR11600334 | tumor | 505 |
+| SRR11600335 | normal | 4,013 |
+| SRR11600336 | tumor | 808 |
+| SRR11600337 | normal | 2,975 |
+| SRR11600338 | tumor | 1,051 |
+| SRR11600339 | normal | 3,307 |
+| SRR11600340 | tumor | 2,848 |
+
+**注意**：
+- 配對設計（同患者 tumor+normal），嘗試加入 `design = ~patient + condition` 後：edgeR 變差（min padj=0.996，patient dummy 消耗 5 個 df，FSJ offset 已吸收個體差異）；limma 進步（51 padj<0.05）；**決定維持 unpaired 設計**，主要看 edgeR_ciriquant 結果。
+- `analysis.R` 已加入向後相容的配對設計支援：若 `sample_groups.csv` 含 `patient_id` 欄則自動啟用 `~patient+condition`，否則維持 `~condition`；`cond_coef=ncol(design)` 確保 condition 係數位置正確。
+- edgeR filterByExpr 後僅 640 circRNA（10,979 中）是因為 tumor/normal 樣本間表現量分佈差異較大。
+
+**Server config**（`config/projects/GSE133998.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE133998/raw`
+- `results_dir: /home3/choukaihsuan/GSE133998_results`
 
 **設定**：
 - case/control label：`tumor` / `normal`
@@ -1178,7 +1232,7 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 | n = 3 vs. 3（小樣本）| edgeR + nominal p | 需用 pvalue（未校正）| BH 校正後幾乎全不顯著（min padj ≈ 0.4）；論文需說明限制 |
 | **配對設計**（tumor+normal same patient）| edgeR paired / limma blocking | 功率最高 | 消除個體差異；GSE133998 可加入配對項 |
 
-**GSE133998 特別說明**：H36–H42 為同一患者的 cancer tissue 與 adjacent normal，是**嚴格配對設計**。未來 DE 可加入 `blocking = patient_id`（limma）或 `design = ~patient + condition`（edgeR/DESeq2）以大幅提升統計功率。
+**GSE133998 特別說明**：H36–H42 為同一患者的 cancer tissue 與 adjacent normal，是**嚴格配對設計**。已測試 `design = ~patient + condition`：limma 改善明顯（51 padj<0.05），但 edgeR 反而變差（FSJ offset 已吸收個體差異 + patient dummy 消耗 5 df）。最終決定維持 unpaired design，主要以 edgeR_ciriquant 為主方法。若要啟用配對設計，在 `metadata/GSE133998/sample_groups.csv` 加入 `patient_id` 欄即可（`analysis.R` 已支援自動偵測）。
 
 ### 選擇新資料集的 Checklist
 
