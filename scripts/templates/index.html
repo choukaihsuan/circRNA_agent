@@ -91,6 +91,31 @@
     .advanced-toggle:hover { text-decoration: underline; }
     .advanced-body { display: none; margin-top: 16px; }
     .advanced-body.open { display: block; }
+
+    /* ── Dataset Guide ── */
+    .guide-toggle { font-size: 12px; color: #0f766e; cursor: pointer; user-select: none;
+                    display: inline-flex; align-items: center; gap: 5px; margin-top: 10px;
+                    padding: 4px 10px; background: #f0fdfa; border: 1px solid #99f6e4;
+                    border-radius: 6px; font-weight: 600; transition: background 0.15s; }
+    .guide-toggle:hover { background: #ccfbf1; }
+    .guide-body { display: none; margin-top: 12px; padding: 16px;
+                  background: #fafafa; border: 1px solid #e2e8f0; border-radius: 10px;
+                  font-size: 13px; }
+    .guide-body.open { display: block; }
+    .guide-checklist { list-style: none; display: grid;
+                       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                       gap: 5px 20px; margin-bottom: 14px; }
+    .guide-checklist li { display: flex; align-items: flex-start; gap: 6px; line-height: 1.4; }
+    .guide-checklist .gi { flex-shrink: 0; font-size: 14px; margin-top: 1px; }
+    .guide-factor-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .guide-factor-table th { text-align: left; padding: 5px 8px; background: #f1f5f9;
+                              color: var(--muted); font-weight: 600; font-size: 11px;
+                              text-transform: uppercase; border-bottom: 2px solid var(--border); }
+    .guide-factor-table td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+    .guide-factor-table tr:last-child td { border-bottom: none; }
+    .gf-ok   { color: #16a34a; font-weight: 600; }
+    .gf-warn { color: #d97706; font-weight: 600; }
+    .gf-bad  { color: #dc2626; font-weight: 600; }
     .param-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
                   gap: 14px; }
     .param-group label { display: block; font-size: 12px; font-weight: 600;
@@ -268,6 +293,73 @@
         </div>
         <div class="geo-hint">⚙️ 使用目前 Step 1–3 的參數設定執行；啟動後可至「查看執行狀態」追蹤進度。</div>
       </form>
+
+      <!-- 資料集選擇指引 -->
+      <div>
+        <button type="button" class="guide-toggle" onclick="toggleGuide(this)">
+          <span class="guide-arrow">▶</span> 資料集選擇指引
+        </button>
+        <div class="guide-body">
+          <div style="font-weight:700;font-size:13px;margin-bottom:10px;color:#0f766e;">
+            ✅ 必要條件 Checklist
+          </div>
+          <ul class="guide-checklist">
+            <li><span class="gi">✅</span><span><b>Read length ≥ 100 bp PE</b>（BSJ 偵測需跨 back-splice junction）</span></li>
+            <li><span class="gi">✅</span><span><b>Total RNA（rRNA-depleted）</b>，非 poly-A selection</span></li>
+            <li><span class="gi">✅</span><span><b>每組 ≥ 3 replicates</b>（建議 ≥ 5 以通過 FDR 校正）</span></li>
+            <li><span class="gi">✅</span><span><b>明確 case vs. control</b>（tumor/normal、treatment/vehicle）</span></li>
+            <li><span class="gi">⚠️</span><span>定序深度 <b>≥ 50 M reads/sample</b>（&lt;30M 偵測力明顯下降）</span></li>
+            <li><span class="gi">⚠️</span><span>組織樣本優先（cell line circRNA 較少，biomarker 轉化性低）</span></li>
+          </ul>
+
+          <div style="font-weight:700;font-size:13px;margin:10px 0 8px;color:#0f766e;">
+            📊 關鍵因子速查
+          </div>
+          <table class="guide-factor-table">
+            <thead>
+              <tr><th>因子</th><th>推薦</th><th>可接受</th><th>避免</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>Read length</b></td>
+                <td class="gf-ok">≥ 150 bp PE</td>
+                <td class="gf-warn">75–100 bp PE</td>
+                <td class="gf-bad">50 bp PE（DCC 幾乎失效，需 adaptive fallback）</td>
+              </tr>
+              <tr>
+                <td><b>RNA-seq 方式</b></td>
+                <td class="gf-ok">Total RNA（rRNA-depleted）</td>
+                <td class="gf-warn">Total RNA（RNase R enriched，circRNA 超富集）</td>
+                <td class="gf-bad">poly-A selection（circRNA ≈ 0）</td>
+              </tr>
+              <tr>
+                <td><b>樣本類型</b></td>
+                <td class="gf-ok">組織（tumor vs. normal）</td>
+                <td class="gf-warn">細胞株 KO/OE（機制研究）</td>
+                <td class="gf-bad">細胞株藥物處理（circRNA 變化極少）</td>
+              </tr>
+              <tr>
+                <td><b>樣本數</b></td>
+                <td class="gf-ok">≥ 5 vs. 5（FDR 校正有效）</td>
+                <td class="gf-warn">3 vs. 3（需用 nominal p-value）</td>
+                <td class="gf-bad">&lt; 3 per group（統計功率不足）</td>
+              </tr>
+              <tr>
+                <td><b>設計</b></td>
+                <td class="gf-ok">配對（同患者 tumor+normal）</td>
+                <td class="gf-warn">獨立樣本</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="margin-top:12px;padding:8px 10px;background:#fef3c7;border-radius:6px;
+                      font-size:12px;color:#92400e;">
+            💡 <b>已知資料集</b>：GSE113230（TNBC，150bp，✅ 最佳）、GSE58135（乳癌，50bp，⚠️ DCC 失效）、
+            GSE323364（細胞株，⚠️ 顯著數少）、GSE133998（配對設計，12 samples，✅ 最多樣本）
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Panel B: Manual SRR -->
@@ -666,6 +758,13 @@
   function toggleAdvanced() {
     const body  = document.getElementById('advanced-body');
     const arrow = document.getElementById('adv-arrow');
+    const open  = body.classList.toggle('open');
+    arrow.textContent = open ? '▼' : '▶';
+  }
+
+  function toggleGuide(btn) {
+    const body  = btn.nextElementSibling;
+    const arrow = btn.querySelector('.guide-arrow');
     const open  = body.classList.toggle('open');
     arrow.textContent = open ? '▼' : '▶';
   }
