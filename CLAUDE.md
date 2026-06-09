@@ -254,10 +254,10 @@ biomarker_score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + r
 **`edgeR_ciriquant` 核心邏輯**：
 FSJ counts → TMM normalization → per-locus FSJ CPM 作為 GLM offset
 → 效果等同於測試 BSJ/FSJ 比值是否在 tumor vs. normal 之間改變
-→ 同時對 FSJ 跑獨立 QLFTest，若 FSJ 也顯著且方向相同 → Type II（基因層次），否則 → Type I（circRNA 專一性）
+→ 同時對 FSJ 跑獨立 QLFTest，若 FSJ 也顯著（不做方向一致性檢查）→ Type II（兩層調控同時發生），否則 → Type I（circRNA 專一性）
 
 **Type I / II / III 分類**：
-- **Type_I**：BSJ 顯著，FSJ 不顯著（或方向相反）→ circRNA 環化效率真正改變
+- **Type_I**：BSJ 顯著，FSJ 不顯著 → circRNA 環化效率真正改變（circRNA-specific regulation）
 - **Type_II**：BSJ/FSJ ratio 顯著（BSJ offset test）且 FSJ 獨立測試也顯著 → 兩種調控同時發生
 - **Type_III**：只有 FSJ 顯著 → 線性 mRNA 變化，不是 circRNA DE
 - **不做方向一致性檢查**：offset approach 造成 log2FC（ratio 方向）與 logFC_fsj（FSJ 方向）天然反向相關（FSJ↑ → offset↑ → ratio log2FC 傾向負值），強制要求 sign 一致等同於把幾乎所有 Type II 歸入 Type I。正確判斷：`sig_bsj AND sig_fsj`（無方向條件）
@@ -960,7 +960,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 **主要數值結果**：
 - 偵測：9,349 consensus circRNAs → filterByExpr 後 4,630 tested
-- DE（edgeR_ciriquant）：482 significant（nominal p < 0.05，|log2FC| > 1）；min Storey q = 0.384（underpowered）
+- DE（edgeR_ciriquant）：482 significant（nominal p < 0.05，|log2FC| > 1）；**409 Type_I (84.9%) / 73 Type_II (15.1%)**；min Storey q = 0.384（underpowered）
 - DE（DESeq2 baseline）：409 significant；DE（limma-voom）：736 significant
 - Isoform switching：66 events（within-gene FDR < 0.1，|ΔIUI| > 0.1）
 - Biomarker score：6D（sig, FC, confidence, circBase, #miRNA, #RBP），87 circRNAs 有 interaction data（interactions.json May 29 更新）
@@ -1028,7 +1028,7 @@ score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) /
 | DE analysis | ✅ 完成（edgeR 15 / DESeq2 122 / limma 508 significant）|
 | report | ✅ 完成 |
 
-**注意**：edgeR_ciriquant 顯著數極少（15）是因為 50bp reads → circRNA 偵測數量有限 + 樣本間差異較大；limma-voom 在小樣本較穩定（508 significant）。
+**注意**：edgeR_ciriquant 顯著數極少（15）是因為 50bp reads → circRNA 偵測數量有限 + 樣本間差異較大；**13 Type_I (86.7%) / 2 Type_II (13.3%)**；limma-voom 在小樣本較穩定（508 significant）。
 
 **Server config**（`config/projects/GSE58135.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE58135/raw`
@@ -1061,9 +1061,8 @@ MDA-MB-436 TNBC cell line，EZH2 抑制劑 EPZ-6438 vs. DMSO，150bp PE，total 
 - genome：hg19（同 GSE113230）
 
 **主要數值結果**：
-- edgeR_ciriquant：15 significant circRNAs（nominal p < 0.05）；樣本數少 + EZH2 抑制劑對 circRNA 影響有限
-- DESeq2：122 significant；limma-voom：508 significant
-- Biomarker candidates：僅 2 個（p < 0.05 篩選極嚴）→ `_biomarker_normality_plot` 需 n ≥ 3 的 Shapiro-Wilk 保護已加入
+- edgeR_ciriquant：2 significant circRNAs（nominal p < 0.05）；**2 Type_I (100%) / 0 Type_II**；EZH2 抑制劑對 circRNA 影響極有限（細胞株 + 藥物處理）
+- Biomarker candidates：2 個（p < 0.05 篩選極嚴）→ `_biomarker_normality_plot` 需 n ≥ 3 的 Shapiro-Wilk 保護已加入
 
 **中間檔案已清理**（raw FASTQ + trimmed + sra_cache + 中間 BAM 已刪除，釋放 77GB）；
 報告 1.3MB，保留於 `~/GSE323364_results/report.html`。
@@ -1107,7 +1106,7 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 
 **主要數值結果**：
 - 偵測：10,979 consensus circRNAs；filterByExpr 後 640 tested
-- DE（edgeR_ciriquant）：84 significant（nominal p < 0.05，|log2FC| ≥ 1）；上調 34 / 下調 50；**全部 Type_I**（無 Type_II）
+- DE（edgeR_ciriquant）：84 significant（nominal p < 0.05，|log2FC| ≥ 1）；上調 34 / 下調 50；**82 Type_I (97.6%) / 2 Type_II (2.4%)**
 - DE（DESeq2）：194 significant；DE（limma-voom）：674 significant
 - Isoform switching：8,624 rows（within-gene BH FDR 分析）
 - Biomarker candidates：84 個
