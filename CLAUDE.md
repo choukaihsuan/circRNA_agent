@@ -441,6 +441,13 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 - `GET /api/progress` — Snakemake log 解析 JSON（stages 陣列 + finished/total count + running bool）
 - `GET /api/detect_labels?gse=...` — 自動偵測 case/control label
 
+**GEO 資料集選擇指引**（`templates/index.html` 獨立折疊區塊）：
+Web UI 主頁新增常駐卡片，使用者點標題行即可展開；內容包含：
+- ✅/⚠️ 六項 checklist（Read length / Library type / replicates / case+control / 深度 / 樣本類型）
+- 五行因素表（讀長 / RNA-Seq 方式 / 樣本類型 / 樣本數 / 設計）+ 顏色標記（綠/黃/紅）
+- 已知資料集摘要（GSE113230/GSE58135/GSE323364/GSE133998 一覽）
+- GEO 查詢提示（Library Strategy / avgLength 欄位位置）
+
 ---
 
 ## Container 部署（Docker + Singularity HPC）
@@ -742,7 +749,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 
 | 問題 | 原因 | 解決方法 |
 |------|------|----------|
-| PRJNA/SRP metadata 抓取失敗（server 上）| Server 防火牆封鎖 NCBI eUtils HTTP；GSE 透過 pysradb 走不同 endpoint 可成功 | 在本機執行 `python scripts/download_geo.py --gse PRJNA808398`，再透過 Web UI 上傳 CSV；或從 NCBI 網頁手動下載 SraRunTable.csv 後 `--runinfo` 匯入 |
+| PRJNA/SRP metadata 抓取失敗（server 上）| Server 防火牆封鎖 NCBI eUtils HTTP；GSE 透過 pysradb 走不同 endpoint 可成功 | 見下方詳述 |
 | DCC `TypeError: NoneType has no len()` | DCC 0.5.0 不支援缺少 `-mt2` | 加入 `star_align_mate1` 和 `star_align_mate2` rule，分別比對 R1/R2 |
 | DCC `command not found` | 指令為大寫 `DCC` | shell command 改為 `DCC` |
 | DCC `-A` flag error | DCC 0.5.0 BAM 參數是 `-B` 不是 `-A` | 改為 `-B {bam}` |
@@ -946,7 +953,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-09 更新）
+## 目前執行進度（2026-06-10 更新）
 
 ### GSE113230（三陰性乳癌）
 
@@ -971,7 +978,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | rank_biomarkers | ✅ 完成（482 candidates；**6D score**：sig+FC+conf+circbase+miRNA+RBP） |
 | report | ✅ 完成 v3（動態 DE 表格切換；Biomarker 分布圖 + 常態檢定；Venn diagram 修正；列印排版；**Venn 可點擊區域**；Heatmap tumor 在左；Circular Structure totalLen 修正）|
 | benchmark accuracy | ✅ 完成（4-method + Our_no_QC ablation；report.html 更新）|
-| benchmark compute cost | ✅ 完成（CIRIquant 實測 11:41:07 on HPC NFS；compute_cost.tsv + comparison_report.html 已更新）|
+| benchmark compute cost | ✅ 完成（CIRIquant 實測 11:41:07 on HPC NFS；compute_cost.tsv + comparison_report.html 已更新）⚠️ **重新計時中**（2026-06-10 09:16 重跑，結果待更新）|
 
 **主要數值結果**：
 - 偵測：9,349 consensus circRNAs → filterByExpr 後 4,630 tested
@@ -1119,7 +1126,7 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 | consensus_filter（--adaptive）| ✅ 完成（10,979 circRNAs 總計） |
 | merge_counts / assign_isoforms | ✅ 完成 |
 | DE analysis | ✅ 完成（edgeR 84 / DESeq2 194 / limma 674 significant）|
-| report | ✅ 完成 v3（Venn 可點擊區域；Heatmap tumor 在左；Circular Structure 修正）|
+| report | ✅ 完成 v3（Venn 可點擊區域；Heatmap tumor 在左；Circular Structure 修正；**Venn 方法欄修正**）|
 
 **主要數值結果**：
 - 偵測：10,979 consensus circRNAs；filterByExpr 後 640 tested
