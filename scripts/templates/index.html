@@ -353,14 +353,20 @@
       <button class="launch-tab" onclick="switchTab('local', this)">📁 本地 FASTQ</button>
     </div>
 
-    <!-- Panel A: GSE -->
+    <!-- Panel A: GSE / SRA BioProject -->
     <div class="launch-panel active" id="panel-gse">
       <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
-        輸入 GEO accession，系統自動下載 metadata、分配 tumor/normal 標籤，並執行完整 pipeline。
+        輸入 GEO 或 SRA 編號，系統自動下載 metadata、分配 tumor/normal 標籤，並執行完整 pipeline。<br>
+        <span style="color:#64748b;">支援格式：
+          <code>GSE113230</code>（GEO Series）・
+          <code>PRJNA808398</code>（SRA BioProject）・
+          <code>SRP156355</code>（SRA Study）
+        </span>
       </p>
       <form method="POST" action="/run_gse" style="margin:0">
         <div class="geo-row">
-          <input class="geo-input" type="text" name="gse_id" placeholder="GSE113230"
+          <input class="geo-input" type="text" name="gse_id"
+                 placeholder="GSE113230 / PRJNA808398 / SRP156355"
                  value="{{ config.get('project_id', '') }}" required
                  id="gse-id-input" oninput="scheduleDetect(this.value)">
           <input type="number" name="cores" value="{{ config.get('threads', 8) }}"

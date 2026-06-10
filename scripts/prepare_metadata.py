@@ -2,7 +2,7 @@
 prepare_metadata.py – Assign case/control group labels to samples.
 
 Modes:
-  1. Auto-detect: match common keywords in sample_name
+  1. Auto-detect: suffix pattern (T/N/APN) then keyword matching in sample_name
   2. Interactive: prompt user via CLI
   3. CSV import: load pre-made sample_groups.csv
 """
@@ -117,9 +117,31 @@ def detect_group_labels(df: pd.DataFrame) -> tuple[str, str]:
     return case_label, control_label
 
 
+def _detect_condition_by_suffix(name: str, case_label: str = "tumor",
+                                 control_label: str = "normal") -> str | None:
+    """
+    Detect tumor/normal from SRA SampleName trailing suffix conventions.
+
+    Patterns handled (case-insensitive, must appear at end of name):
+      Tumor  : …T,  …_T,  …-T
+      Normal : …N,  …_N,  …-N,  …APN,  …CN
+    """
+    s = name.strip()
+    if re.search(r'(?<=[A-Za-z0-9])[-_]?T$', s, re.IGNORECASE):
+        return case_label
+    if re.search(r'(?<=[A-Za-z0-9])[-_]?(APN|CN|N)$', s, re.IGNORECASE):
+        return control_label
+    return None
+
+
 def _detect_condition(name: str, case_label: str = "tumor",
                       control_label: str = "normal") -> str | None:
-    """Return case_label or control_label if a keyword matches, else None."""
+    """Return case_label or control_label — tries suffix pattern first, then keywords."""
+    # Priority 1: SRA-style T/N/APN suffix (e.g. M269T, M269N, 138T, 87APN)
+    result = _detect_condition_by_suffix(name, case_label, control_label)
+    if result is not None:
+        return result
+    # Priority 2: keyword search (GEO-style names)
     name_lower = name.lower()
     for kw in _CASE_KEYWORDS:
         if re.search(kw, name_lower):

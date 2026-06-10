@@ -39,7 +39,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     )
     print(f"   {len(metadata_df)} samples found", flush=True)
 
-    # 2. Update project_id in config
+    # 2. Update project_id in config (works for GSE / PRJNA / SRP)
     if args.gse:
         cfg["project_id"] = args.gse
         cfg["results_dir"] = f"results/{args.gse}"
@@ -115,7 +115,7 @@ def cmd_grouping(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog        = "circRNA-agent",
-        description = "Automated circRNA analysis pipeline (GEO → HTML report)",
+        description = "Automated circRNA analysis pipeline (GEO / SRA BioProject → HTML report)",
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command")
@@ -123,7 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
     # ── run ──
     run_p = sub.add_parser("run", help="Run the full pipeline")
     src = run_p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--gse",     metavar="GSE_ID", help="GEO accession (e.g. GSE113230)")
+    src.add_argument("--gse",     metavar="ACCESSION",
+                     help="GEO or SRA accession: GSE113230 / PRJNA808398 / SRP156355")
     src.add_argument("--runinfo", metavar="CSV",    help="Path to NCBI SRA RunInfo.csv")
     run_p.add_argument("--cores",       type=int,  default=8,    help="CPU cores (default: 8)")
     run_p.add_argument("--interactive", action="store_true",     help="Manually assign tumor/normal labels")

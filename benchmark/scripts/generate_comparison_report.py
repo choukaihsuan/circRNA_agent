@@ -492,6 +492,7 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
     }
 
     traces = []
+    method_order = []   # track insertion order for visibility arrays
     tbl_sections = ""
 
     for method, style in method_styles.items():
@@ -499,14 +500,14 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
         if sub.empty:
             continue
         sub = sub.sort_values("threshold")
-        # Deduplicate overlapping (Recall, Precision) points — keep lowest threshold.
-        # Reason: DCC and CIRI2 both internally require ≥2 reads, so min_bsj=1 and
-        # min_bsj=2 produce identical results. Showing both would overlap on the chart.
-        sub = sub.drop_duplicates(subset=["Recall", "Precision"], keep="first").reset_index(drop=True)
+        # sub_plot: exclude threshold=1 (identical to threshold=2 for all tools due to internal
+        # min-2 filter in CIRI2/DCC), deduplicate remaining overlapping points.
+        # sub_table: keep ALL rows (including min_bsj=1 and min_bsj=2) for the detail table.
+        sub_plot  = sub[sub["threshold"] > 1].drop_duplicates(subset=["Recall", "Precision"], keep="first").reset_index(drop=True)
+        sub_table = sub[sub["threshold"] > 1]  # exclude min_bsj=1 from table too
 
         auc_row = acc[acc["Method"] == method]
         auc  = float(auc_row["AUC_PR"].iloc[0]) if not auc_row.empty else float("nan")
-        note = auc_row["AUC_PR_note"].iloc[0] if ("AUC_PR_note" in auc_row.columns and not auc_row.empty) else "threshold-sweep"
 
         hover = [
             (f"min_bsj = {int(r.threshold)}<br>"
@@ -515,33 +516,35 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
              f"Precision = {r.Precision:.4f}<br>"
              f"Recall = {r.Recall:.4f}<br>"
              f"F1 = {r.F1:.4f}")
-            for r in sub.itertuples()
+            for r in sub_plot.itertuples()
         ]
 
         trace = {
-            "x": sub["Recall"].tolist(),
-            "y": sub["Precision"].tolist(),
+            "x": sub_plot["Recall"].tolist(),
+            "y": sub_plot["Precision"].tolist(),
             "text": hover,
             "hovertemplate": "%{text}<extra></extra>",
             "mode": "lines+markers",
-            "name": f"{method}<br>(AUC={auc:.4f}, {note})",
-            "line":   {"color": style["color"], "width": 2},
-            "marker": {"color": style["color"], "size": 7,
+            "name": f"{method} (AUC={auc:.4f})",
+            "visible": True,
+            "line":   {"color": style["color"], "width": 2.5},
+            "marker": {"color": style["color"], "size": 8,
                        "symbol": style["symbol"],
-                       "line": {"color": "#fff", "width": 1}},
+                       "line": {"color": "#fff", "width": 1.5}},
         }
         traces.append(trace)
+        method_order.append(method)
 
-        # Collapsible detail table (skip anchor row)
+        # Collapsible detail table — use sub_table (all rows, including min_bsj=2)
         tbl_rows = "".join(
             f'<tr><td>{int(r.threshold)}</td><td>{int(r.n_detected)}</td>'
             f'<td>{int(r.TP)}</td><td>{int(r.FP)}</td>'
             f'<td>{r.Precision:.4f}</td><td>{r.Recall:.4f}</td>'
             f'<td><strong>{r.F1:.4f}</strong></td></tr>'
-            for r in sub.itertuples() if r.threshold > 0
+            for r in sub_table.itertuples() if r.threshold > 0
         )
         tbl_sections += f"""
-<details style="margin-top:8px">
+<details id="tbl-{method}" style="margin-top:6px">
 <summary style="cursor:pointer; color:{style['color']}; font-weight:600">{method} 詳細數值</summary>
 <table class="tbl" style="margin-top:4px; font-size:12px">
 <thead><tr><th>min_bsj</th><th>Detected</th><th>TP</th><th>FP</th>
@@ -550,11 +553,33 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
 </table>
 </details>"""
 
-    # Baseline annotation
+    # Default: show first trace (Our_adaptive) only
+    n = len(traces)
+    for i, t in enumerate(traces):
+        t["visible"] = (i == 0)
+
+    # Build updatemenus buttons: All + one per method
+    btn_all_vis = [True] * n
+    buttons = [{"label": "All", "method": "update",
+                "args": [{"visible": btn_all_vis},
+                          {"title": {"text": "Threshold-based PR Curve (all methods)",
+                                     "font": {"size": 15}, "x": 0.5, "xanchor": "center"}}]}]
+    for i, method in enumerate(method_order):
+        vis = [j == i for j in range(n)]
+        color = method_styles[method]["color"]
+        buttons.append({
+            "label": method,
+            "method": "update",
+            "args": [{"visible": vis},
+                     {"title": {"text": f"PR Curve — {method}",
+                                "font": {"size": 15, "color": color},
+                                "x": 0.5, "xanchor": "center"}}],
+        })
+
     base_rate = 0.631
     layout = {
-        "width": 760, "height": 560,
-        "margin": {"l": 70, "r": 30, "t": 60, "b": 70},
+        "width": 720, "height": 520,
+        "margin": {"l": 70, "r": 30, "t": 60, "b": 110},
         "xaxis": {
             "title": {"text": "Recall", "font": {"size": 14}},
             "range": [-0.01, 0.50],
@@ -567,17 +592,28 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
             "gridcolor": "#e8e8e8", "zeroline": False,
             "tickfont": {"size": 12},
         },
-        "title": {"text": "Threshold-based PR Curve (min_bsj sweep 1–50)",
-                  "font": {"size": 15}, "x": 0.5, "xanchor": "center"},
-        "legend": {
-            "x": 1.01, "y": 1.0, "xanchor": "left", "yanchor": "top",
-            "bgcolor": "rgba(255,255,255,0.95)",
-            "bordercolor": "#ccc", "borderwidth": 1,
-            "font": {"size": 12},
-        },
+        "title": {"text": f"PR Curve — {method_order[0]}",
+                  "font": {"size": 15, "color": method_styles[method_order[0]]["color"]},
+                  "x": 0.5, "xanchor": "center"},
+        "legend": {"x": 1.01, "y": 1.0, "xanchor": "left", "yanchor": "top",
+                   "bgcolor": "rgba(255,255,255,0.9)",
+                   "bordercolor": "#ccc", "borderwidth": 1, "font": {"size": 12}},
         "hovermode": "closest",
         "plot_bgcolor": "#fff",
         "paper_bgcolor": "#fff",
+        "updatemenus": [{
+            "type": "buttons",
+            "direction": "right",
+            "buttons": buttons,
+            "pad": {"r": 8, "t": 8},
+            "showactive": True,
+            "active": 1,   # default active = first method button (index 1)
+            "x": 0.0, "xanchor": "left",
+            "y": -0.22, "yanchor": "top",
+            "bgcolor": "#f0f4ff",
+            "bordercolor": "#a0b4d4",
+            "font": {"size": 12},
+        }],
         "shapes": [{
             "type": "line",
             "x0": 0, "x1": 0.50, "y0": base_rate, "y1": base_rate,
@@ -631,6 +667,13 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
 <p class="note" style="margin-top:8px">
   AUC-PR 使用梯形積分法計算閾值掃描各點。所有方法最大 Recall 受限於 total RNA 樣本的 circRNA 覆蓋深度（CIRI2 seed）。
   CirComPara2 / nfcore 因 CE2（binary）+ find_circ 補充偵測，在低閾值時 Recall 更高。
+</p>
+<p class="note" style="margin-top:4px">
+  <strong>🔍 Precision 非單調現象（如 min_bsj≈10–12 時局部上升）：</strong>
+  中低 BSJ count（5–9 reads）的 circRNA 中存在一批「偽陽性」——它們在 total RNA 有中等表現，
+  但 RNase R 富集不顯著（ground truth = 0）。這類 FP 在多工具之間的 count 通常偏低且一致，
+  因此被較高閾值優先過濾，暫時提升 Precision；繼續升高閾值後，真陽性也被過濾，Precision 再度下降。
+  此為非單調 PR curve 在低樣本量 ground truth 下的正常統計現象（非 bug）。
 </p>
 </div>
 """

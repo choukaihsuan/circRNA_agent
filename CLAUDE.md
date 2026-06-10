@@ -43,8 +43,8 @@ circRNA_agent/
 │       └── de.smk               # 差異表現 + 圖表 + HTML 報告
 ├── scripts/
 │   ├── agent.py                 # CLI 入口（--gse, --setup-ciriquant 等）
-│   ├── prepare_metadata.py      # 從 GEO RunInfo 建立 library_info.csv
-│   ├── download_geo.py          # SRA 下載輔助
+│   ├── prepare_metadata.py      # 從 GEO/SRA RunInfo 建立 library_info.csv；T/N/APN 尾碼自動偵測
+│   ├── download_geo.py          # SRA metadata 抓取（GSE→pysradb；PRJNA/SRP→NCBI eUtils API）
 │   ├── consensus_filter.py      # CIRIquant + DCC 共識過濾（輸出 BED + confidence score）
 │   ├── merge_counts.py          # 從 CIRIquant GTF 建立 BSJ + FSJ count matrix
 │   ├── annotate_circbase.py     # circBase hg19 座標比對注釋（自動下載或讀本地檔）
@@ -742,6 +742,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 
 | 問題 | 原因 | 解決方法 |
 |------|------|----------|
+| PRJNA/SRP metadata 抓取失敗（server 上）| Server 防火牆封鎖 NCBI eUtils HTTP；GSE 透過 pysradb 走不同 endpoint 可成功 | 在本機執行 `python scripts/download_geo.py --gse PRJNA808398`，再透過 Web UI 上傳 CSV；或從 NCBI 網頁手動下載 SraRunTable.csv 後 `--runinfo` 匯入 |
 | DCC `TypeError: NoneType has no len()` | DCC 0.5.0 不支援缺少 `-mt2` | 加入 `star_align_mate1` 和 `star_align_mate2` rule，分別比對 R1/R2 |
 | DCC `command not found` | 指令為大寫 `DCC` | shell command 改為 `DCC` |
 | DCC `-A` flag error | DCC 0.5.0 BAM 參數是 `-B` 不是 `-A` | 改為 `-B {bam}` |
@@ -1187,16 +1188,40 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 
 ---
 
-## GSE 資料集選擇指引
+## GEO / SRA BioProject 資料集選擇指引
 
-### 已分析資料集比較
+### 支援的 Accession 格式
 
-| GSE ID | 樣本類型 | 對比組 | Reads | Read length | 樣本數 | 定序深度 | circRNA 偵測 | DE 顯著數（edgeR）| 評估 |
-|--------|----------|--------|-------|-------------|--------|----------|-------------|-------------------|------|
-| **GSE113230** | 組織（TNBC tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 6（3T+3N）| ~100M reads/sample | 9,349（consensus）| **482** | ✅ 最佳：read length 足、組織對比、深度夠 |
-| **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | **50bp PE** | 10（5T+5N）| ~50M reads/sample | 1,607（CIRIquant-only，adaptive）| **15** | ⚠️ 50bp 讀長對 circRNA 偵測不友善：STAR chimeric junction 偵測極差，DCC 幾乎全失效，需 adaptive fallback |
-| **GSE323364** | **細胞株**（MDA-MB-436 TNBC）| EPZ6438 vs. DMSO | Total RNA | 150bp PE | 6（3+3）| ~60M reads/sample | ~中等 | **15** | ⚠️ 細胞株 + 藥物處理：circRNA 絕對數量少，生物差異小；EZH2 抑制劑對 circRNA 影響有限 |
-| **GSE133998** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N）| ~80M reads/sample | 進行中 | 進行中 | ✅ 預期最佳：樣本數最多（6 vs 6）、配對設計（同患者 tumor+normal）、read length 足 |
+Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資料集」欄位：
+
+| 格式 | 範例 | 來源 | 查詢方式 |
+|------|------|------|---------|
+| `GSE*` | `GSE113230` | NCBI GEO Series | pysradb（GSE → SRP → SRR） |
+| `PRJNA*` | `PRJNA808398` | NCBI SRA BioProject | NCBI eUtils API |
+| `SRP*` | `SRP156355` | NCBI SRA Study | NCBI eUtils API |
+
+**HPC 網路限制**：Server（172.16.0.178）防火牆封鎖 NCBI eUtils HTTP；PRJNA/SRP 需在本機執行 `python scripts/download_geo.py --gse PRJNA808398` 取得 metadata CSV，再透過 Web UI 的「手動 SRR 清單 → 上傳 CSV」路徑匯入。GSE 透過 pysradb 可在 server 上直接執行。
+
+**Condition 自動偵測**（`prepare_metadata.py`）：
+
+| 樣本命名慣例 | 偵測邏輯 | 範例 |
+|------------|---------|------|
+| SRA T/N 尾碼 | `_detect_condition_by_suffix()`（優先）：名稱結尾為 `T` → tumor；`N`/`APN`/`CN` → normal | `M269T`→tumor, `87APN`→normal |
+| GEO 關鍵字 | `_detect_condition()`（fallback）：掃描 disease_state/source_name/tissue 欄位 | `tumor tissue`→tumor |
+| 無法偵測 | 留空（如 DCIS `D` 尾碼）| `1086D`→空，需手動指定 |
+
+---
+
+### 已分析/已調查資料集
+
+| 編號 | 樣本類型 | 對比組 | Library | Read length | 樣本數 | 定序深度 | circRNA 偵測 | DE 顯著數（edgeR）| 評估 |
+|------|----------|--------|---------|-------------|--------|----------|-------------|-------------------|------|
+| **GSE113230** | 組織（TNBC tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 6（3T+3N）| ~100M reads/sample | 9,349（consensus）| **482** | ✅ 最佳示範 |
+| **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | **50bp PE** | 10（5T+5N）| ~50M reads/sample | 1,607（CIRIquant-only）| **15** | ⚠️ 50bp 讀長，DCC 失效→adaptive fallback |
+| **GSE323364** | **細胞株**（MDA-MB-436 TNBC）| EPZ6438 vs. DMSO | Total RNA | 150bp PE | 6（3+3）| ~60M reads/sample | 中等 | **15** | ⚠️ 細胞株+藥物，DE 極少 |
+| **GSE133998** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N）| ~80M reads/sample | 10,979 | **84** | ✅ 配對設計，樣本數最多 |
+| **SRP156355** | 組織（早期乳癌 IDC/DCIS）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 23（6T+6N+DCIS+APN）| avg 48M spots（~96M reads）| 待跑 | 待跑 | ✅ 待分析；6 對配對 T/N；LibrarySelection=other 適合 circRNA；Cancer Institute WIA 印度 |
+| **PRJNA808398** | 組織（TNBC tumor vs. normal）| tumor vs. normal | **cDNA（poly-A）** | 150bp PE | 50（25T+25N）| avg 18M spots（低）| ❌ | ❌ | ❌ 不建議：poly-A selection，circRNA 接近零；A.C. CAMARGO 巴西 |
 
 ### 影響分析品質的關鍵因素
 
@@ -1251,9 +1276,25 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 
 **GSE133998 特別說明**：H36–H42 為同一患者的 cancer tissue 與 adjacent normal，是**嚴格配對設計**。已測試 `design = ~patient + condition`：limma 改善明顯（51 padj<0.05），但 edgeR 反而變差（FSJ offset 已吸收個體差異 + patient dummy 消耗 5 df）。最終決定維持 unpaired design，主要以 edgeR_ciriquant 為主方法。若要啟用配對設計，在 `metadata/GSE133998/sample_groups.csv` 加入 `patient_id` 欄即可（`analysis.R` 已支援自動偵測）。
 
+### SRP156355 樣本清單（6 對 T/N，已生成 condition.csv）
+
+| Patient | Normal SRR | Tumor SRR |
+|---------|-----------|-----------|
+| P138 | SRR7645073 (138N) | SRR7645074 (138T) |
+| P148 | SRR7645077 (148N) | SRR7645078 (148T) |
+| P204 | SRR7645071 (204N) | SRR7645072 (204T) |
+| P272 | SRR7645075 (272N) | SRR7645076 (272T) |
+| P690 | SRR7645087 (690N) | SRR7645088 (690T) |
+| P1123 | SRR7645079 (1123N) | SRR7645080 (1123T) |
+
+Condition CSV 位置：`/mnt/c/Users/User/Desktop/SRP156355_condition.csv`（含 `patient_id` 欄，可啟用配對設計）。
+排除的樣本：DCIS（66D/299D/712D/803D/1102D/1151D）和 APN（719APN/768APN/87APN/91311APN/93277APN）留待未來三組比較分析。
+
+---
+
 ### 選擇新資料集的 Checklist
 
-在 GEO 找新 dataset 時確認以下條件（✅ = 必要，⚠️ = 建議）：
+在 GEO / SRA BioProject 找新 dataset 時確認以下條件（✅ = 必要，⚠️ = 建議）：
 
 - ✅ Read length ≥ 100bp（PE）
 - ✅ RNA-Seq library = Total RNA（rRNA-depleted or RNase R）
