@@ -288,6 +288,224 @@ def _load_dcc(path: str, min_bsj: int) -> tuple[set[str], dict[str, float]]:
     return ids, scores
 
 
+# ── Threshold-based PR curve (multi-method) ───────────────────────────────────
+
+def _parse_ciri2(path: str) -> dict:
+    """CIRI2 output: col 1 = chr:start|end (1-based), col 5 = #junction_reads."""
+    bsj = {}
+    with open(path) as f:
+        next(f)  # skip header
+        for line in f:
+            p = line.strip().split("\t")
+            if len(p) < 5:
+                continue
+            try:
+                bsj[p[0]] = float(p[4])
+            except (ValueError, IndexError):
+                pass
+    return bsj
+
+
+def _parse_dcc_count(path: str) -> dict:
+    """DCC CircRNACount: chr, start, end, count (tab-sep, 1-based coords)."""
+    bsj = {}
+    with open(path) as f:
+        next(f)  # skip header "Chr Start End Chimeric.out.junction"
+        for line in f:
+            p = line.strip().split("\t")
+            if len(p) < 4:
+                continue
+            try:
+                bsj[f"{p[0]}:{p[1]}|{p[2]}"] = float(p[3])
+            except (ValueError, IndexError):
+                pass
+    return bsj
+
+
+def _parse_ce2_binary(path: str) -> dict:
+    """CIRCexplorer2 known_circ.txt (BED, 0-based start).
+    Score column is unreliable (mostly 0); treat all detections as count=1.
+    Start is converted to 1-based (+1) to align with CIRI2 coordinates."""
+    bsj = {}
+    with open(path) as f:
+        for line in f:
+            p = line.strip().split("\t")
+            if len(p) < 3 or not p[0]:
+                continue
+            try:
+                # BED 0-based start → 1-based to match CIRI2
+                cid = f"{p[0]}:{int(p[1])+1}|{p[2]}"
+                bsj[cid] = 1.0
+            except (ValueError, IndexError):
+                pass
+    return bsj
+
+
+def _parse_find_circ_count(path: str) -> dict:
+    """find_circ splice_sites.bed, CIRCULAR only (col 18), col 5 = junction count.
+    BED 0-based start → 1-based to match CIRI2 coordinates."""
+    bsj = {}
+    with open(path) as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            p = line.strip().split("\t")
+            if len(p) < 18 or "CIRCULAR" not in p[17]:
+                continue
+            try:
+                cid = f"{p[0]}:{int(p[1])+1}|{p[2]}"
+                bsj[cid] = float(p[4])
+            except (ValueError, IndexError):
+                pass
+    return bsj
+
+
+def _build_chr_idx(bsj_dict: dict) -> dict:
+    """Build {chr: [(start, end, count, cid)]} for fast coordinate lookup."""
+    idx = {}
+    for cid, cnt in bsj_dict.items():
+        parsed = _parse_id(cid)
+        if parsed:
+            ch, s, e = parsed
+            idx.setdefault(ch, []).append((s, e, cnt, cid))
+    return idx
+
+
+def _any_match(ch: str, s: int, e: int, idx: dict, thr: float, slop: int) -> bool:
+    """Return True if any entry in idx[ch] passes threshold and is within slop."""
+    for ds, de, dc, _ in idx.get(ch, []):
+        if dc >= thr and max(abs(ds - s), abs(de - e)) <= slop:
+            return True
+    return False
+
+
+def _evaluate_consensus(consensus: set, gt: "pd.DataFrame", slop: int) -> tuple:
+    tp = fp = fn = tn = 0
+    for _, row in gt.iterrows():
+        detected = _coord_match_in_set(row["circ_id"], consensus, slop)
+        lbl = int(row["is_true"])
+        if lbl == 1 and detected:       tp += 1
+        elif lbl == 0 and detected:     fp += 1
+        elif lbl == 1 and not detected: fn += 1
+        else:                           tn += 1
+    return tp, fp, fn, tn
+
+
+def _auc_from_pr_points(pr_points: list) -> float:
+    pr_sorted = sorted(set(pr_points))
+    if not pr_sorted or pr_sorted[0][0] > 0:
+        pr_sorted.insert(0, (0.0, 1.0))
+    return round(sum(
+        (pr_sorted[i][0] - pr_sorted[i-1][0])
+        * (pr_sorted[i][1] + pr_sorted[i-1][1]) / 2
+        for i in range(1, len(pr_sorted))
+    ), 4)
+
+
+def _multi_method_pr_curves(
+    ciri2_path: str,
+    dcc_count_path: str,
+    ce2_path: str,
+    find_circ_path: str,
+    truth: "pd.DataFrame",
+    thresholds: list,
+    slop_our: int = 10,
+    slop_cp2: int = 10,
+    slop_nfc: int = 1,  # 1 instead of 0 to absorb BED→1-based +1 offset residuals
+) -> dict:
+    """
+    Sweep min_bsj threshold across 3 methods simultaneously.
+    All methods seeded from CIRI2 (primary tool). Secondary support checked:
+      Our_adaptive:       CIRI2 AND DCC
+      CirComPara2_4tools: CIRI2 AND (DCC OR CE2 OR find_circ)
+      nfcore_3tools:      CIRI2 AND (CE2 OR find_circ)  [CE2 binary, slop=1]
+
+    CIRCexplorer2 is treated as binary (all detections, no count threshold)
+    because its score column is unreliable in this dataset (97% zeros).
+
+    Returns: {method_name: (auc_pr, [row_dicts])}
+    """
+    print("[pr_curve] Parsing tool files...", file=sys.stderr)
+    ciri2_bsj  = _parse_ciri2(ciri2_path) if ciri2_path else {}
+    dcc_bsj    = _parse_dcc_count(dcc_count_path) if dcc_count_path else {}
+    ce2_bsj    = _parse_ce2_binary(ce2_path) if ce2_path else {}    # all count=1
+    fc_bsj     = _parse_find_circ_count(find_circ_path) if find_circ_path else {}
+
+    dcc_idx = _build_chr_idx(dcc_bsj)
+    ce2_idx = _build_chr_idx(ce2_bsj)
+    fc_idx  = _build_chr_idx(fc_bsj)
+
+    print(f"[pr_curve] CIRI2={len(ciri2_bsj)}, DCC={len(dcc_bsj)}, "
+          f"CE2={len(ce2_bsj)}, find_circ={len(fc_bsj)}", file=sys.stderr)
+
+    gt = truth[truth["is_true"].isin([0, 1])]
+
+    method_names = ["Our_adaptive", "CirComPara2_4tools", "nfcore_3tools"]
+    pr_pts  = {m: [] for m in method_names}
+    all_rows = {m: [] for m in method_names}
+
+    for thr in thresholds:
+        c2_ids = {cid for cid, bsj in ciri2_bsj.items() if bsj >= thr}
+
+        our_con = set()
+        cp2_con = set()
+        nfc_con = set()
+
+        for cid in c2_ids:
+            parsed = _parse_id(cid)
+            if not parsed:
+                continue
+            ch, s, e = parsed
+
+            dcc_ok  = _any_match(ch, s, e, dcc_idx, thr,  slop_our)
+            dcc_ok2 = _any_match(ch, s, e, dcc_idx, thr,  slop_cp2)
+            ce2_ok  = _any_match(ch, s, e, ce2_idx, 1.0,  slop_cp2)
+            ce2_nfc = _any_match(ch, s, e, ce2_idx, 1.0,  slop_nfc)
+            fc_ok   = _any_match(ch, s, e, fc_idx,  thr,  slop_cp2)
+            fc_nfc  = _any_match(ch, s, e, fc_idx,  thr,  slop_nfc)
+
+            if dcc_ok:
+                our_con.add(cid)
+            if dcc_ok2 or ce2_ok or fc_ok:
+                cp2_con.add(cid)
+            if ce2_nfc or fc_nfc:
+                nfc_con.add(cid)
+
+        for name, con, slop in [
+            ("Our_adaptive",       our_con, slop_our),
+            ("CirComPara2_4tools", cp2_con, slop_cp2),
+            ("nfcore_3tools",      nfc_con, slop_nfc),
+        ]:
+            tp, fp, fn, _ = _evaluate_consensus(con, gt, slop)
+            prec, rec, f1 = _prf(tp, fp, fn)
+            all_rows[name].append({
+                "threshold": thr, "n_detected": len(con),
+                "TP": tp, "FP": fp,
+                "Precision": prec, "Recall": rec, "F1": f1,
+            })
+            pr_pts[name].append((rec, prec))
+            print(f"  [{name:22s}] bsj>={thr:3d}: n={len(con):5d}  "
+                  f"Prec={prec:.3f}  Rec={rec:.3f}  F1={f1:.3f}", file=sys.stderr)
+
+    return {m: (_auc_from_pr_points(pr_pts[m]), all_rows[m]) for m in method_names}
+
+
+# ── Legacy single-method wrapper (kept for backward compat) ───────────────────
+
+def _threshold_pr_curve(
+    ciri2_path: str,
+    dcc_count_path: str,
+    truth: "pd.DataFrame",
+    thresholds: list,
+    slop: int = 10,
+) -> tuple:
+    """Legacy wrapper: Our_adaptive only. Use _multi_method_pr_curves for new code."""
+    result = _multi_method_pr_curves(
+        ciri2_path, dcc_count_path, "", "", truth, thresholds, slop_our=slop,
+    )
+    return result["Our_adaptive"]
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -320,6 +538,16 @@ def main() -> None:
     parser.add_argument("--output-fp-comparison",  default=None,
                         dest="output_fp_comparison",
                         help="TSV: FP score distribution comparison (Our vs CirComPara2)")
+    parser.add_argument("--output-pr-curve", default=None, dest="output_pr_curve",
+                        help="TSV: threshold-based PR curve for all 3 methods (honest AUC-PR)")
+    parser.add_argument("--ciri2-file", default=None, dest="ciri2_file",
+                        help="CIRI2 output file (*.ciri2) for threshold sweep")
+    parser.add_argument("--dcc-count-file", default=None, dest="dcc_count_file",
+                        help="DCC CircRNACount file for threshold sweep")
+    parser.add_argument("--circexplorer2-file", default=None, dest="circexplorer2_file",
+                        help="CIRCexplorer2 known_circ.txt for threshold sweep (treated as binary)")
+    parser.add_argument("--find-circ-file", default=None, dest="find_circ_file",
+                        help="find_circ splice_sites.bed for threshold sweep (CIRCULAR only)")
     parser.add_argument("--slop",    type=int, default=10)
     parser.add_argument("--min-bsj", type=int, default=2, dest="min_bsj")
     args = parser.parse_args()
@@ -383,6 +611,49 @@ def main() -> None:
             f"TN={m['TN']}  AUC-PR={m['AUC_PR']:.3f}",
             file=sys.stderr,
         )
+
+    # ── Threshold-based PR curve + honest AUC-PR (all 3 methods) ─────────────
+    if args.ciri2_file and args.dcc_count_file:
+        PR_THRESHOLDS = [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50]
+        print("[accuracy] Computing threshold-based PR curves (all 3 methods)...",
+              file=sys.stderr)
+        multi_results = _multi_method_pr_curves(
+            args.ciri2_file,
+            args.dcc_count_file,
+            args.circexplorer2_file or "",
+            args.find_circ_file or "",
+            truth,
+            PR_THRESHOLDS,
+            slop_our=args.slop,
+            slop_cp2=args.slop,
+            slop_nfc=1,  # nfcore: slop=0 nominal, +1 for BED→1-based offset
+        )
+        # Override AUC_PR in summary rows
+        method_map = {
+            "Our_adaptive":       "Our_adaptive",
+            "CirComPara2_4tools": "CirComPara2_4tools",
+            "nfcore_3tools":      "nfcore_3tools",
+        }
+        for row in summary_rows:
+            m = row["Method"]
+            if m in method_map and method_map[m] in multi_results:
+                auc, _ = multi_results[method_map[m]]
+                old_auc = row["AUC_PR"]
+                row["AUC_PR"] = auc
+                row["AUC_PR_note"] = "threshold-sweep"
+                print(f"[accuracy] {m}: AUC-PR {old_auc:.4f} → {auc:.4f} (threshold-sweep)",
+                      file=sys.stderr)
+            else:
+                row["AUC_PR_note"] = "binary-detection"
+
+        if args.output_pr_curve:
+            # Long format: threshold, method, n_detected, TP, FP, Precision, Recall, F1
+            pr_long = []
+            for m, (_, rows) in multi_results.items():
+                for r in rows:
+                    pr_long.append({"method": m, **r})
+            pd.DataFrame(pr_long).to_csv(args.output_pr_curve, sep="\t", index=False)
+            print(f"[accuracy] PR curve (3 methods) → {args.output_pr_curve}", file=sys.stderr)
 
     # ── Write outputs ─────────────────────────────────────────────────────────
     out_dir = Path(args.output_summary).parent

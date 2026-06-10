@@ -273,11 +273,11 @@ def _feature_table() -> str:
          "Snakemake", "SCons (2022)", "Nextflow (2023)"),
         ("Detection tools",
          "CIRIquant + DCC",
-         "CIRI2 + CIRIquant + DCC + find_circ + CircExplorer2",
+         "CIRIquant + DCC + find_circ + CircExplorer2",
          "CIRIquant + CIRCexplorer2 + find_circ"),
         ("Tool consensus",
          "✓ adaptive (≥2/2, slop=10 bp)",
-         "✓ fixed (≥2/5 tools)",
+         "✓ fixed (≥2/4 tools)",
          "✓ fixed (≥2/3 tools, exact)"),
         ("Coordinate tolerance",
          "✓ slop=10 bp (configurable)",
@@ -459,8 +459,8 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
 
 <p style="margin-top:12px; font-size:13px; color:#555">
   <strong>差異表現分析總結：</strong>本管線同時執行三種 DE 方法，以 GSE113230（n=3 vs 3）為例：
-  <strong>edgeR_ciriquant</strong>（BSJ/FSJ ratio test）偵測 482 個顯著 circRNA，其中 Type_I 363 個（環化效率真正改變），
-  Type_II 119 個（host gene 整體變化帶動）；
+  <strong>edgeR_ciriquant</strong>（BSJ/FSJ ratio test）偵測 482 個顯著 circRNA，其中 Type_I 409 個（84.9%，circRNA 環化效率真正改變），
+  Type_II 73 個（15.1%，BSJ/FSJ ratio 顯著且 FSJ 線性轉錄本同時顯著）；
   <strong>DESeq2</strong> 偵測 409 個（最保守，適合樣本數較多時使用）；
   <strong>limma-voom</strong> 偵測 736 個（小樣本最穩定，recall 最高）。
   三方法交集（Venn diagram 中心）49 個 circRNA 為最高可信度的 DE 候選，
@@ -470,6 +470,165 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
 
 
 # ── Build report ─────────────────────────────────────────────────────────────
+
+def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
+    """Render threshold-based PR curves (3 methods) as interactive Plotly chart + collapsible tables.
+
+    pr: long-format TSV with columns: method, threshold, n_detected, TP, FP, Precision, Recall, F1
+        OR legacy single-method format (no method column, Our_adaptive only)
+    acc: accuracy_summary.tsv (for AUC-PR values per method)
+    """
+    import json
+
+    # Handle legacy single-method format
+    if "method" not in pr.columns:
+        pr = pr.copy()
+        pr["method"] = "Our_adaptive"
+
+    method_styles = {
+        "Our_adaptive":       {"color": "#2563eb", "symbol": "circle"},
+        "CirComPara2_4tools": {"color": "#7b3fa6", "symbol": "square"},
+        "nfcore_3tools":      {"color": "#e07b39", "symbol": "triangle-up"},
+    }
+
+    traces = []
+    tbl_sections = ""
+
+    for method, style in method_styles.items():
+        sub = pr[pr["method"] == method].copy()
+        if sub.empty:
+            continue
+        sub = sub.sort_values("threshold")
+
+        # Add (0, 1.0) anchor point
+        anchor = {"threshold": 0, "n_detected": 0, "TP": 0, "FP": 0,
+                  "Precision": 1.0, "Recall": 0.0, "F1": 0.0}
+        sub = pd.concat([pd.DataFrame([anchor]), sub], ignore_index=True)
+
+        auc_row = acc[acc["Method"] == method]
+        auc  = float(auc_row["AUC_PR"].iloc[0]) if not auc_row.empty else float("nan")
+        note = auc_row["AUC_PR_note"].iloc[0] if ("AUC_PR_note" in auc_row.columns and not auc_row.empty) else "threshold-sweep"
+
+        hover = [
+            (f"min_bsj = {int(r.threshold)}<br>"
+             f"Detected = {int(r.n_detected)}<br>"
+             f"TP={int(r.TP)}  FP={int(r.FP)}<br>"
+             f"Precision = {r.Precision:.4f}<br>"
+             f"Recall = {r.Recall:.4f}<br>"
+             f"F1 = {r.F1:.4f}")
+            for r in sub.itertuples()
+        ]
+
+        trace = {
+            "x": sub["Recall"].tolist(),
+            "y": sub["Precision"].tolist(),
+            "text": hover,
+            "hovertemplate": "%{text}<extra></extra>",
+            "mode": "lines+markers",
+            "name": f"{method}<br>(AUC={auc:.4f}, {note})",
+            "line":   {"color": style["color"], "width": 2},
+            "marker": {"color": style["color"], "size": 7,
+                       "symbol": style["symbol"],
+                       "line": {"color": "#fff", "width": 1}},
+        }
+        traces.append(trace)
+
+        # Collapsible detail table (skip anchor row)
+        tbl_rows = "".join(
+            f'<tr><td>{int(r.threshold)}</td><td>{int(r.n_detected)}</td>'
+            f'<td>{int(r.TP)}</td><td>{int(r.FP)}</td>'
+            f'<td>{r.Precision:.4f}</td><td>{r.Recall:.4f}</td>'
+            f'<td><strong>{r.F1:.4f}</strong></td></tr>'
+            for r in sub.itertuples() if r.threshold > 0
+        )
+        tbl_sections += f"""
+<details style="margin-top:8px">
+<summary style="cursor:pointer; color:{style['color']}; font-weight:600">{method} 詳細數值</summary>
+<table class="tbl" style="margin-top:4px; font-size:12px">
+<thead><tr><th>min_bsj</th><th>Detected</th><th>TP</th><th>FP</th>
+<th>Precision</th><th>Recall</th><th>F1</th></tr></thead>
+<tbody>{tbl_rows}</tbody>
+</table>
+</details>"""
+
+    # Baseline annotation
+    base_rate = 0.631
+    layout = {
+        "width": 560, "height": 460,
+        "margin": {"l": 60, "r": 20, "t": 50, "b": 60},
+        "xaxis": {
+            "title": "Recall", "range": [-0.01, 0.55],
+            "gridcolor": "#eee", "zeroline": False,
+        },
+        "yaxis": {
+            "title": "Precision", "range": [0.0, 1.05],
+            "gridcolor": "#eee", "zeroline": False,
+        },
+        "title": {"text": "Threshold-based PR Curve (min_bsj sweep)", "font": {"size": 14}},
+        "legend": {"x": 0.02, "y": 0.02, "bgcolor": "rgba(255,255,255,0.85)",
+                   "bordercolor": "#ccc", "borderwidth": 1, "font": {"size": 11}},
+        "hovermode": "closest",
+        "plot_bgcolor": "#fff",
+        "paper_bgcolor": "#fff",
+        "shapes": [{
+            "type": "line",
+            "x0": 0, "x1": 0.55, "y0": base_rate, "y1": base_rate,
+            "line": {"color": "#bbb", "width": 1.5, "dash": "dot"},
+        }],
+        "annotations": [{
+            "x": 0.54, "y": base_rate + 0.02,
+            "xref": "x", "yref": "y",
+            "text": f"base rate {base_rate}",
+            "showarrow": False,
+            "font": {"size": 10, "color": "#aaa"},
+        }],
+    }
+
+    traces_json = json.dumps(traces)
+    layout_json = json.dumps(layout)
+    div_id = "pr-curve-plot"
+
+    return f"""
+<div class="card">
+<h2>2b. PR Curve — Threshold-based AUC-PR（修正版）</h2>
+<p class="note">
+  <strong>為什麼原始 AUC-PR（0.92–0.96）是虛高的：</strong>
+  二元偵測分數（偵測到=1，未偵測=0）下，87.8% 的 ground truth items 為 score=0（大量 FN 混在其中）。
+  樂觀排序（正例先於負例）使所有 FN 全排在 TN 前面，人為膨脹 AUC 面積。
+</p>
+<p class="note">
+  <strong>修正方法：</strong>對 <code>min_bsj</code> 閾值 1–50 各算一個真實 (Precision, Recall) 點，連成 PR curve。
+  所有方法以 CIRI2 output 為 primary seed；CIRCexplorer2 score 欄 97% 為 0，視為 binary（任何 detection = count=1）。
+  <strong>滑鼠移到各點上可見 min_bsj、Detected、TP/FP/Precision/Recall/F1 詳細數值。</strong>
+</p>
+
+<div style="display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap">
+<div id="{div_id}" style="flex-shrink:0"></div>
+<div style="flex:1; min-width:280px">
+{tbl_sections}
+</div>
+</div>
+
+<script>
+(function() {{
+  var traces = {traces_json};
+  var layout = {layout_json};
+  if (typeof Plotly !== 'undefined') {{
+    Plotly.newPlot('{div_id}', traces, layout, {{responsive: true, displayModeBar: false}});
+  }} else {{
+    document.getElementById('{div_id}').innerHTML =
+      '<p style="color:#c00">⚠️ Plotly.js 未載入，請確認網路連線</p>';
+  }}
+}})();
+</script>
+
+<p class="note" style="margin-top:8px">
+  AUC-PR 使用梯形積分法計算閾值掃描各點。所有方法最大 Recall 受限於 total RNA 樣本的 circRNA 覆蓋深度（CIRI2 seed）。
+  CirComPara2 / nfcore 因 CE2（binary）+ find_circ 補充偵測，在低閾值時 Recall 更高。
+</p>
+</div>
+"""
+
 
 def _fp_comparison_section(fp: pd.DataFrame) -> str:
     """Render FP score distribution comparison bar chart (Our vs CirComPara2)."""
@@ -554,6 +713,7 @@ def build_report(
     de_jaccard_tsv:  str,
     fp_comparison_tsv: str | None,
     output_html:     str,
+    pr_curve_tsv:    str | None = None,
 ) -> None:
     acc    = pd.read_csv(accuracy_tsv,   sep="\t")
     strat  = pd.read_csv(stratified_tsv, sep="\t")
@@ -561,6 +721,7 @@ def build_report(
     de     = pd.read_csv(de_quality_tsv, sep="\t")
     jac    = pd.read_csv(de_jaccard_tsv, sep="\t")
     fp_cmp = pd.read_csv(fp_comparison_tsv, sep="\t") if fp_comparison_tsv else None
+    pr_curve = pd.read_csv(pr_curve_tsv, sep="\t") if pr_curve_tsv else None
 
     # Key summary numbers
     n_tp = int(acc["TP"].max()) if "TP" in acc.columns else "—"
@@ -610,6 +771,7 @@ def build_report(
   <title>circRNA Pipeline Benchmark — Comparison Report</title>
   {_STYLE}
   {_SCRIPT}
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" charset="utf-8"></script>
 </head>
 <body>
 
@@ -693,6 +855,8 @@ def build_report(
 </p>
 </div>
 
+
+{_pr_curve_section(pr_curve, acc) if pr_curve is not None else ""}
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <div class="card">
@@ -778,6 +942,8 @@ def main() -> None:
     parser.add_argument("--de-jaccard",     required=True,  dest="de_jaccard")
     parser.add_argument("--fp-comparison",  default=None,   dest="fp_comparison",
                         help="FP score comparison TSV (from accuracy_benchmark.py)")
+    parser.add_argument("--pr-curve",       default=None,   dest="pr_curve",
+                        help="Threshold-based PR curve TSV (from accuracy_benchmark.py)")
     parser.add_argument("--output",         required=True)
     args = parser.parse_args()
 
@@ -789,6 +955,7 @@ def main() -> None:
         de_jaccard_tsv    = args.de_jaccard,
         fp_comparison_tsv = args.fp_comparison,
         output_html       = args.output,
+        pr_curve_tsv      = args.pr_curve,
     )
 
 
