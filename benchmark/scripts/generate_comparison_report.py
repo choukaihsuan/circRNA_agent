@@ -486,9 +486,9 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
         pr["method"] = "Our_adaptive"
 
     method_styles = {
-        "Our_adaptive":       {"color": "#2563eb", "symbol": "circle"},
-        "CirComPara2_4tools": {"color": "#7b3fa6", "symbol": "square"},
-        "nfcore_3tools":      {"color": "#e07b39", "symbol": "triangle-up"},
+        "Our_adaptive":       {"color": "#1a5c96", "symbol": "circle"},
+        "CirComPara2_4tools": {"color": "#dc2626", "symbol": "square"},
+        "nfcore_3tools":      {"color": "#16a34a", "symbol": "triangle-up"},
     }
 
     traces = []
@@ -554,33 +554,42 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
     # Baseline annotation
     base_rate = 0.631
     layout = {
-        "width": 560, "height": 460,
-        "margin": {"l": 60, "r": 20, "t": 50, "b": 60},
+        "width": 760, "height": 560,
+        "margin": {"l": 70, "r": 30, "t": 60, "b": 70},
         "xaxis": {
-            "title": "Recall", "range": [-0.01, 0.55],
-            "gridcolor": "#eee", "zeroline": False,
+            "title": {"text": "Recall", "font": {"size": 14}},
+            "range": [-0.01, 0.50],
+            "gridcolor": "#e8e8e8", "zeroline": False,
+            "tickfont": {"size": 12},
         },
         "yaxis": {
-            "title": "Precision", "range": [0.0, 1.05],
-            "gridcolor": "#eee", "zeroline": False,
+            "title": {"text": "Precision", "font": {"size": 14}},
+            "range": [0.55, 1.05],
+            "gridcolor": "#e8e8e8", "zeroline": False,
+            "tickfont": {"size": 12},
         },
-        "title": {"text": "Threshold-based PR Curve (min_bsj sweep)", "font": {"size": 14}},
-        "legend": {"x": 0.02, "y": 0.02, "bgcolor": "rgba(255,255,255,0.85)",
-                   "bordercolor": "#ccc", "borderwidth": 1, "font": {"size": 11}},
+        "title": {"text": "Threshold-based PR Curve (min_bsj sweep 1–50)",
+                  "font": {"size": 15}, "x": 0.5, "xanchor": "center"},
+        "legend": {
+            "x": 1.01, "y": 1.0, "xanchor": "left", "yanchor": "top",
+            "bgcolor": "rgba(255,255,255,0.95)",
+            "bordercolor": "#ccc", "borderwidth": 1,
+            "font": {"size": 12},
+        },
         "hovermode": "closest",
         "plot_bgcolor": "#fff",
         "paper_bgcolor": "#fff",
         "shapes": [{
             "type": "line",
-            "x0": 0, "x1": 0.55, "y0": base_rate, "y1": base_rate,
+            "x0": 0, "x1": 0.50, "y0": base_rate, "y1": base_rate,
             "line": {"color": "#bbb", "width": 1.5, "dash": "dot"},
         }],
         "annotations": [{
-            "x": 0.54, "y": base_rate + 0.02,
+            "x": 0.49, "y": base_rate + 0.015,
             "xref": "x", "yref": "y",
             "text": f"base rate {base_rate}",
             "showarrow": False,
-            "font": {"size": 10, "color": "#aaa"},
+            "font": {"size": 11, "color": "#999"},
         }],
     }
 
@@ -602,11 +611,9 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
   <strong>滑鼠移到各點上可見 min_bsj、Detected、TP/FP/Precision/Recall/F1 詳細數值。</strong>
 </p>
 
-<div style="display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap">
-<div id="{div_id}" style="flex-shrink:0"></div>
-<div style="flex:1; min-width:280px">
+<div id="{div_id}" style="max-width:960px"></div>
+<div style="margin-top:8px">
 {tbl_sections}
-</div>
 </div>
 
 <script>
