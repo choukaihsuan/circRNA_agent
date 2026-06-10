@@ -499,11 +499,10 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
         if sub.empty:
             continue
         sub = sub.sort_values("threshold")
-
-        # Add (0, 1.0) anchor point
-        anchor = {"threshold": 0, "n_detected": 0, "TP": 0, "FP": 0,
-                  "Precision": 1.0, "Recall": 0.0, "F1": 0.0}
-        sub = pd.concat([pd.DataFrame([anchor]), sub], ignore_index=True)
+        # Deduplicate overlapping (Recall, Precision) points — keep lowest threshold.
+        # Reason: DCC and CIRI2 both internally require ≥2 reads, so min_bsj=1 and
+        # min_bsj=2 produce identical results. Showing both would overlap on the chart.
+        sub = sub.drop_duplicates(subset=["Recall", "Precision"], keep="first").reset_index(drop=True)
 
         auc_row = acc[acc["Method"] == method]
         auc  = float(auc_row["AUC_PR"].iloc[0]) if not auc_row.empty else float("nan")
