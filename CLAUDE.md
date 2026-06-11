@@ -670,16 +670,16 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - CIRCexplorer2：0:05.99（6 秒，0.13 GB RAM）
 - find_circ_map：3:44:29（3.54 GB RAM）
 - find_circ detect：2:41:05（5.14 GB RAM）
-- CIRIquant：**11:41:07（47.2 GB RAM）** ← NFS I/O 瓶頸（HISAT2 5h8m + BWA-MEM 3h5m + CIRI2 56m + de novo quant 1h22m）
+- CIRIquant：**11:50:25（49.1 GB RAM）** ← NFS I/O 瓶頸（HISAT2 5h8m + BWA-MEM 3h3m + CIRI2 + de novo quant）；2026-06-10 重跑確認值（disk-full 期間仍完成）
 
 **CIRIquant 步驟分解**（NFS 環境，SAM/BAM 寫入放大效應）：
 - HISAT2 genome alignment：00:01 → 05:09（5h 8min；unmapped.sam 124 GB 寫入 NFS）
 - Gene abundance：05:09 → 05:22（13 min）
-- BWA-MEM：05:22 → 08:27（3h 5min）
-- CIRI2.pl detection：08:27 → 09:23（56 min）
-- Build circular index：09:23 → 09:31（8 min）
-- De novo HISAT2 alignment：09:31 → 10:15（44 min）
-- BSJ/FSJ detection & quantification：10:15 → 11:42（87 min）
+- BWA-MEM：05:22 → 08:25（3h 3min）
+- CIRI2.pl detection：08:25 → 09:21（56 min）
+- Build circular index：09:21 → 09:29（8 min）
+- De novo HISAT2 alignment：09:29 → 10:13（44 min）
+- BSJ/FSJ detection & quantification：10:13 → 11:50（97 min，含 disk-full 延遲）
 
 ### 輸出報告
 
@@ -978,7 +978,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | rank_biomarkers | ✅ 完成（482 candidates；**6D score**：sig+FC+conf+circbase+miRNA+RBP） |
 | report | ✅ 完成 v3（動態 DE 表格切換；Biomarker 分布圖 + 常態檢定；Venn diagram 修正；列印排版；**Venn 可點擊區域**；Heatmap tumor 在左；Circular Structure totalLen 修正）|
 | benchmark accuracy | ✅ 完成（4-method + Our_no_QC ablation；report.html 更新）|
-| benchmark compute cost | ✅ 完成（CIRIquant 實測 11:41:07 on HPC NFS；compute_cost.tsv + comparison_report.html 已更新）⚠️ **重新計時中**（2026-06-10 09:16 重跑，結果待更新）|
+| benchmark compute cost | ✅ 完成（CIRIquant 實測 **11:50:25** on HPC NFS；2026-06-10 重跑確認；compute_cost.tsv + comparison_report.html 已更新）|
 
 **主要數值結果**：
 - 偵測：9,349 consensus circRNAs → filterByExpr 後 4,630 tested
