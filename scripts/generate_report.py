@@ -645,8 +645,8 @@ function _makeSortable(tableId) {
           if (ca.c !== cb.c) return _asc ? ca.c - cb.c : cb.c - ca.c;
           return _asc ? ca.p - cb.p : cb.p - ca.p;
         }
-        var an = parseFloat(av.replace(/[^\d.eE+\-]/g, ''));
-        var bn = parseFloat(bv.replace(/[^\d.eE+\-]/g, ''));
+        var an = parseFloat(av);
+        var bn = parseFloat(bv);
         if (!isNaN(an) && !isNaN(bn)) return _asc ? an - bn : bn - an;
         return _asc ? av.localeCompare(bv) : bv.localeCompare(av);
       });
