@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，20 pairs，待跑）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -447,6 +447,9 @@ Web UI 主頁新增常駐卡片，使用者點標題行即可展開；內容包�
 - 五行因素表（讀長 / RNA-Seq 方式 / 樣本類型 / 樣本數 / 設計）+ 顏色標記（綠/黃/紅）
 - 已知資料集摘要（GSE113230/GSE58135/GSE323364/GSE133998 一覽）
 - GEO 查詢提示（Library Strategy / avgLength 欄位位置）
+
+**手動 SRR 清單 → 方式二 CSV 上傳範例表**（`templates/index.html`，2026-06-14）：
+「CSV 格式範例」說明文字下方加入 GSE113230 的 6 行示範表格（srr_id / condition 兩欄，斑馬紋底色，寬度 340px），讓使用者清楚知道正確格式。
 
 ---
 
@@ -953,7 +956,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-10 更新）
+## 目前執行進度（2026-06-14 更新）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1193,6 +1196,51 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 - SRR11600334 初次下載失敗（HTTPS fallback ~22 KB/s），需重試
 - `pigz` 已安裝於 ciriquant env（`conda install -y -c conda-forge pigz`），gzip 壓縮從 ~2h 降至 ~15min/15GB
 
+**磁碟清理（2026-06-14）**：分析完成後已刪除中間檔案，釋放約 333 GB：
+- `GSE133998/raw/`（80 GB）+ `GSE133998/trimmed/`（86 GB）→ 已刪除
+- `GSE133998_results/circRNA/*/Aligned.sortedByCoord.out.bam`（~66 GB）→ 已刪除
+- `GSE133998_results/circRNA/*/mate1/` + `*/mate2/`（~102 GB）→ 已刪除
+- 保留：`.gtf`、`.bed`、`DCC/`、`Chimeric.out.junction`、`high_confidence.bed`、`consensus_summary.tsv`
+
+---
+
+### SRP156355（早期乳癌 IDC，配對 tumor/normal）
+
+**完成。** 報告位置：`~/SRP156355_results/report.html`（server）
+
+早期乳癌手術切除組織（IDC，invasive ductal carcinoma），tumor vs. adjacent normal，100bp PE，Total RNA（rRNA-depleted），Cancer Institute WIA 印度，6 對配對 T/N。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 12/12 完成 |
+| fastp QC/trim | ✅ 12/12 完成 |
+| CIRIquant | ✅ 12/12 完成 |
+| STAR / DCC | ✅ 12/12 完成 |
+| consensus_filter（--adaptive）| ✅ 完成 |
+| merge_counts / assign_isoforms | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 318 / limma 2,112 significant）|
+| predict_interactions | ✅ 完成 |
+| isoform_switching | ✅ 完成（798 events）|
+| rank_biomarkers | ✅ 完成（152 candidates）|
+| report | ✅ 完成（5.6 MB，Jun 13）|
+
+**主要數值結果**：
+- 偵測：14,697 consensus circRNAs；filterByExpr 後 1,397 tested
+- DE（edgeR_ciriquant）：**318 significant**（nominal p < 0.05，|log2FC| > 1）；上調 64 / 下調 254；**215 Type_I (67.6%) / 71 Type_II (22.3%)**（Type_II 比例四資料集中最高）
+- DE（limma-voom）：2,112 significant
+- Isoform switching：**798 events**（within-gene FDR < 0.1，|ΔIUI| > 0.1）
+- Biomarker candidates：152 個
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（6T + 6N）：SRR7645071–SRR7645080、SRR7645087–SRR7645088（各患者配對）
+- genome：hg19；配對設計支援（含 `patient_id` 欄）
+- Condition CSV：`/mnt/c/Users/User/Desktop/SRP156355_condition.csv`
+
+**Server config**（`config/projects/SRP156355.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/SRP156355/raw`
+- `results_dir: /home3/choukaihsuan/SRP156355_results`
+
 ---
 
 ## GEO / SRA BioProject 資料集選擇指引
@@ -1227,7 +1275,8 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | **50bp PE** | 10（5T+5N）| ~50M reads/sample | 1,607（CIRIquant-only）| **15** | ⚠️ 50bp 讀長，DCC 失效→adaptive fallback |
 | **GSE323364** | **細胞株**（MDA-MB-436 TNBC）| EPZ6438 vs. DMSO | Total RNA | 150bp PE | 6（3+3）| ~60M reads/sample | 中等 | **15** | ⚠️ 細胞株+藥物，DE 極少 |
 | **GSE133998** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N）| ~80M reads/sample | 10,979 | **84** | ✅ 配對設計，樣本數最多 |
-| **SRP156355** | 組織（早期乳癌 IDC/DCIS）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 23（6T+6N+DCIS+APN）| avg 48M spots（~96M reads）| 待跑 | 待跑 | ✅ 待分析；6 對配對 T/N；LibrarySelection=other 適合 circRNA；Cancer Institute WIA 印度 |
+| **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 12（6T+6N）| avg 48M spots（~96M reads）| **14,697**（consensus）| **318** | ✅ 完成；6 對配對 T/N；Type_II 比例最高（22.3%）；798 isoform switching events |
+| **GSE77509** | 組織（HCC 肝癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| **~100bp PE** | 40（20T+20N）+20 PVTT | **57–118M spots/sample**（平均 ~85M）| 待跑 | 待跑 | ✅ 待分析；20 對配對 T/N；深度最大；SRP069212；Yang et al. 2017 Nat Commun |
 | **PRJNA808398** | 組織（TNBC tumor vs. normal）| tumor vs. normal | **cDNA（poly-A）** | 150bp PE | 50（25T+25N）| avg 18M spots（低）| ❌ | ❌ | ❌ 不建議：poly-A selection，circRNA 接近零；A.C. CAMARGO 巴西 |
 
 ### 影響分析品質的關鍵因素
@@ -1296,6 +1345,24 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 
 Condition CSV 位置：`/mnt/c/Users/User/Desktop/SRP156355_condition.csv`（含 `patient_id` 欄，可啟用配對設計）。
 排除的樣本：DCIS（66D/299D/712D/803D/1102D/1151D）和 APN（719APN/768APN/87APN/91311APN/93277APN）留待未來三組比較分析。
+
+### GSE77509 樣本清單（6 對 T/N，已生成 condition.csv）
+
+Yang et al. 2017 *Nature Communications*（PMID 28194035）。20 對 HCC tumor + adjacent normal + 20 PVTT，rRNA-depleted，Illumina HiSeq 2500，~100bp PE。以定序深度（total spots/pair）排序後選 top 6：
+
+| 患者 | Normal SRR | Tumor SRR | N 深度 | T 深度 |
+|------|-----------|-----------|--------|--------|
+| P17 | SRR3140289 | SRR3140387 | 133M | 89M |
+| P16 | SRR3140284 | SRR3140382 | 148M | 60M |
+| P26 | SRR3140326 | SRR3140422 | 84M | 90M |
+| P12 | SRR3140264 | SRR3140362 | 58M | 109M |
+| P20 | SRR3140303 | SRR3140400 | 78M | 88M |
+| P22 | SRR3140311 | SRR3140408 | 81M | 84M |
+
+**注意**：每個 biological sample 實際上由 4–5 個 split SRR 組成（總深度如上），這裡各取第一個 SRR 使用（單 SRR 約 12–30M reads）。若需要完整深度需在 pipeline 加入 SRR merge 支援。
+
+Condition CSV 位置：`/mnt/c/Users/User/Desktop/GSE77509_condition.csv`
+cancer label：`tumor` / `normal`；genome：hg19
 
 ---
 
