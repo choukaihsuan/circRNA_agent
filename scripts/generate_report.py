@@ -479,7 +479,9 @@ _STYLE = """
   h1   { color: #2c6fad; border-bottom: 2px solid #2c6fad; padding-bottom: 8px; }
   h2   { color: #444; margin-top: 40px; }
   .table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  .table th { background: #2c6fad; color: #fff; padding: 6px 10px; text-align: left; }
+  .table th { background: #2c6fad; color: #fff; padding: 6px 10px; text-align: left;
+              cursor: pointer; user-select: none; white-space: nowrap; }
+  .table th:hover { background: #1a5090; }
   .table td { border-bottom: 1px solid #ddd; padding: 5px 10px; }
   .table tr:hover td { background: #f0f7ff; }
   .stat-box { display:inline-block; background:#f4f8ff; border:1px solid #b6d0f0;
@@ -524,7 +526,9 @@ _STYLE = """
   .exon-wrap { overflow-x:auto; padding:8px 0; }
   /* Interaction tables */
   .itable { border-collapse:collapse; width:100%; font-size:12px; }
-  .itable th { background:#f0f5ff; color:#335; padding:5px 10px; border:1px solid #dde; text-align:left; }
+  .itable th { background:#f0f5ff; color:#335; padding:5px 10px; border:1px solid #dde; text-align:left;
+              cursor:pointer; user-select:none; white-space:nowrap; }
+  .itable th:hover { background:#dce8ff; }
   .itable td { padding:4px 10px; border:1px solid #eee; }
   .itable tr:hover td { background:#f8faff; }
   .no-data { color:#aaa; font-size:13px; font-style:italic; padding:8px 0; }
@@ -609,6 +613,48 @@ _STYLE = """
 
 _SCRIPT = """
 <script>
+function _parseGenCoord(s) {
+  // Parse chrN:start|end → {c: chrNum, p: startPos} for genomic sort
+  var m = s.match(/^chr([0-9]+|[XYMxym])[:|\s](\d+)/i);
+  if (!m) return null;
+  var n = m[1].toUpperCase();
+  var cn = /^\d+$/.test(n) ? parseInt(n) : (n==='X'?23:n==='Y'?24:n==='M'?26:25);
+  return {c: cn, p: parseInt(m[2])};
+}
+function _makeSortable(tableId) {
+  var tbl = document.getElementById(tableId);
+  if (!tbl) return;
+  var ths = Array.from(tbl.querySelectorAll('thead th'));
+  var _sc = null, _asc = true;
+  ths.forEach(function(th, i) {
+    th.addEventListener('click', function() {
+      if (_sc === i) { _asc = !_asc; } else { _sc = i; _asc = true; }
+      ths.forEach(function(h, j) {
+        h.innerHTML = h.innerHTML.replace(/\s*[▲▼]$/, '');
+        if (j === i) h.innerHTML += _asc ? ' ▲' : ' ▼';
+      });
+      var tbody = tbl.querySelector('tbody');
+      if (!tbody) return;
+      var rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort(function(a, b) {
+        var av = (a.cells[i] ? a.cells[i].textContent : '').trim();
+        var bv = (b.cells[i] ? b.cells[i].textContent : '').trim();
+        // Genomic coordinate sort (chrN:start format)
+        var ca = _parseGenCoord(av), cb = _parseGenCoord(bv);
+        if (ca && cb) {
+          if (ca.c !== cb.c) return _asc ? ca.c - cb.c : cb.c - ca.c;
+          return _asc ? ca.p - cb.p : cb.p - ca.p;
+        }
+        var an = parseFloat(av.replace(/[^\d.eE+\-]/g, ''));
+        var bn = parseFloat(bv.replace(/[^\d.eE+\-]/g, ''));
+        if (!isNaN(an) && !isNaN(bn)) return _asc ? an - bn : bn - an;
+        return _asc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+      rows.forEach(function(r) { tbody.appendChild(r); });
+    });
+  });
+}
+
 function dlCSV(tid, fname) {
   var tbl = document.getElementById(tid);
   if (!tbl) return;
@@ -913,14 +959,19 @@ def _compute_bm_table_data(
         return (s - mn) / (mx - mn + 1e-10)
     sig["_sig_n"] = _mn(sig["_sig_v"])
     sig["_fc_n"]  = _mn(sig["_fc_v"])
-    use_ixn = any(bm_lookup.get(str(r), {}).get("mirna_n", 0) > 0 for r in sig["circ_id"])
+    use_ixn = any(bm_lookup.get(str(r), {}).get("n_mirna", 0) > 0 for r in sig["circ_id"])
     ndim = 6.0 if use_ixn else 4.0
+    # Normalize mirna/rbp within the current sig set to avoid cross-set scaling artifacts
+    _sig_mirna_mx = max((float(bm_lookup.get(str(c), {}).get("n_mirna", 0)) for c in sig["circ_id"]), default=1) or 1
+    _sig_rbp_mx   = max((float(bm_lookup.get(str(c), {}).get("n_rbp",   0)) for c in sig["circ_id"]), default=1) or 1
     scores_list = []
     for _, r in sig.iterrows():
         lu = bm_lookup.get(str(r["circ_id"]), {})
+        mirna_n = float(lu.get("n_mirna", 0)) / _sig_mirna_mx if use_ixn else 0.0
+        rbp_n   = float(lu.get("n_rbp",   0)) / _sig_rbp_mx   if use_ixn else 0.0
         base = r["_sig_n"] + r["_fc_n"] + lu.get("conf_n", 0) + lu.get("known", 0)
         if use_ixn:
-            base += lu.get("mirna_n", 0) + lu.get("rbp_n", 0)
+            base += mirna_n + rbp_n
         scores_list.append(round(float(base) / ndim, 4))
     sig["_score"] = scores_list
     all_sig = sig_sets_all or {}
@@ -949,7 +1000,10 @@ def _compute_bm_table_data(
             int(lu.get("in_circbase", 0)),
             lu.get("circbase_id", ""),
             lu.get("circbase_gene", ""),
-            str(r.get("Type", "—")) if "Type" in r.index else "—",
+            (lambda _tv, _lu: (
+                str(_tv) if (_tv is not None and _tv == _tv and str(_tv).lower() not in ("nan","none","na",""))
+                else (_lu.get("type_edger") or "—")
+            ))(r.get("Type") if "Type" in r.index else None, lu),
         ])
     return {"cols": cols, "rows": rows, "n_total": n_total}
 
@@ -1695,6 +1749,11 @@ def build_report(
                 _cid = str(_br.get("circ_id", ""))
                 if not _cid: continue
                 _c = float(pd.to_numeric(_br.get("confidence_score", 0), errors="coerce") or 0)
+                _type_raw = _br.get("Type", "")
+                _type_edger = "" if (
+                    _type_raw is None or _type_raw != _type_raw or
+                    str(_type_raw).lower() in ("nan", "none", "na", "")
+                ) else str(_type_raw)
                 _bm_lookup[_cid] = {
                     "conf_n":  (_c - _conf_mn) / (_conf_mx - _conf_mn + 1e-10),
                     "known":   float(int(_br.get("in_circbase", 0) or 0)),
@@ -1706,6 +1765,7 @@ def build_report(
                     "in_circbase":   int(float(_br.get("in_circbase",   0) or 0)),
                     "circbase_id":   str(_br.get("circbase_id",   "") or ""),
                     "circbase_gene": str(_br.get("circbase_gene", "") or ""),
+                    "type_edger":    _type_edger,
                 }
         except Exception:
             pass
@@ -2680,7 +2740,8 @@ function _renderDETables(method, md) {{
     const color=direction==='up'?'#d62728':'#2CA02C';
     const arrow=direction==='up'?'&#8593;':'&#8595;';
     const label=direction==='up'?`Up-regulated — ${{rows.length}} circRNAs`:`Down-regulated — ${{rows.length}} circRNAs`;
-    let html=`<h3 style="color:${{color}}">${{arrow}} ${{label}}</h3><div style="overflow-x:auto"><table class="table" border="0"><thead><tr>`;
+    const tid=`de-${{direction}}-table`;
+    let html=`<h3 style="color:${{color}}">${{arrow}} ${{label}}</h3><div style="overflow-x:auto"><table id="${{tid}}" class="table" border="0"><thead><tr>`;
     cols.forEach(c=>{{ html+=`<th>${{c}}</th>`; }});
     html+='</tr></thead><tbody>';
     rows.forEach(row=>{{
@@ -2693,6 +2754,8 @@ function _renderDETables(method, md) {{
           html+=`<td>${{(+v).toFixed(3)}}</td>`;
         }} else if(col==='p-value'&&v!=null){{
           html+=`<td>${{(+v).toExponential(3)}}</td>`;
+        }} else if(col==='gene_name'){{
+          html+=`<td>${{(v==null||v==='intergenic')?'—':v}}</td>`;
         }} else {{
           html+=`<td>${{v==null?'—':v}}</td>`;
         }}
@@ -2716,6 +2779,8 @@ function _renderDETables(method, md) {{
     staticTbls.forEach(el=>el.remove());
     sec.appendChild(wrap);
   }}
+  _makeSortable('de-up-table');
+  _makeSortable('de-dn-table');
 }}
 
 function _updateScoreDist(method, md) {{
@@ -2815,6 +2880,8 @@ function _renderBiomarkerTable(method, md) {{
   // Update section heading
   const bm_h2 = document.querySelector('#biomarker-section h2');
   if (bm_h2) bm_h2.textContent = `Biomarker Candidates (top ${{n_all}} by composite score) [${{mLabels[method]||method}}]`;
+  // Re-attach sort listeners (tbody was rebuilt)
+  _makeSortable('tbl_biomarker');
 }}
 
 function _updateBiomarkerHighlight(sigIds) {{
@@ -2832,6 +2899,9 @@ function _updateBiomarkerHighlight(sigIds) {{
 }}
 
 document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}});
+// Make static tables sortable on page load
+_makeSortable('tbl_isoform');
+_makeSortable('tbl_biomarker');
 </script>"""
 
     _modal_html = """
