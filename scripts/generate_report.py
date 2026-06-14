@@ -890,6 +890,70 @@ def _compute_score_dist_data(
         return None
 
 
+def _compute_bm_table_data(
+    de: pd.DataFrame,
+    p_col: str,
+    sig_thr: float,
+    lfc: float,
+    bm_lookup: dict,
+    sig_sets_all: Optional[dict] = None,
+) -> Optional[dict]:
+    """Compute top-30 biomarker rows for one DE method (stored in ALL_DE_METHODS[m].bm_table)."""
+    if p_col not in de.columns or "log2FC" not in de.columns or "circ_id" not in de.columns:
+        return None
+    mask = de[p_col].notna() & (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
+    sig = de[mask].copy()
+    if sig.empty:
+        return None
+    n_total = len(sig)
+    sig["_sig_v"] = sig[p_col].apply(lambda p: min(-math.log10(max(p, 1e-10)), 10))
+    sig["_fc_v"]  = sig["log2FC"].abs().clip(upper=5)
+    def _mn(s):
+        mn, mx = s.min(), s.max()
+        return (s - mn) / (mx - mn + 1e-10)
+    sig["_sig_n"] = _mn(sig["_sig_v"])
+    sig["_fc_n"]  = _mn(sig["_fc_v"])
+    use_ixn = any(bm_lookup.get(str(r), {}).get("mirna_n", 0) > 0 for r in sig["circ_id"])
+    ndim = 6.0 if use_ixn else 4.0
+    scores_list = []
+    for _, r in sig.iterrows():
+        lu = bm_lookup.get(str(r["circ_id"]), {})
+        base = r["_sig_n"] + r["_fc_n"] + lu.get("conf_n", 0) + lu.get("known", 0)
+        if use_ixn:
+            base += lu.get("mirna_n", 0) + lu.get("rbp_n", 0)
+        scores_list.append(round(float(base) / ndim, 4))
+    sig["_score"] = scores_list
+    all_sig = sig_sets_all or {}
+    all_methods = list(all_sig.keys())
+    if all_methods:
+        sig["_n_sig"] = sig["circ_id"].apply(
+            lambda cid: sum(1 for m in all_methods if str(cid) in all_sig[m])
+        )
+    else:
+        sig["_n_sig"] = 1
+    sig_top = sig.sort_values("_score", ascending=False).head(30).reset_index(drop=True)
+    cols = ["rank", "circ_id", "log2FC", "n_mirna", "n_rbp",
+            "biomarker_score", "n_sig_methods", "in_circbase", "circbase_id", "circbase_gene", "Type"]
+    rows = []
+    for i, r in sig_top.iterrows():
+        cid = str(r["circ_id"])
+        lu = bm_lookup.get(cid, {})
+        rows.append([
+            int(i) + 1,
+            cid,
+            round(float(r.get("log2FC", 0)), 2),
+            int(lu.get("n_mirna", 0)),
+            int(lu.get("n_rbp", 0)),
+            round(float(r.get("_score", 0)), 3),
+            int(r.get("_n_sig", 1)),
+            int(lu.get("in_circbase", 0)),
+            lu.get("circbase_id", ""),
+            lu.get("circbase_gene", ""),
+            str(r.get("Type", "—")) if "Type" in r.index else "—",
+        ])
+    return {"cols": cols, "rows": rows, "n_total": n_total}
+
+
 def _biomarker_score_dist(bm: pd.DataFrame) -> str:
     """Ranked scatter plot of biomarker scores for all DE circRNAs."""
     if not _PLOTLY or "biomarker_score" not in bm.columns or "circ_id" not in bm.columns:
@@ -1636,9 +1700,46 @@ def build_report(
                     "known":   float(int(_br.get("in_circbase", 0) or 0)),
                     "mirna_n": float(_br.get("n_mirna", 0) or 0) / (_mirna_mx + 1e-10),
                     "rbp_n":   float(_br.get("n_rbp",   0) or 0) / (_rbp_mx   + 1e-10),
+                    # Raw display values for bm_table
+                    "n_mirna":       int(float(_br.get("n_mirna",       0) or 0)),
+                    "n_rbp":         int(float(_br.get("n_rbp",         0) or 0)),
+                    "in_circbase":   int(float(_br.get("in_circbase",   0) or 0)),
+                    "circbase_id":   str(_br.get("circbase_id",   "") or ""),
+                    "circbase_gene": str(_br.get("circbase_gene", "") or ""),
                 }
         except Exception:
             pass
+
+    # Supplement _bm_lookup from circbase_annotated.tsv + interactions
+    # for circRNAs significant in DESeq2/limma but not in edgeR biomarker_candidates.tsv
+    _mirna_mx_lk = max((_bm_lookup[c].get("n_mirna", 0) for c in _bm_lookup), default=1) or 1
+    _rbp_mx_lk   = max((_bm_lookup[c].get("n_rbp",   0) for c in _bm_lookup), default=1) or 1
+    try:
+        if circbase_file and Path(circbase_file).exists():
+            _cb_df = pd.read_csv(circbase_file, sep="\t")
+            _cb_conf_vals = pd.to_numeric(_cb_df.get("confidence_score", pd.Series()), errors="coerce").fillna(0)
+            _cb_conf_mn = _cb_conf_vals.min(); _cb_conf_mx = _cb_conf_vals.max()
+            for _, _cbr in _cb_df.iterrows():
+                _cid2 = str(_cbr.get("circ_id", "") or "")
+                if not _cid2 or _cid2 in _bm_lookup:
+                    continue
+                _cc = float(pd.to_numeric(_cbr.get("confidence_score", 0), errors="coerce") or 0)
+                _nm = 0; _nr = 0
+                if interactions and _cid2 in interactions:
+                    _nm = len(interactions[_cid2].get("mirna", []))
+                    _nr = len(interactions[_cid2].get("rbp",   []))
+                _bm_lookup[_cid2] = {
+                    "conf_n":  (_cc - _cb_conf_mn) / (_cb_conf_mx - _cb_conf_mn + 1e-10),
+                    "known":   float(int(_cbr.get("in_circbase", 0) or 0)),
+                    "mirna_n": _nm / (_mirna_mx_lk + 1e-10),
+                    "rbp_n":   _nr / (_rbp_mx_lk   + 1e-10),
+                    "n_mirna": _nm, "n_rbp": _nr,
+                    "in_circbase":   int(float(_cbr.get("in_circbase",   0) or 0)),
+                    "circbase_id":   str(_cbr.get("circbase_id",   "") or ""),
+                    "circbase_gene": str(_cbr.get("circbase_gene", "") or ""),
+                }
+    except Exception:
+        pass
 
     # Add score_dist to each method's data (primary + alternates)
     _msw_labels_sd = {"edgeR_ciriquant": "edgeR (FSJ offset)", "deseq2": "DESeq2", "limma": "limma-voom"}
@@ -1658,6 +1759,25 @@ def build_report(
             _m_pcol2, _m_thr2, _ = _eff_sig(_m_de2, de_sig_by, fdr)
             all_de_data[_mkey]["score_dist"] = _compute_score_dist_data(
                 _m_de2, _m_pcol2, _m_thr2, lfc, _bm_lookup, _msw_labels_sd.get(_mkey, _mkey))
+        except Exception:
+            pass
+
+    # Compute per-method bm_table (top-30 biomarker ranking) for dynamic table update
+    # Primary method (de already enriched)
+    if de_method not in all_de_data:
+        all_de_data[de_method] = {}
+    all_de_data[de_method]["bm_table"] = _compute_bm_table_data(
+        de, p_col, sig_thr, lfc, _bm_lookup, sig_sets_venn
+    )
+    # Alternate methods (use de_lookup_venn which stores enriched DFs from the first loop)
+    for _mkey2, _m_enr_de in de_lookup_venn.items():
+        if _mkey2 == de_method or _mkey2 not in all_de_data:
+            continue
+        try:
+            _m_pcol3, _m_thr3, _ = _eff_sig(_m_enr_de, de_sig_by, fdr)
+            all_de_data[_mkey2]["bm_table"] = _compute_bm_table_data(
+                _m_enr_de, _m_pcol3, _m_thr3, lfc, _bm_lookup, sig_sets_venn
+            )
         except Exception:
             pass
 
@@ -2538,8 +2658,8 @@ function switchDEMethod(method) {{
   }}
   // Re-render Top DE tables
   _renderDETables(method, md);
-  // Gray out biomarker rows not significant under this method
-  _updateBiomarkerHighlight(md.sig_ids||[]);
+  // Re-render Biomarker table (per-method ranking; fallback to graying if no bm_table)
+  _renderBiomarkerTable(method, md);
   // Update biomarker score distribution plots
   _updateScoreDist(method, md);
 }}
@@ -2651,6 +2771,50 @@ function _updateScoreDist(method, md) {{
         font:{{size:10}}}}],
     }});
   }}
+}}
+
+function _renderBiomarkerTable(method, md) {{
+  const bt = md && md.bm_table;
+  const tbody = document.querySelector('#tbl_biomarker tbody');
+  if (!tbody || !bt || !bt.rows || !bt.rows.length) {{
+    // Fallback: gray out rows not significant under this method
+    _updateBiomarkerHighlight(md && md.sig_ids || []);
+    return;
+  }}
+  const cols = bt.cols || [];
+  const mLabels = {{'edgeR_ciriquant':'edgeR (FSJ offset)','deseq2':'DESeq2','limma':'limma-voom'}};
+  tbody.innerHTML = bt.rows.map(row => {{
+    const nsigIdx = cols.indexOf('n_sig_methods');
+    const nsig = nsigIdx >= 0 ? (parseInt(row[nsigIdx]) || 1) : 1;
+    const fw = nsig >= 3 ? 'font-weight:bold;' : '';
+    const cells = row.map((v, i) => {{
+      const col = cols[i] || '';
+      if (col === 'circ_id' && v) {{
+        const hasDat = CIRC_DATA && CIRC_DATA[v];
+        const tip = hasDat ? 'in interaction data' : 'no interaction data pre-fetched';
+        return `<td><a class="circ-link" onclick="showCircDetail('${{v}}')" title="${{tip}}">${{v}}</a></td>`;
+      }}
+      if (col === 'log2FC' && v != null) return `<td>${{(+v).toFixed(2)}}</td>`;
+      if (col === 'biomarker_score' && v != null) return `<td>${{(+v).toFixed(3)}}</td>`;
+      if (v === '' || v == null) return '<td>—</td>';
+      return `<td>${{v}}</td>`;
+    }}).join('');
+    return `<tr data-nsig="${{nsig}}" style="${{fw}}">${{cells}}</tr>`;
+  }}).join('');
+  // Reset filter buttons to 全部 + update counts
+  const allRows = [...tbody.querySelectorAll('tr')];
+  const n_all = allRows.length;
+  const n2 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 2).length;
+  const n3 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 3).length;
+  document.querySelectorAll('.bm-filter-btn').forEach((b, i) => {{
+    b.style.background = 'white'; b.style.color = '#555';
+    if (i === 0) {{ b.textContent = `全部（${{n_all}}）`; b.style.background = '#2c6fad'; b.style.color = 'white'; }}
+    else if (i === 1) b.textContent = `≥ 2 方法顯著（${{n2}}）`;
+    else if (i === 2) b.textContent = `3 方法均顯著（${{n3}}）`;
+  }});
+  // Update section heading
+  const bm_h2 = document.querySelector('#biomarker-section h2');
+  if (bm_h2) bm_h2.textContent = `Biomarker Candidates (top ${{n_all}} by composite score) [${{mLabels[method]||method}}]`;
 }}
 
 function _updateBiomarkerHighlight(sigIds) {{

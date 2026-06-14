@@ -710,6 +710,9 @@ def main():
                    help="circbase_annotated.tsv for circBase ID lookup")
     p.add_argument("--gtf",           default=None,
                    help="Reference GTF for exon boundary lengths (optional)")
+    p.add_argument("--de-edger",  default=None, help="edgeR DE results TSV")
+    p.add_argument("--de-deseq2", default=None, help="DESeq2 DE results TSV")
+    p.add_argument("--de-limma",  default=None, help="limma DE results TSV")
     p.add_argument("--top-n",         type=int, default=50)
     p.add_argument("--clip-exp-num",  type=int, default=1,
                    help="ENCORI: min CLIP experiments (1=all, 2=moderate, 3=high)")
@@ -720,18 +723,22 @@ def main():
     de  = pd.read_csv(args.de,  sep="\t")
     iso = pd.read_csv(args.iso, sep="\t")
 
+    # Build method-independent metadata from iso + circbase (covers all circRNAs)
     iso_cols = [c for c in ("circ_id", "gene_name", "strand", "region", "exon_span")
                 if c in iso.columns]
-    if "circ_id" in de.columns and iso_cols:
-        de = de.merge(iso[iso_cols], on="circ_id", how="left")
+    meta = iso[iso_cols].copy() if iso_cols else pd.DataFrame(columns=["circ_id"])
 
     if args.circbase:
         try:
             cb = pd.read_csv(args.circbase, sep="\t",
                              usecols=lambda c: c in ("circ_id", "circbase_id", "in_circbase"))
-            de = de.merge(cb, on="circ_id", how="left")
+            meta = meta.merge(cb, on="circ_id", how="left")
         except Exception as exc:
             print(f"[predict] circbase merge warning: {exc}", file=sys.stderr)
+
+    # Also merge iso/circbase into primary de for backward-compat fallback
+    if "circ_id" in de.columns and iso_cols:
+        de = de.merge(iso[iso_cols], on="circ_id", how="left")
 
     exon_index = {}
     coord_index = {}
@@ -740,19 +747,53 @@ def main():
 
     lo = _init_liftover()
 
-    # Select top_n up-regulated + top_n down-regulated by p-value
-    # so that DE table (which splits by direction) is fully covered
-    p_col = "pvalue" if "pvalue" in de.columns else "padj"
-    de_sig = de.dropna(subset=[p_col])
+    def _top_ids_from(path: Optional[str], top_n: int) -> set:
+        """Return top_n up + top_n down circ_ids from a DE TSV."""
+        if not path or not os.path.exists(path):
+            return set()
+        df = pd.read_csv(path, sep="\t")
+        p_col = "pvalue" if "pvalue" in df.columns else "padj"
+        if p_col not in df.columns or "circ_id" not in df.columns:
+            return set()
+        df = df.dropna(subset=[p_col])
+        lfc_col = "log2FC" if "log2FC" in df.columns else "log2FoldChange"
+        if lfc_col not in df.columns:
+            return set(df.sort_values(p_col).head(top_n * 2)["circ_id"])
+        up = set(df[df[lfc_col] > 0].sort_values(p_col).head(top_n)["circ_id"])
+        dn = set(df[df[lfc_col] < 0].sort_values(p_col).head(top_n)["circ_id"])
+        return up | dn
 
-    top_up = set(de_sig[de_sig["log2FC"] > 0].sort_values(p_col)
-                 .head(args.top_n)["circ_id"]) if "log2FC" in de_sig.columns else set()
-    top_dn = set(de_sig[de_sig["log2FC"] < 0].sort_values(p_col)
-                 .head(args.top_n)["circ_id"]) if "log2FC" in de_sig.columns else set()
-    combined_ids = top_up | top_dn
-    top = de_sig[de_sig["circ_id"].isin(combined_ids)].copy()
-    print(f"[predict] querying {len(top)} circRNAs "
-          f"(top-{args.top_n} up + top-{args.top_n} down by p-value)",
+    # Union mode: collect top-N from each provided method file
+    extra_paths = [args.de_edger, args.de_deseq2, args.de_limma]
+    if any(extra_paths):
+        combined_ids: set = set()
+        n_methods = 0
+        for path in extra_paths:
+            ids = _top_ids_from(path, args.top_n)
+            if ids:
+                combined_ids |= ids
+                n_methods += 1
+        print(f"[predict] union from {n_methods} DE methods: {len(combined_ids)} unique circRNAs "
+              f"(top-{args.top_n} up + top-{args.top_n} down each)", file=sys.stderr)
+    else:
+        # Fallback: use primary --de only
+        p_col = "pvalue" if "pvalue" in de.columns else "padj"
+        de_sig = de.dropna(subset=[p_col])
+        top_up = set(de_sig[de_sig["log2FC"] > 0].sort_values(p_col)
+                     .head(args.top_n)["circ_id"]) if "log2FC" in de_sig.columns else set()
+        top_dn = set(de_sig[de_sig["log2FC"] < 0].sort_values(p_col)
+                     .head(args.top_n)["circ_id"]) if "log2FC" in de_sig.columns else set()
+        combined_ids = top_up | top_dn
+        print(f"[predict] querying {len(combined_ids)} circRNAs "
+              f"(top-{args.top_n} up + top-{args.top_n} down by p-value, primary DE only)",
+              file=sys.stderr)
+
+    # Build query dataframe from method-independent metadata
+    if not meta.empty and "circ_id" in meta.columns:
+        top = meta[meta["circ_id"].isin(combined_ids)].drop_duplicates("circ_id").copy()
+    else:
+        top = de[de["circ_id"].isin(combined_ids)].copy()
+    print(f"[predict] metadata resolved for {len(top)}/{len(combined_ids)} circRNAs",
           file=sys.stderr)
 
     results = {}

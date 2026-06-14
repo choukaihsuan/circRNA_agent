@@ -462,6 +462,27 @@
         </div>
         <div class="upload-label">CSV 格式範例：<code>srr_id,condition</code>（第一行為 header）</div>
 
+        <!-- GSE113230 example table -->
+        <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+          範例（GSE113230，三陰性乳癌 3 tumor / 3 normal）：
+        </div>
+        <table style="margin-top:4px;font-size:11px;border-collapse:collapse;width:100%;max-width:340px;">
+          <thead>
+            <tr style="background:var(--surface);color:var(--muted);font-weight:600;">
+              <th style="padding:4px 10px;border:1px solid var(--border);text-align:left;">srr_id</th>
+              <th style="padding:4px 10px;border:1px solid var(--border);text-align:left;">condition</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style="padding:3px 10px;border:1px solid var(--border);">SRR7012366</td><td style="padding:3px 10px;border:1px solid var(--border);">tumor</td></tr>
+            <tr style="background:var(--surface);"><td style="padding:3px 10px;border:1px solid var(--border);">SRR7012367</td><td style="padding:3px 10px;border:1px solid var(--border);">tumor</td></tr>
+            <tr><td style="padding:3px 10px;border:1px solid var(--border);">SRR7012368</td><td style="padding:3px 10px;border:1px solid var(--border);">tumor</td></tr>
+            <tr style="background:var(--surface);"><td style="padding:3px 10px;border:1px solid var(--border);">SRR7012369</td><td style="padding:3px 10px;border:1px solid var(--border);">normal</td></tr>
+            <tr><td style="padding:3px 10px;border:1px solid var(--border);">SRR7012370</td><td style="padding:3px 10px;border:1px solid var(--border);">normal</td></tr>
+            <tr style="background:var(--surface);"><td style="padding:3px 10px;border:1px solid var(--border);">SRR7012371</td><td style="padding:3px 10px;border:1px solid var(--border);">normal</td></tr>
+          </tbody>
+        </table>
+
         <div style="margin-top:16px">
           <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %}>
             🚀 啟動分析

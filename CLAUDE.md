@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，20 pairs，待跑）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，⏳ 執行中—下載中）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -236,7 +236,7 @@ biomarker_score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + r
 
 - 顯著閾值欄位依 `de_sig_by` 而定：`pvalue`（nominal）或 `padj`（BH 校正）
 - CLI 參數：`--use-pvalue` 對應 `de_sig_by: pvalue`
-- miRNA/RBP interaction 資料來自 `predict_interactions.py`（CircInteractome 查詢，top 50 circRNA）
+- miRNA/RBP interaction 資料來自 `predict_interactions.py`（CircInteractome/ENCORI 查詢，**三方法 top-50 聯集**，~150–250 個 circRNA）；union mode：`--de-edger / --de-deseq2 / --de-limma` 各取 top-50 up + top-50 down 後取聯集，確保切換 DE 方法時 Biomarker Score 完整
 
 ### DE 分析方法（`config de.method`）
 
@@ -364,8 +364,9 @@ threads: 8
 | FASTQ 壓縮 | gzip（單執行緒）| ~2h/15GB | pigz 未安裝時的 fallback |
 
 **aria2c 並行下載建議**：
-- **S3 per-IP 總連線數安全閾值**：≤ 30 連線（實測 32 連線可接受）；超過 60 會觸發 DNS SERVFAIL（AWS S3 throttle），持續約 2 小時
-- **當前 download.smk 設定**：`-x 8 -s 8`；Snakemake `threads: 8`，max 4 parallel → 4 × 8 = 32 連線（安全範圍上緣）
+- **S3 per-IP 總連線數安全閾值**：≤ 48 連線（實測 `-x 12` × 4 parallel = 48 可接受，GSE77509 驗證）；超過 60 會觸發 DNS SERVFAIL（AWS S3 throttle），持續約 2 小時
+- **當前 download.smk 設定**：`-x 8 -s 8`；Snakemake `threads: 8`，max 4 parallel → 4 × 8 = 32 連線（保守安全）
+- **手動腳本建議設定**：`-x 12 -s 12`，batch size 4（4 parallel）→ 48 連線，每個 sample 實測 ~7 MB/s，總速度 ~25–30 MB/s
 - **勿手動腳本同時跑多個 SRR**：10 × 16 = 160 連線曾觸發 DNS 封鎖（GSE133998 教訓）
 - S3 間歇性不可用（NCBI API）：`srapath --location s3` 回傳空字串，等待恢復後手動重啟
 - 下載時若 kill 中斷：aria2c 會留下 `.sra.aria2` resume 檔 → 重啟可斷點續傳；但若多次中斷導致 `.aria2` 狀態損壞，需刪除 `.sra` 和 `.aria2` 重新下載，否則 fasterq-dump 報 `rcBlob,rcCorrupt`
@@ -819,6 +820,9 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | Type II DE circRNA 幾乎全為零 | 兩個根本原因：(1) `abs(logFC_fsj) >= 0.5` 閾值過嚴；(2) offset approach 造成 log2FC 與 logFC_fsj **反向相關**，`sign(log2FC)==sign(logFC_fsj)` 幾乎從不成立（73 sig_fsj 中只有 1 個同方向） | 移除方向一致性檢查，改為 `sig_bsj & sig_fsj`（BSJ ratio 顯著 AND FSJ 獨立顯著）；結果：GSE113230 從 0 → 73 Type_II（15.1%），GSE58135 → 2（13.3%），GSE133998 → 2（2.4%） |
 | benchmark AUC-PR 0.946 虛高（二元偵測假象）| `sklearn.average_precision_score` 對 score ∈ {0,1} 做樂觀排序：ground truth 87.8% 的 TP 都在 score=0 大池（FN）；樂觀排序把 2,953 個 FN 全部排在 1,997 個 TN 前，產生假精確度長段，AUC-PR = 0.946 | 改用**門檻掃描**（threshold sweep）：對 CIRI2 + DCC CircRNACount 各取 min_bsj ∈ {1,2,3,...,50}，每個門檻計算真實 (Precision, Recall)，trapezoid AUC；誠實值 = **0.155**；新增 `--ciri2-file / --dcc-count-file / --output-pr-curve` CLI 參數至 `accuracy_benchmark.py`，`--pr-curve` 至 `generate_comparison_report.py` |
 | CirComPara2 工具數誤標（5→4 工具）| `generate_comparison_report.py` 的說明文字列出 CIRI2 + CIRIquant + DCC + find_circ + CIRCexplorer2 = 5 工具；但 CIRIquant 內部已呼叫 CIRI2 做 BSJ 偵測，兩者是同一演算法 | 修正為 4 工具（CIRIquant + DCC + find_circ + CIRCexplorer2）；Consensus 門檻改為「≥2/4 tools」；報告說明文字同步更新 |
+| DESeq2 `every gene contains at least one zero, cannot compute log geometric means`（SRP156355）| sparse count matrix（14,697 circRNAs × 12 samples）有大量零值，`DESeq(dds)` 預設幾何平均 size factor 估算失敗 | `analysis.R` 在 `DESeq(dds)` 前加 `dds <- estimateSizeFactors(dds, type = "poscounts")`；poscounts 用非零值估算，避開全零問題；DESeq2 偵測到 sizeFactors 已設定後不再重新估算 |
+| `predict_interactions` 僅覆蓋 edgeR top-100，切換 DESeq2/limma 時 Biomarker Score 偏低 | interactions.json 只查詢 edgeR top 50 up + 50 down；DESeq2/limma 顯著集合有許多 circRNA 不在此範圍，mirna_norm = rbp_norm = 0 → score 壓縮 | `predict_interactions.py` 新增 `--de-edger`、`--de-deseq2`、`--de-limma` 三個選填參數；提供時取三方法 top-N 聯集（~150–250 circRNA）查詢；metadata 改從 `iso` + `circbase` 讀取（不受 filterByExpr 限制）；`de.smk` 同步更新傳入三個 input |
+| Biomarker 表格切換 DE 方法時只灰化、不重排 | 原本 `_updateBiomarkerHighlight()` 只對非顯著行設 `opacity:0.25`，不改變排序；切換 DESeq2/limma 時看到的仍是 edgeR 排名的 top 30 | 新增 `_compute_bm_table_data()` Python 函數，於 `ALL_DE_METHODS[m]["bm_table"]` 存入各方法的 top-30 rows；`generate_report.py` 同時從 `circbase_annotated.tsv` + `interactions.json` 補全 `_bm_lookup`（含 DESeq2/limma-only 的 circ_id）；新增 JS `_renderBiomarkerTable()` 完整重建表格 DOM + 更新過濾按鈕計數；`switchDEMethod()` 改呼叫 `_renderBiomarkerTable()` 取代 `_updateBiomarkerHighlight()` |
 
 ---
 
@@ -887,11 +891,11 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 
 | 區塊 | 說明 |
 |------|------|
-| **DE 方法切換器** | 頁面頂部三個按鈕（edgeR_ciriquant / DESeq2 / limma-voom）；切換時即時更新 stat-boxes、Volcano、Heatmap、**Top DE 表格**、**Biomarker 灰化**（`Plotly.react` 原地更新，無頁面 reload）|
+| **DE 方法切換器** | 頁面頂部三個按鈕（edgeR_ciriquant / DESeq2 / limma-voom）；切換時即時更新 stat-boxes、Volcano、Heatmap、**Top DE 表格**、**Biomarker 表格**（`Plotly.react` 原地更新，無頁面 reload）|
 | Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down；id="stat-n-sig/up/dn"，供方法切換器更新 |
 | **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量 |
 | **3-method Venn diagram** | SVG 三圓 Venn；圓心 A=(170,128) B=(290,128) C=(230,210) r=90；交集數字加白色 halo（`paint-order="stroke"`）；高度 345px；**7 個區域均可點擊**，點擊後在 `div#venn-detail` 顯示對應 circRNA 清單（含 gene_name / log2FC / p-value / circbase_id / **方法欄**）；「⬇ CSV」下載各區域清單 |
-| **Biomarker 候選表** | top 30 表格；方法切換時非顯著行灰化（opacity 0.25）|
+| **Biomarker 候選表** | top 30 表格；**方法切換時完全重建**（`_renderBiomarkerTable()`）：依所選方法的 p-value 重新排名，過濾按鈕計數同步更新，標題顯示目前方法名稱；fallback：無 bm_table 時降為 graying（opacity 0.25）|
 | **Biomarker Score 分布圖** | 兩圖並排：① Ranked scatter（x=rank, y=score，Top 30 紅點）② Histogram + Normal fit + Shapiro-Wilk 檢定；垂直線 μ / μ±σ / μ±2σ；說明文字在圖下方 |
 | **Top DE table（分兩表）** | 方法切換時完全重繪（`_renderDETables()`）；欄位含 gene_name / strand / region / exon_span / circbase_id / log2FC / p-value / Type |
 | Volcano plot | **Plotly 互動式**；方法切換時 Plotly.react 更新 |
@@ -902,16 +906,22 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 | **SVG Circular Diagram** | 每個 circRNA 的環狀圖（exon 結構 + miRNA/RBP binding site 弧段 + 流水號 badge）|
 
 **JS 全域狀態變數**：
-- `const ALL_DE_METHODS`：三方法的完整 volcano + stats + heatmap + **de_table + sig_ids** 資料
+- `const ALL_DE_METHODS`：三方法的完整 volcano + stats + heatmap + **de_table + sig_ids + bm_table** 資料
 - `const FULL_HEATMAP_DATA`：pool=50 up + 50 down，每 circRNA 含 `{z, pval, log2fc, label}`；欄位順序 tumor 在左、normal 在右
 - `let _HEATMAP_DATA_CACHE`：目前顯示方法的 heatmap data（方法切換時更新）；若 `conditions` 為空則 fallback 到 `FULL_HEATMAP_DATA.conditions`
 - `const VENN_REGION_DATA`：7 個 Venn 區域的 circRNA 清單（`{label, circs:[{id, gene, lfc, pval, cb, m}]}`）
 
-**`switchDEMethod(method)`**：更新 stat-boxes → Plotly.react volcano → updateMainHeatmap → **`_renderDETables()`** → **`_updateBiomarkerHighlight()`**
+**`switchDEMethod(method)`**：更新 stat-boxes → Plotly.react volcano → updateMainHeatmap → **`_renderDETables()`** → **`_renderBiomarkerTable()`** → `_updateScoreDist()`
 
 **`_renderDETables(method, md)`**：從 `md.de_table` 重建 up/down HTML 表格，插入 `#de-tables-section`；清除靜態 `table, h3, .tbl-dl-bar`。
 
-**`_updateBiomarkerHighlight(sigIds)`**：在 `#biomarker-section` 中，對每個 `<tr>` 讀取 `circ-link` onclick 的 circ_id，不在 sigIds 內者設 `opacity:0.25`。
+**`_renderBiomarkerTable(method, md)`**：從 `md.bm_table.rows` 重建 `#tbl_biomarker tbody`；更新過濾按鈕計數（全部/≥2/3方法）及 h2 標題；無 bm_table 時 fallback 到 `_updateBiomarkerHighlight()`。
+
+**`_updateBiomarkerHighlight(sigIds)`**：（fallback）在 `#biomarker-section` 中，對每個 `<tr>` 讀取 `circ-link` onclick 的 circ_id，不在 sigIds 內者設 `opacity:0.25`。
+
+**`_compute_bm_table_data(de, p_col, sig_thr, lfc, bm_lookup, sig_sets_all)`**（Python）：對一個 DE method 的顯著集合計算 6D composite score → top-30 rows；存入 `ALL_DE_METHODS[method]["bm_table"]`。Columns：rank / circ_id / log2FC / n_mirna / n_rbp / biomarker_score / n_sig_methods / in_circbase / circbase_id / circbase_gene / Type。
+
+**`_bm_lookup` 擴充**：從 `biomarker_candidates.tsv` 讀取時額外存 raw display 值（`n_mirna`, `n_rbp`, `in_circbase`, `circbase_id`, `circbase_gene`）；再從 `circbase_annotated.tsv` + `interactions.json` 補全 DESeq2/limma-only circRNA（edgeR 不顯著、biomarker_candidates.tsv 未包含的 circ_id）。
 
 **列印排版（`@media print`）**：
 - `h2, h3 { break-after: avoid }` — 標題後不換頁
@@ -1218,18 +1228,17 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 | STAR / DCC | ✅ 12/12 完成 |
 | consensus_filter（--adaptive）| ✅ 完成 |
 | merge_counts / assign_isoforms | ✅ 完成 |
-| DE analysis | ✅ 完成（edgeR 318 / limma 2,112 significant）|
-| predict_interactions | ✅ 完成 |
-| isoform_switching | ✅ 完成（798 events）|
+| DE analysis | ✅ 完成（edgeR 152 / DESeq2 14,697 / limma 14,697 circRNAs tested）|
+| predict_interactions | ✅ 完成（**union mode**：247 circRNAs，三方法 top-50 聯集）|
+| isoform_switching | ✅ 完成 |
 | rank_biomarkers | ✅ 完成（152 candidates）|
-| report | ✅ 完成（5.6 MB，Jun 13）|
+| report | ✅ 完成（8.2 MB，Jun 14 更新；union interactions；**Biomarker 表格隨 DE 方法切換重建**）|
 
 **主要數值結果**：
-- 偵測：14,697 consensus circRNAs；filterByExpr 後 1,397 tested
-- DE（edgeR_ciriquant）：**318 significant**（nominal p < 0.05，|log2FC| > 1）；上調 64 / 下調 254；**215 Type_I (67.6%) / 71 Type_II (22.3%)**（Type_II 比例四資料集中最高）
-- DE（limma-voom）：2,112 significant
-- Isoform switching：**798 events**（within-gene FDR < 0.1，|ΔIUI| > 0.1）
-- Biomarker candidates：152 個
+- 偵測：14,697 consensus circRNAs；filterByExpr 後 1,397 tested（edgeR）
+- DE（edgeR_ciriquant）：**152 significant**（nominal p < 0.05，|log2FC| > 1）；上調 19 / 下調 133；**144 Type_I (95%) / 8 Type_II (5%)**
+- DE（DESeq2）：全 14,697 tested（poscounts normalization）；DE（limma-voom）：全 14,697 tested
+- Biomarker candidates：152 個（predict_interactions 覆蓋 247 circRNAs，三方法均有 miRNA/RBP 資料）
 
 **設定**：
 - case/control label：`tumor` / `normal`
@@ -1240,6 +1249,39 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 **Server config**（`config/projects/SRP156355.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/SRP156355/raw`
 - `results_dir: /home3/choukaihsuan/SRP156355_results`
+
+---
+
+### GSE77509（HCC 肝癌，配對 tumor/normal）
+
+**⏳ 執行中（2026-06-14 啟動）。** 報告位置（完成後）：`~/GSE77509_results/report.html`
+
+Yang et al. 2017 *Nature Communications*（PMID 28194035）。HCC 肝細胞癌，tumor vs. adjacent normal，~100bp PE，Total RNA（rRNA-depleted），Illumina HiSeq 2500。選 6 對（定序深度最高）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ⏳ 進行中（S3 aria2c，-x 12 × 4 parallel = 48 連線，~7 MB/s/sample）|
+| fastp QC/trim | ⬜ 待執行 |
+| CIRIquant | ⬜ 待執行 |
+| STAR / DCC | ⬜ 待執行 |
+| consensus_filter / merge_counts | ⬜ 待執行 |
+| DE analysis | ⬜ 待執行 |
+| predict_interactions（union mode）| ⬜ 待執行 |
+| report | ⬜ 待執行 |
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（6T + 6N）：SRR3140264、SRR3140284、SRR3140289、SRR3140303、SRR3140311、SRR3140326（Normal）；SRR3140362、SRR3140382、SRR3140387、SRR3140400、SRR3140408、SRR3140422（Tumor）
+- genome：hg19；配對設計（含 `patient_id` 欄，P12/P16/P17/P20/P22/P26）
+- Condition CSV：`/mnt/c/Users/User/Desktop/GSE77509_condition.csv`
+- `sra_cache_dir: /home3/choukaihsuan/GSE77509/sra_cache`（注意：config 繼承舊路徑 `/home3/choukaihsuan/GSE323364/sra_cache`，手動下載腳本改用正確路徑）
+
+**Server config**（`config/projects/GSE77509.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE77509/raw`
+- `results_dir: /home3/choukaihsuan/GSE77509_results`
+
+**S3 手動下載腳本**：`/tmp/s3_download_gse77509.sh`（server 上）
+- 12 batch（每批 4 個 SRR 並行，各 -x 12）→ 總計 48 連線
 
 ---
 
@@ -1275,8 +1317,8 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | **50bp PE** | 10（5T+5N）| ~50M reads/sample | 1,607（CIRIquant-only）| **15** | ⚠️ 50bp 讀長，DCC 失效→adaptive fallback |
 | **GSE323364** | **細胞株**（MDA-MB-436 TNBC）| EPZ6438 vs. DMSO | Total RNA | 150bp PE | 6（3+3）| ~60M reads/sample | 中等 | **15** | ⚠️ 細胞株+藥物，DE 極少 |
 | **GSE133998** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N）| ~80M reads/sample | 10,979 | **84** | ✅ 配對設計，樣本數最多 |
-| **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 12（6T+6N）| avg 48M spots（~96M reads）| **14,697**（consensus）| **318** | ✅ 完成；6 對配對 T/N；Type_II 比例最高（22.3%）；798 isoform switching events |
-| **GSE77509** | 組織（HCC 肝癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| **~100bp PE** | 40（20T+20N）+20 PVTT | **57–118M spots/sample**（平均 ~85M）| 待跑 | 待跑 | ✅ 待分析；20 對配對 T/N；深度最大；SRP069212；Yang et al. 2017 Nat Commun |
+| **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 12（6T+6N）| avg 48M spots（~96M reads）| **14,697**（consensus）| **152** | ✅ 完成；6 對配對 T/N；Type_I 95% / Type_II 5%；predict_interactions union 247 circRNAs；report 8.2 MB |
+| **GSE77509** | 組織（HCC 肝癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| **~100bp PE** | 12（6T+6N，6 pairs）| **57–118M spots/sample**（平均 ~85M）| 待跑 | 待跑 | ⏳ 執行中；S3 下載中（12連線×4 parallel）；SRP069212；Yang et al. 2017 Nat Commun |
 | **PRJNA808398** | 組織（TNBC tumor vs. normal）| tumor vs. normal | **cDNA（poly-A）** | 150bp PE | 50（25T+25N）| avg 18M spots（低）| ❌ | ❌ | ❌ 不建議：poly-A selection，circRNA 接近零；A.C. CAMARGO 巴西 |
 
 ### 影響分析品質的關鍵因素

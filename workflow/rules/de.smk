@@ -130,9 +130,12 @@ rule isoform_switching:
 
 
 rule predict_interactions:
-    """Query CircInteractome for miRNA/RBP binding sites of top DE circRNAs."""
+    """Query CircInteractome for miRNA/RBP binding sites of top DE circRNAs (union of all 3 methods)."""
     input:
         de       = RESULTS_DIR + "/de/de_results.tsv",
+        de_edger = RESULTS_DIR + "/de/de_results_edgeR_ciriquant.tsv",
+        de_deseq = RESULTS_DIR + "/de/de_results_deseq2.tsv",
+        de_limma = RESULTS_DIR + "/de/de_results_limma.tsv",
         iso      = RESULTS_DIR + "/circRNA/isoform_groups.tsv",
         circbase = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
     output:
@@ -151,6 +154,9 @@ rule predict_interactions:
             --circbase     {input.circbase} \
             --out          {output} \
             --gtf          {params.gtf} \
+            --de-edger     {input.de_edger} \
+            --de-deseq2    {input.de_deseq} \
+            --de-limma     {input.de_limma} \
             --top-n        {params.top_n} \
             --clip-exp-num {params.clip_exp_num} \
             --program-num  {params.program_num} \

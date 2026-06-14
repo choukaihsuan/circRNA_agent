@@ -246,6 +246,7 @@ result_deseq <- tryCatch({
   if (has_patient) col_data$patient <- patient
   deseq_design <- if (has_patient) ~ patient + condition else ~ condition
   dds <- DESeqDataSetFromMatrix(countData = counts, colData = col_data, design = deseq_design)
+  dds <- estimateSizeFactors(dds, type = "poscounts")
   dds <- DESeq(dds)
   res <- results(dds, contrast = c("condition", tumor_label, normal_label))
   res_df <- as.data.frame(res)
@@ -298,7 +299,16 @@ final_results <- list()
 for (mname in names(method_map)) {
   entry <- method_map[[mname]]
   r     <- entry$result
-  if (!isTRUE(r$success)) next
+  if (!isTRUE(r$success)) {
+    if (!is.null(entry$out)) {
+      empty_df <- data.frame(circ_id = character(0), log2FC = numeric(0),
+                             pvalue = numeric(0), padj = numeric(0))
+      dir.create(dirname(entry$out), recursive = TRUE, showWarnings = FALSE)
+      write.table(empty_df, entry$out, sep = "\t", quote = FALSE, row.names = FALSE)
+      message(sprintf("[WARN] %s failed — wrote empty placeholder to %s", mname, entry$out))
+    }
+    next
+  }
 
   casc     <- do_cascade(r$res_df, de_sig_by, fdr_cutoff)
   final_df <- add_type_col(casc$res_df, mname, casc$eff_col, casc$eff_thr,
