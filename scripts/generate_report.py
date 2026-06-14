@@ -2902,6 +2902,13 @@ document.addEventListener('keydown',e=>{{if(e.key==='Escape')closeCircModal();}}
 // Make static tables sortable on page load
 _makeSortable('tbl_isoform');
 _makeSortable('tbl_biomarker');
+// Replace static DE tables with dynamic (sortable) ones on first load
+(function() {{
+  var initMethod = '{de_method}';
+  if (ALL_DE_METHODS && ALL_DE_METHODS[initMethod]) {{
+    switchDEMethod(initMethod);
+  }}
+}})();
 </script>"""
 
     _modal_html = """
