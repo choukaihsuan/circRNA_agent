@@ -338,8 +338,9 @@ def _build_method_js_data(
     if not de.empty and not matrix.empty:
         try:
             if {"circ_id", "log2FC", p_col}.issubset(de.columns):
-                up_p = de[de["log2FC"] > 0].dropna(subset=[p_col]).sort_values(p_col).head(hm_pool)
-                dn_p = de[de["log2FC"] < 0].dropna(subset=[p_col]).sort_values(p_col).head(hm_pool)
+                _sig_hm = de[(de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)] if {p_col, "log2FC"}.issubset(de.columns) else de
+                up_p = _sig_hm[_sig_hm["log2FC"] > 0].dropna(subset=[p_col]).sort_values(p_col).head(hm_pool)
+                dn_p = _sig_hm[_sig_hm["log2FC"] < 0].dropna(subset=[p_col]).sort_values(p_col).head(hm_pool)
                 hm_ids  = list(up_p["circ_id"]) + list(dn_p["circ_id"])
                 hm_avail = [i for i in hm_ids if i in matrix.index]
                 if hm_avail:
@@ -1796,8 +1797,9 @@ def build_report(
         try:
             _pc_hm = p_col
             if {"circ_id", "log2FC", _pc_hm}.issubset(de.columns):
-                _up_pool = de[de["log2FC"] > 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(_HM_POOL)
-                _dn_pool = de[de["log2FC"] < 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(_HM_POOL)
+                _sig_hm = de[sig_mask] if "log2FC" in de.columns else de
+                _up_pool = _sig_hm[_sig_hm["log2FC"] > 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(_HM_POOL)
+                _dn_pool = _sig_hm[_sig_hm["log2FC"] < 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(_HM_POOL)
                 _hm_ids  = list(_up_pool["circ_id"]) + list(_dn_pool["circ_id"])
                 _hm_avail = [i for i in _hm_ids if i in matrix.index]
                 if _hm_avail:
@@ -2816,7 +2818,7 @@ function updateMainHeatmap() {{
     annotations:groupAnno,
   }});
   const titleEl=document.getElementById('heatmap-section-title');
-  if(titleEl)titleEl.textContent=`Heatmap (top ${{nUp}} up + ${{nDn}} down DE circRNAs)`;
+  if(titleEl)titleEl.textContent=`Heatmap (top ${{nUp}} significant up + ${{nDn}} significant down DE circRNAs)`;
   const maxUp=(_hmData.up_order||[]).length;
   const maxDn=(_hmData.dn_order||[]).length;
   const statusEl=document.getElementById('heatmap-status');
@@ -3172,7 +3174,7 @@ _makeSortable('tbl_biomarker');
   <h2>PCA</h2>
   {pca_html}
 
-  <h2 id="heatmap-section-title">Heatmap (top {heatmap_top_n} up + {heatmap_top_n} down DE circRNAs)</h2>
+  <h2 id="heatmap-section-title">Heatmap (top {heatmap_top_n} significant up + {heatmap_top_n} significant down DE circRNAs)</h2>
   <div style="display:flex;align-items:center;gap:10px;margin:8px 0 12px;background:#f4f8ff;padding:10px 16px;border-radius:6px;border:1px solid #d0e4f7;flex-wrap:wrap">
     <span style="font-size:13px">每方向顯示 top</span>
     <input type="number" id="heatmap-n-input" value="{heatmap_top_n}" min="1" max="50"
