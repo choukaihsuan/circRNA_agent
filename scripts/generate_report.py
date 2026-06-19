@@ -1123,7 +1123,7 @@ def _compute_bm_table_data(
             int(r.get("_n_sig", 1)),
             int(lu.get("in_circbase", 0)),
             lu.get("circbase_id", ""),
-            lu.get("circbase_gene", ""),
+            lu.get("circbase_gene") or lu.get("gene_name", ""),
             (lambda _tv, _lu: (
                 str(_tv) if (_tv is not None and _tv == _tv and str(_tv).lower() not in ("nan","none","na",""))
                 else (_lu.get("type_edger") or "—")
@@ -1948,6 +1948,12 @@ def build_report(
                 }
     except Exception:
         pass
+
+    # Backfill gene_name into _bm_lookup from _iso_lookup so circbase_gene column
+    # can fall back to GTF host gene when circBase has no gene annotation (e.g. "None").
+    for _bid in _bm_lookup:
+        if _bid in _iso_lookup:
+            _bm_lookup[_bid].setdefault("gene_name", _iso_lookup[_bid].get("gene_name", ""))
 
     # Add score_dist to each method's data (primary + alternates)
     _msw_labels_sd = {"edgeR_ciriquant": "edgeR (FSJ offset)", "deseq2": "DESeq2", "limma": "limma-voom"}
