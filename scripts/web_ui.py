@@ -349,6 +349,56 @@ def parse_log_progress(log_text: str) -> dict:
     }
 
 
+def _infer_stages_from_files(results_dir_str: str, stages: list) -> list:
+    """Supplement log-parsed stage statuses by checking actual output files.
+
+    Called after parse_log_progress so file evidence can upgrade 'pending'
+    stages to 'done' when web_ui was restarted after a completed pipeline.
+    """
+    results_dir = Path(results_dir_str) if results_dir_str else None
+    if not results_dir or not results_dir.exists():
+        return stages
+
+    stage_map = {s["id"]: s for s in stages}
+
+    def mark_done(*ids):
+        for sid in ids:
+            if sid in stage_map and stage_map[sid]["status"] == "pending":
+                stage_map[sid].update({"status": "done", "started": 1, "done": 1})
+
+    # Cascade from earliest to latest: later milestones imply earlier ones done
+    if (results_dir / "qc" / "multiqc_report.html").exists():
+        mark_done("download_fastq", "fastqc_raw", "fastp", "multiqc")
+
+    if (results_dir / "circRNA" / "count_matrix.tsv").exists():
+        mark_done("download_fastq", "fastqc_raw", "fastp", "multiqc",
+                  "check_ciriquant_config", "ciriquant",
+                  "star_align", "star_align_mate1", "star_align_mate2",
+                  "dcc", "consensus_filter", "merge_counts")
+
+    if (results_dir / "circRNA" / "circbase_annotated.tsv").exists():
+        mark_done("annotate_circbase")
+
+    if (results_dir / "circRNA" / "isoform_groups.tsv").exists():
+        mark_done("assign_isoforms")
+
+    if (results_dir / "de" / "de_results.tsv").exists():
+        mark_done("de_analysis")
+
+    if (results_dir / "biomarker_candidates.tsv").exists():
+        mark_done("rank_biomarkers")
+
+    if (results_dir / "de" / "isoform_switching.tsv").exists():
+        mark_done("isoform_switching")
+
+    if (results_dir / "report.html").exists():
+        for s in stages:
+            if s["status"] == "pending":
+                s.update({"status": "done", "started": 1, "done": 1})
+
+    return stages
+
+
 def tail_log(n: int = 80, path: Optional[Path] = None) -> str:
     p = path or LOG_PATH
     if not p.exists():
@@ -805,15 +855,29 @@ def api_log():
 def api_progress():
     job_id = request.args.get("job")
     path: Optional[Path] = None
+    gse_id = None
     if job_id:
         registry = load_registry()
         job = registry.get(job_id)
         if job:
             path = BASE_DIR / job["log"]
+            gse_id = job.get("gse_id")
     log_text = (path or LOG_PATH).read_text(errors="replace") \
                if (path or LOG_PATH).exists() else ""
     data = parse_log_progress(log_text)
     data["running"] = pipeline_is_running()
+    # Supplement with filesystem evidence so status survives web_ui restarts
+    report_exists = False
+    qc_exists = False
+    if gse_id:
+        cfg = load_project_config(gse_id)
+        results_dir = cfg.get("results_dir", "")
+        if results_dir:
+            data["stages"] = _infer_stages_from_files(results_dir, data["stages"])
+            report_exists = (Path(results_dir) / "report.html").exists()
+            qc_exists = (Path(results_dir) / "qc" / "multiqc_report.html").exists()
+    data["report_exists"] = report_exists
+    data["qc_exists"] = qc_exists
     return jsonify(data)
 
 
@@ -862,6 +926,24 @@ def serve_report(job_id: str):
         abort(404)
     return send_file(str(report_path), mimetype="text/html",
                      as_attachment=False, download_name=f"{gse_id}_report.html")
+
+
+@app.route("/download/<job_id>")
+def download_report(job_id: str):
+    """Force-download the HTML report."""
+    from flask import send_file, abort
+    registry = load_registry()
+    job = registry.get(job_id)
+    if not job:
+        abort(404)
+    gse_id = job["gse_id"]
+    cfg = load_project_config(gse_id)
+    results_dir = cfg.get("results_dir", "")
+    report_path = Path(results_dir) / "report.html"
+    if not report_path.exists():
+        abort(404)
+    return send_file(str(report_path), mimetype="text/html",
+                     as_attachment=True, download_name=f"{gse_id}_report.html")
 
 
 @app.route("/qc/<job_id>")

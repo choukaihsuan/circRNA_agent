@@ -184,6 +184,9 @@
     <a href="/report/{{ job_id }}" target="_blank" class="btn btn-report" id="report-btn" style="display:none">
       📄 分析報告
     </a>
+    <a href="/download/{{ job_id }}" class="btn btn-report" id="dl-report-btn" style="display:none;background:#15803d;">
+      ⬇ 下載報告
+    </a>
     {% endif %}
   </div>
 
@@ -273,17 +276,21 @@
 
       document.getElementById('stages-grid').innerHTML = renderStages(data.stages);
 
-      // Show QC button when multiqc stage is done
+      // Show QC button: file exists on disk OR multiqc stage done
       const qcBtn = document.getElementById('qc-btn');
       if (qcBtn) {
         const qcStage = data.stages && data.stages.find(s => s.id === 'multiqc');
-        qcBtn.style.display = (qcStage && qcStage.status === 'done') ? '' : 'none';
+        const qcDone = (qcStage && qcStage.status === 'done') || data.qc_exists;
+        qcBtn.style.display = qcDone ? '' : 'none';
       }
-      // Show report button when generate_report stage is done
+      // Show report button: file exists on disk OR generate_report stage done
       const reportBtn = document.getElementById('report-btn');
+      const dlReportBtn = document.getElementById('dl-report-btn');
       if (reportBtn) {
         const reportStage = data.stages && data.stages.find(s => s.id === 'generate_report');
-        reportBtn.style.display = (reportStage && reportStage.status === 'done') ? '' : 'none';
+        const reportDone = (reportStage && reportStage.status === 'done') || data.report_exists;
+        reportBtn.style.display = reportDone ? '' : 'none';
+        if (dlReportBtn) dlReportBtn.style.display = reportDone ? '' : 'none';
       }
     } catch (_) { /* network error — ignore */ }
   }

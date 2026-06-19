@@ -358,6 +358,13 @@ def _build_method_js_data(
                     rmean  = log_s[rcols].mean(axis=1)
                     rstd   = log_s.std(axis=1).clip(lower=0.1)
                     z_hm   = log_s.sub(rmean, axis=0).div(rstd, axis=0)
+                    # Reorder columns: tumor first, then normal
+                    _t_c = [c for c in samps if cmap.get(c, "") not in (normal_label, "")]
+                    _n_c = [c for c in samps if cmap.get(c, "") == normal_label]
+                    _o_c = [c for c in samps if c not in set(_t_c) and c not in set(_n_c)]
+                    if _t_c or _n_c:
+                        samps = _t_c + _n_c + _o_c
+                        z_hm  = z_hm[samps]
                     cb_map = {}
                     if "circbase_id" in de.columns and "in_circbase" in de.columns:
                         kn = de[de["in_circbase"] == 1].dropna(subset=["circbase_id"])
@@ -677,6 +684,117 @@ function dlCSV(tid, fname) {
   document.body.removeChild(a);
 }
 </script>
+"""
+
+
+def _sample_overview_section(
+    groups_file: Optional[str],
+    tumor_label: str,
+    normal_label: str,
+    results_dir: Optional[str] = None,
+) -> str:
+    """Return an HTML section describing samples + fastp QC stats."""
+    if not groups_file or not Path(groups_file).exists():
+        return ""
+    try:
+        grp = pd.read_csv(groups_file)
+    except Exception:
+        return ""
+    if "srr_id" not in grp.columns or "condition" not in grp.columns:
+        return ""
+
+    cond_counts = grp["condition"].value_counts().to_dict()
+    n_case  = cond_counts.get(tumor_label, 0)
+    n_ctrl  = cond_counts.get(normal_label, 0)
+    n_other = sum(v for k, v in cond_counts.items() if k not in (tumor_label, normal_label))
+
+    # Try to read fastp JSON per sample
+    import json as _json
+    rows = []
+    for _, row in grp.iterrows():
+        srr  = str(row["srr_id"])
+        cond = str(row.get("condition", ""))
+        pid  = str(row["patient_id"]) if "patient_id" in grp.columns else ""
+        total_reads = q30 = mean_len = ""
+        if results_dir:
+            jpath = Path(results_dir) / "qc" / "fastp" / f"{srr}.json"
+            if jpath.exists():
+                try:
+                    with open(jpath) as fh:
+                        qc = _json.load(fh)
+                    bf = qc.get("summary", {}).get("before_filtering", {})
+                    total_reads = f'{bf.get("total_reads", 0) / 1e6:.1f}M'
+                    mean_len    = str(int(bf.get("read1_mean_length", 0))) + " bp"
+                    q30         = f'{bf.get("q30_rate", 0) * 100:.1f}%'
+                except Exception:
+                    pass
+        rows.append({"srr": srr, "cond": cond, "pid": pid,
+                     "reads": total_reads, "len": mean_len, "q30": q30})
+
+    # Sort: case first then control, then by srr
+    order = {tumor_label: 0, normal_label: 1}
+    rows.sort(key=lambda r: (order.get(r["cond"], 2), r["srr"]))
+
+    has_qc  = any(r["reads"] for r in rows)
+    has_pid = any(r["pid"] for r in rows)
+
+    def _cond_badge(c: str) -> str:
+        color = "#2c6fad" if c == tumor_label else "#16a34a" if c == normal_label else "#888"
+        return (f'<span style="background:{color};color:white;padding:1px 8px;'
+                f'border-radius:10px;font-size:11px">{c}</span>')
+
+    tbody = ""
+    for i, r in enumerate(rows):
+        bg = "background:#f9fafb;" if i % 2 == 0 else ""
+        pid_cell = f'<td style="padding:5px 12px">{r["pid"]}</td>' if has_pid else ""
+        qc_cells = (
+            f'<td style="padding:5px 12px;text-align:right">{r["reads"] or "—"}</td>'
+            f'<td style="padding:5px 12px;text-align:right">{r["len"] or "—"}</td>'
+            f'<td style="padding:5px 12px;text-align:right">{r["q30"] or "—"}</td>'
+        ) if has_qc else ""
+        tbody += (
+            f'<tr style="{bg}">'
+            f'<td style="padding:5px 12px;font-family:monospace;font-size:12px">{r["srr"]}</td>'
+            f'<td style="padding:5px 12px">{_cond_badge(r["cond"])}</td>'
+            f'{pid_cell}{qc_cells}</tr>\n'
+        )
+
+    pid_th  = '<th style="padding:6px 12px;text-align:left;border-bottom:1px solid #e0e8f0">Patient</th>' if has_pid else ""
+    qc_ths  = (
+        '<th style="padding:6px 12px;text-align:right;border-bottom:1px solid #e0e8f0">Total Reads</th>'
+        '<th style="padding:6px 12px;text-align:right;border-bottom:1px solid #e0e8f0">Avg Length</th>'
+        '<th style="padding:6px 12px;text-align:right;border-bottom:1px solid #e0e8f0">Q30</th>'
+    ) if has_qc else ""
+
+    other_box = (
+        f'<div class="stat-box"><div class="num" style="color:#888">{n_other}</div>'
+        f'<div class="lbl">Other</div></div>'
+    ) if n_other else ""
+
+    return f"""
+<h2>Samples</h2>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px">
+  <div class="stat-box"><div class="num" style="color:#2c6fad">{n_case}</div><div class="lbl">{tumor_label.title()}</div></div>
+  <div class="stat-box"><div class="num" style="color:#16a34a">{n_ctrl}</div><div class="lbl">{normal_label.title()}</div></div>
+  {other_box}
+</div>
+<details style="margin:0 0 20px">
+  <summary style="cursor:pointer;color:#2c6fad;font-size:13px;user-select:none">
+    &#9654; 顯示樣本清單（{len(rows)} samples）{"&nbsp;&nbsp;<span style='color:#888;font-size:11px'>含 fastp QC 統計</span>" if has_qc else ""}
+  </summary>
+  <div style="overflow-x:auto;margin-top:10px">
+  <table style="border-collapse:collapse;font-size:13px;width:100%;max-width:800px">
+    <thead>
+      <tr style="background:#f1f5f9;font-weight:600">
+        <th style="padding:6px 12px;text-align:left;border-bottom:1px solid #e0e8f0">SRR ID</th>
+        <th style="padding:6px 12px;text-align:left;border-bottom:1px solid #e0e8f0">Condition</th>
+        {pid_th}{qc_ths}
+      </tr>
+    </thead>
+    <tbody>{tbody}</tbody>
+  </table>
+  </div>
+</details>
 """
 
 
@@ -1861,6 +1979,9 @@ def build_report(
         + '</div>'
     ) if len(_msw_btns) > 1 else ""
 
+    results_dir    = str(Path(output_file).parent)
+    sample_html    = _sample_overview_section(
+        groups_file, tumor_label, normal_label, results_dir=results_dir)
     type_html      = _type_section(sig)
     biomarker_html = _biomarker_section(biomarker_file, interactions=interactions)
     isoform_html   = _isoform_section(switching_file,
@@ -2966,6 +3087,8 @@ _makeSortable('tbl_biomarker');
       &#128269; Test: Open first circRNA detail
     </button>
   </p>
+
+  {sample_html}
 
   <h2>Summary</h2>
   {_msw_html}

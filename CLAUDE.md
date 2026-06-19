@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -1341,6 +1341,7 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | **GSE133998** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N）| ~80M reads/sample | 10,979 | **84** | ✅ 配對設計，樣本數最多 |
 | **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 12（6T+6N）| avg 48M spots（~96M reads）| **14,697**（consensus）| **152** | ✅ 完成；6 對配對 T/N；Type_I 95% / Type_II 5%；predict_interactions union 247 circRNAs；report 8.2 MB |
 | **GSE77509** | 組織（HCC 肝癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| **~100bp PE** | 12（6T+6N，6 pairs）| **57–118M spots/sample**（平均 ~85M）| 4,275（consensus）| **41** | ✅ 完成；Top：hsa_circ_0001181（BACH1，score=0.654）；36 Type_I / 5 Type_II；Yang et al. 2017 Nat Commun |
+| **GSE130078** | 組織（ESCC 食道鱗狀細胞癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 12（6T+6N，6 pairs）| **79–101M reads/sample** ✅ | 8,925（consensus）| **12（edgeR）/ 623（limma）** | ⚠️ 深度充足但 BSJ counts 樣本間差異 5.5x（5,775–31,656）；filterByExpr 僅保留 231（2.6%）；ESCC circRNA 全局下調；建議以 limma 為主方法 |
 | **PRJNA808398** | 組織（TNBC tumor vs. normal）| tumor vs. normal | **cDNA（poly-A）** | 150bp PE | 50（25T+25N）| avg 18M spots（低）| ❌ | ❌ | ❌ 不建議：poly-A selection，circRNA 接近零；A.C. CAMARGO 巴西 |
 
 ### 影響分析品質的關鍵因素
@@ -1385,6 +1386,24 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | < 30M | circRNA 偵測靈敏度明顯下降；少數 high-abundance circRNA 可用，但 DE 功率不足 |
 
 **查詢方式**：SRA run info 的 `spots` 欄（paired-end: spots × 2 = total reads）。
+
+> **⚠️ 重要教訓（GSE130078）**：定序深度足夠不代表 DE 分析功率足夠。GSE130078 有 79–101M reads/sample，但樣本間 BSJ count 總量差異達 **5.5 倍**（5,775–31,656），導致 filterByExpr 只保留 231/8,925 circRNAs（2.6%），edgeR 僅 12 個顯著。**定序深度是必要條件但不充分**；BSJ count 的穩定性（樣本間變異係數）才是關鍵。
+
+#### 4b. BSJ Count 稀疏性（新增指標，源自 GSE130078 教訓）
+
+BSJ count 稀疏性無法從 GEO 頁面直接查到，需分析後才知道，但可透過以下間接指標預測：
+
+| 風險因素 | 說明 |
+|---------|------|
+| **癌症類型**（鱗狀上皮癌）| 食道（ESCC）、頭頸、肺鱗癌等 squamous cell carcinoma 的 circRNA 整體表現量普遍低於腺癌（breast、HCC、CRC）；腺癌資料集通常 filterByExpr 保留 5–50%，鱗狀癌可能僅 2–5% |
+| **腫瘤含量（tumor cellularity）不明** | 手術切除組織的腫瘤純度差異大；ESCC 食道黏膜層切片尤其如此；若論文未報告 purity，BSJ 變異係數可能很高 |
+| **RNA 品質未標注** | 未提供 RIN score 或 DV200 的資料集，降解 RNA 可能使 BSJ count 極低（降解破壞 BSJ spanning reads）|
+| **circRNA 不是主研究目標** | 總 RNA-seq 轉順帶用於 circRNA，研究者不會特別控制 circRNA 偵測品質 |
+
+**分析後的早期警示信號**（pipeline 完成 merge_counts 後即可判斷）：
+- `count_matrix.tsv` 各 sample 的 BSJ sum 差異 > 3 倍 → ⚠️ 高風險
+- filterByExpr 保留率 < 5% → ⚠️ DE 功率嚴重不足
+- 若遇上述情況，建議以 **limma-voom 為主方法**（對稀疏計數更穩健），edgeR_ciriquant 作為輔助
 
 #### 5. 樣本數與統計功率
 
@@ -1438,12 +1457,20 @@ cancer label：`tumor` / `normal`；genome：hg19
 - ✅ RNA-Seq library = Total RNA（rRNA-depleted or RNase R）
 - ✅ 每組 ≥ 3 replicates（建議 ≥ 5）
 - ✅ 有明確的 case vs. control（tumor/normal、treatment/vehicle）
-- ⚠️ 定序深度 ≥ 50M reads/sample
+- ⚠️ 定序深度 ≥ 50M reads/sample（必要但不充分，見下方）
 - ⚠️ 組織樣本優先（而非細胞株），若要 biomarker 研究尤其重要
+- ⚠️ 優先選擇腺癌（乳癌、HCC、CRC、肺腺癌），避免鱗狀癌（ESCC、HNSCC、肺鱗癌）——後者 circRNA 全局表現量低，filterByExpr 通過率可能只有 2–5%
 - ⚠️ hg19 或 hg38 人類基因組（本 pipeline 以 hg19 為主）
 - ⚠️ 配對設計（paired tumor/normal）功率最高
+- ⚠️ 查論文 Methods 是否有報告 RIN score（≥ 7 為佳）或 DV200（≥ 30%）；多數資料集不標示，無記錄不代表品質差，但鱗狀癌或 FFPE 樣本需特別留意
 
 **排除條件**：
 - poly-A selection → circRNA 接近零
 - single-end reads → BSJ 偵測困難
 - < 30bp reads → 完全不可用
+- 鱗狀上皮癌（squamous）+ 未報告 RIN/purity → 高風險組合，DE 功率可能不足
+
+**分析後補救策略**（遇 BSJ 稀疏時）：
+- filterByExpr 保留率 < 5% → 改以 **limma-voom 為主方法**（TMM 正規化對稀疏計數更穩健）
+- edgeR_ciriquant 結果作為輔助（Type I/II 分類參考）
+- 論文 Methods 需說明樣本 BSJ count 變異性及其對統計功率的影響
