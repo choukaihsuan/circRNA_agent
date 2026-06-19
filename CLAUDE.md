@@ -343,7 +343,7 @@ threads: 8
 | Python | 3.7.12（conda env `ciriquant`） |
 | CPU | 96 cores |
 | RAM | 377 GB |
-| 磁碟 | /home3：596 GB 可用 |
+| 磁碟 | /home3：345 GB 可用（2026-06-19；中間檔清理後）|
 | Conda env | `ciriquant`（CIRIquant 1.1.3, DCC 0.5.0, STAR, HISAT2, BWA, samtools, snakemake, **aria2c 1.36.0**） |
 | Java | `/usr/bin/java`（不在 conda env 內，ciriquant.yaml 必須指定此路徑） |
 
@@ -428,19 +428,23 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 - Step 3：進階參數（min_bsj, slop, **max_junction_ratio**, FDR, log2FC, threads）
 - 儲存設定 → 更新 `config.yaml`
 - 儲存並執行 → 更新 config 後啟動 Snakemake subprocess
-- 狀態頁（`/status`）：每 5 秒 auto-refresh log，顯示 pipeline 是否執行中
+- 狀態頁（`/status`）：每 5 秒 auto-refresh log，顯示 pipeline 是否執行中；**web_ui 重啟後仍能正確推斷已完成步驟**（`_infer_stages_from_files()` 掃描 output 檔案）
+- **Study Title 自動填入**：輸入 GSE ID 並偵測 Labels 時，`_fetch_geo_title()` 呼叫 NCBI eUtils esummary 自動抓取研究標題，填入「資料集描述」欄位；存入 config.yaml 的 `study_title` 鍵；顯示於報告 Samples 區塊頂部（斜體）
 
 **Web UI routes**：
 - `GET /` — 主設定頁
-- `POST /update` — 儲存設定（+ 可選執行 Snakemake）
-- `POST /run_gse` — GEO 一鍵啟動
+- `POST /update` — 儲存設定（+ 可選執行 Snakemake）；儲存 `study_title`
+- `POST /run_gse` — GEO 一鍵啟動；自動抓取 GEO study title
 - `POST /run_manual` — 手動 SRR 清單或 CSV 上傳啟動
 - `GET /api/scan_fastq?path=...` — 掃描 server 目錄，回傳偵測到的 FASTQ 配對 JSON
 - `POST /run_local` — 本地 FASTQ 建立 symlink 後啟動 pipeline
 - `GET /status` — 狀態頁（進度條 + 18 stage 格 + collapsible log）
 - `GET /api/log` — log JSON（前端 polling 用）
-- `GET /api/progress` — Snakemake log 解析 JSON（stages 陣列 + finished/total count + running bool）
-- `GET /api/detect_labels?gse=...` — 自動偵測 case/control label
+- `GET /api/progress` — Snakemake log 解析 JSON（stages 陣列 + finished/total count + running bool + `report_exists` + `qc_exists`）
+- `GET /api/detect_labels?gse=...` — 自動偵測 case/control label；回傳 `geo_title` 欄位
+- `GET /download/<job_id>` — 強制下載 `{results_dir}/report.html`（`as_attachment=True`，檔名 `{GSE_ID}_report.html`）
+- `GET /report/<job_id>` — 在新分頁開啟報告（inline）
+- `GET /qc/<job_id>` — 在新分頁開啟 MultiQC 報告
 
 **GEO 資料集選擇指引**（`templates/index.html` 獨立折疊區塊）：
 Web UI 主頁新增常駐卡片，使用者點標題行即可展開；內容包含：
@@ -451,6 +455,20 @@ Web UI 主頁新增常駐卡片，使用者點標題行即可展開；內容包�
 
 **手動 SRR 清單 → 方式二 CSV 上傳範例表**（`templates/index.html`，2026-06-14）：
 「CSV 格式範例」說明文字下方加入 GSE113230 的 6 行示範表格（srr_id / condition 兩欄，斑馬紋底色，寬度 340px），讓使用者清楚知道正確格式。
+
+**`_fetch_geo_title(gse_id)`**（`web_ui.py`，2026-06-19）：
+呼叫 `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gds&id=200{NNNNNN}&retmode=json`，
+從 `result[uid]["title"]` 取研究標題。GEO uid 公式：`"200" + GSE 數字部分`（GSE130078 → 200130078）。
+Server 防火牆允許此 endpoint（僅 PRJNA/SRP 的其他 eUtils endpoint 被封鎖）。timeout=8s，失敗回傳空字串。
+
+**`_infer_stages_from_files(results_dir, stages)`**（`web_ui.py`，2026-06-19）：
+`/api/progress` 呼叫後補推：掃描 results_dir 下已存在的 output 檔，將 `status=="pending"` 的 stage 升級為 `done`。
+推斷規則（由粗至細）：
+- `qc/multiqc_report.html` 存在 → download / fastqc / fastp / multiqc 全標 done
+- `circRNA/count_matrix.tsv` 存在 → 以上 + ciriquant / star / dcc / consensus / merge 全標 done
+- 各獨立 output（circbase_annotated.tsv / isoform_groups.tsv / de_results.tsv / biomarker_candidates.tsv / isoform_switching.tsv）→ 對應 stage done
+- `report.html` 存在 → 所有剩餘 pending stage 全標 done
+解決 web_ui 重啟後狀態頁全顯示「等待中」的問題。
 
 ---
 
@@ -827,6 +845,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | Biomarker Type 欄顯示 "nan"（DESeq2/limma bm_table）| DESeq2/limma 的 `analysis.R` 設 `res_df$Type <- NA_character_`（只有 edgeR_ciriquant 做 FSJ 分類），Python 讀取 NA 為 NaN，`str(NaN)="nan"` | `_bm_lookup` 建立時從 `biomarker_candidates.tsv` 讀取並儲存 `type_edger`（edgeR 分類）；`_compute_bm_table_data` 中 Type 若為 NaN 則 fallback 到 `lu.get("type_edger")`；效果：3 方法均顯著的 circRNA 在 DESeq2/limma bm_table 也能看到 edgeR Type 分類 |
 | circ_id 欄位排序不符基因組順序（chr4 排在 chr1 前）| `_makeSortable` 去除非數字字元取第一個數字：`chr4:1902353` → `41902353`，而 `chr1:91382197` → `191382197`；前者較小故 chr4 排在 chr1 前 | 新增 `_parseGenCoord(s)` 函式：`chr([0-9]+|XYM):start` → `{c: chrNum, p: startPos}`（chrX=23, chrY=24, chrM=26）；`_makeSortable` 優先使用基因組座標排序（先比 chr 號碼，同染色體再比 start position） |
 | DE 表格 gene_name 顯示 "intergenic" 與 region 欄重複 | `assign_isoforms.py` 對無 host gene 的 circRNA 設 `gene_name = gene_id = "intergenic"`；DE table 照原值顯示 | `_renderDETables` JS 中加入 `if(col==='gene_name')` 判斷：當 `v==='intergenic'` 時顯示 `'—'`（region 欄已有此資訊，gene_name 欄不重複顯示）|
+| Web UI 重啟後狀態頁全顯示「等待中」 | pipeline 執行狀態只存在 Flask 記憶體中；web_ui 重啟後 stages 全重設為 pending，即使所有步驟已完成 | `_infer_stages_from_files()` 掃描 results_dir output 檔（multiqc_report.html / count_matrix.tsv / de_results.tsv / report.html 等）→ 升級 pending stage 為 done；`/api/progress` 每次 polling 都呼叫此函式 |
+| `/api/progress` 未回報 report/QC 存在 | 狀態頁「分析報告」和「QC 報告」按鈕依賴 stages 狀態，若 web_ui 重啟後 stages 全 pending，按鈕不顯示 | 在 `/api/progress` 回應中加入 `report_exists`（bool）和 `qc_exists`（bool）欄位；前端 JS 以 `data.report_exists \|\| stage.done` 控制按鈕顯示 |
 
 ---
 
@@ -895,6 +915,7 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 
 | 區塊 | 說明 |
 |------|------|
+| **Samples 區塊（報告開頭）** | `_sample_overview_section()`：讀 fastp JSON → stat boxes（tumor=藍 / normal=綠）+ 可折疊詳細表格（SRR / Condition / Patient / Total Reads / Avg Length / Q30）；`study_title` config 鍵存入後以斜體顯示於頂部（GEO 研究標題，自動從 NCBI eUtils 抓取或手動填入）|
 | **DE 方法切換器** | 頁面頂部三個按鈕（edgeR_ciriquant / DESeq2 / limma-voom）；切換時即時更新 stat-boxes、Volcano、Heatmap、**Top DE 表格**、**Biomarker 表格**（`Plotly.react` 原地更新，無頁面 reload）|
 | Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down；id="stat-n-sig/up/dn"，供方法切換器更新 |
 | **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量 |
@@ -977,7 +998,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-14 更新）
+## 目前執行進度（2026-06-19 更新）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1261,6 +1282,11 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 - `raw_dir: /home3/choukaihsuan/SRP156355/raw`
 - `results_dir: /home3/choukaihsuan/SRP156355_results`
 
+**磁碟清理（2026-06-19）**：釋放約 ~250 GB：
+- `SRP156355/raw/` + `SRP156355/trimmed/` → 已刪除
+- `SRP156355_results/circRNA/*/Aligned.sortedByCoord.out.bam` + `*/mate1/` + `*/mate2/` → 已刪除
+- 保留：`.gtf`、`.bed`、`DCC/`、`Chimeric.out.junction`、`high_confidence.bed`、`consensus_summary.tsv`、report.html
+
 ---
 
 ### GSE77509（HCC 肝癌，配對 tumor/normal）
@@ -1305,6 +1331,13 @@ Yang et al. 2017 *Nature Communications*（PMID 28194035）。HCC 肝細胞癌�
 **S3 手動下載腳本**：`/tmp/s3_download_gse77509.sh`（server 上）
 - 12 batch（每批 4 個 SRR 並行，各 -x 12）→ 總計 48 連線
 
+**磁碟清理（2026-06-19）**：釋放約 ~200 GB：
+- `GSE77509/raw/` + `GSE77509/trimmed/` → 已刪除
+- `GSE77509_results/circRNA/*/Aligned.sortedByCoord.out.bam` + `*/mate1/` + `*/mate2/` → 已刪除
+
+**GSE55872（Benchmark ground truth）磁碟清理（2026-06-19）**：
+- `GSE55872_results/circRNA/*/mate1/` + `*/mate2/` + `GSE55872/raw/` → 已刪除（釋放 ~80 GB）
+
 ---
 
 ## GEO / SRA BioProject 資料集選擇指引
@@ -1319,7 +1352,11 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | `PRJNA*` | `PRJNA808398` | NCBI SRA BioProject | NCBI eUtils API |
 | `SRP*` | `SRP156355` | NCBI SRA Study | NCBI eUtils API |
 
-**HPC 網路限制**：Server（172.16.0.178）防火牆封鎖 NCBI eUtils HTTP；PRJNA/SRP 需在本機執行 `python scripts/download_geo.py --gse PRJNA808398` 取得 metadata CSV，再透過 Web UI 的「手動 SRR 清單 → 上傳 CSV」路徑匯入。GSE 透過 pysradb 可在 server 上直接執行。
+**HPC 網路限制**：Server（172.16.0.178）防火牆封鎖**部分** NCBI eUtils endpoint：
+- `eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi`（db=gds）✅ **可存取**（`_fetch_geo_title()` 使用）
+- `eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi`（PRJNA/SRP metadata）❌ **被封鎖**
+- PRJNA/SRP 需在本機執行 `python scripts/download_geo.py --gse PRJNA808398` 取得 metadata CSV，再透過 Web UI 的「手動 SRR 清單 → 上傳 CSV」路徑匯入
+- GSE 透過 pysradb 可在 server 上直接執行；`_fetch_geo_title()` 也在 server 上正常運作
 
 **Condition 自動偵測**（`prepare_metadata.py`）：
 
