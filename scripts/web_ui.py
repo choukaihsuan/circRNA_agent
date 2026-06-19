@@ -356,11 +356,13 @@ def parse_log_progress(log_text: str) -> dict:
     }
 
 
-def _infer_stages_from_files(results_dir_str: str, stages: list) -> list:
+def _infer_stages_from_files(results_dir_str: str, stages: list,
+                              cfg: Optional[dict] = None) -> list:
     """Supplement log-parsed stage statuses by checking actual output files.
 
     Called after parse_log_progress so file evidence can upgrade 'pending'
     stages to 'done' when web_ui was restarted after a completed pipeline.
+    Also performs per-sample file counting to show N/M progress.
     """
     results_dir = Path(results_dir_str) if results_dir_str else None
     if not results_dir or not results_dir.exists():
@@ -373,12 +375,91 @@ def _infer_stages_from_files(results_dir_str: str, stages: list) -> list:
             if sid in stage_map and stage_map[sid]["status"] == "pending":
                 stage_map[sid].update({"status": "done", "started": 1, "done": 1})
 
-    # Cascade from earliest to latest: later milestones imply earlier ones done
+    def mark_partial(sid: str, n_done: int, n_total: int):
+        """Update a stage's N/M counts from filesystem; upgrade pending→running/done."""
+        if sid not in stage_map or n_done == 0:
+            return
+        s = stage_map[sid]
+        s["started"] = n_total
+        s["done"]    = n_done
+        if n_done >= n_total:
+            s["status"] = "done"
+        elif s["status"] == "pending":
+            s["status"] = "running"
+
+    # ── Per-sample counting (requires sample list from config metadata) ──────
+    sample_ids: list = []
+    if cfg:
+        meta_rel = cfg.get("metadata", "")
+        if meta_rel:
+            meta_path = Path(meta_rel)
+            if not meta_path.is_absolute():
+                meta_path = BASE_DIR / meta_path
+            if meta_path.exists():
+                try:
+                    import csv as _csv
+                    with open(meta_path, newline="") as f:
+                        sample_ids = [r["srr_id"] for r in _csv.DictReader(f)
+                                      if "srr_id" in r]
+                except Exception:
+                    pass
+
+    n = len(sample_ids)
+    if n > 0:
+        raw_dir = Path(cfg.get("raw_dir", "")) if cfg else Path("")
+
+        # download_fastq
+        mark_partial("download_fastq",
+                     sum(1 for s in sample_ids
+                         if (raw_dir / f"{s}_1.fastq.gz").exists()), n)
+
+        # FastQC (raw) — check for any fastqc zip in per-sample subdir or flat dir
+        fqc_dir = results_dir / "qc" / "fastqc"
+        mark_partial("fastqc_raw",
+                     sum(1 for s in sample_ids
+                         if list(fqc_dir.glob(f"{s}*_fastqc.html")) if fqc_dir.exists()), n)
+
+        # fastp
+        mark_partial("fastp_trim",
+                     sum(1 for s in sample_ids
+                         if (results_dir / "qc" / "fastp" / f"{s}.json").exists()), n)
+
+        # CIRIquant
+        mark_partial("ciriquant",
+                     sum(1 for s in sample_ids
+                         if (results_dir / "circRNA" / s / f"{s}.gtf").exists()), n)
+
+        # STAR paired
+        mark_partial("star_align",
+                     sum(1 for s in sample_ids
+                         if (results_dir / "circRNA" / s / "Chimeric.out.junction").exists()), n)
+
+        # STAR mate1
+        mark_partial("star_align_mate1",
+                     sum(1 for s in sample_ids
+                         if (results_dir / "circRNA" / s / "mate1" / "Chimeric.out.junction").exists()), n)
+
+        # STAR mate2
+        mark_partial("star_align_mate2",
+                     sum(1 for s in sample_ids
+                         if (results_dir / "circRNA" / s / "mate2" / "Chimeric.out.junction").exists()), n)
+
+        # DCC
+        mark_partial("dcc",
+                     sum(1 for s in sample_ids
+                         if (results_dir / "circRNA" / s / "DCC" / "CircCoordinates").exists()), n)
+
+        # consensus_filter
+        mark_partial("consensus_filter",
+                     sum(1 for s in sample_ids
+                         if (results_dir / "circRNA" / s / "high_confidence.bed").exists()), n)
+
+    # ── Milestone-based cascade (single-output rules) ─────────────────────────
     if (results_dir / "qc" / "multiqc_report.html").exists():
-        mark_done("download_fastq", "fastqc_raw", "fastp", "multiqc")
+        mark_done("download_fastq", "fastqc_raw", "fastp_trim", "multiqc")
 
     if (results_dir / "circRNA" / "count_matrix.tsv").exists():
-        mark_done("download_fastq", "fastqc_raw", "fastp", "multiqc",
+        mark_done("download_fastq", "fastqc_raw", "fastp_trim", "multiqc",
                   "check_ciriquant_config", "ciriquant",
                   "star_align", "star_align_mate1", "star_align_mate2",
                   "dcc", "consensus_filter", "merge_counts")
@@ -392,7 +473,7 @@ def _infer_stages_from_files(results_dir_str: str, stages: list) -> list:
     if (results_dir / "de" / "de_results.tsv").exists():
         mark_done("de_analysis")
 
-    if (results_dir / "biomarker_candidates.tsv").exists():
+    if (results_dir / "de" / "biomarker_candidates.tsv").exists():
         mark_done("rank_biomarkers")
 
     if (results_dir / "de" / "isoform_switching.tsv").exists():
@@ -884,7 +965,7 @@ def api_progress():
         cfg = load_project_config(gse_id)
         results_dir = cfg.get("results_dir", "")
         if results_dir:
-            data["stages"] = _infer_stages_from_files(results_dir, data["stages"])
+            data["stages"] = _infer_stages_from_files(results_dir, data["stages"], cfg)
             report_exists = (Path(results_dir) / "report.html").exists()
             qc_exists = (Path(results_dir) / "qc" / "multiqc_report.html").exists()
     data["report_exists"] = report_exists

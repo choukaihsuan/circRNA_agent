@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，🔄 進行中）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -847,6 +847,9 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | DE 表格 gene_name 顯示 "intergenic" 與 region 欄重複 | `assign_isoforms.py` 對無 host gene 的 circRNA 設 `gene_name = gene_id = "intergenic"`；DE table 照原值顯示 | `_renderDETables` JS 中加入 `if(col==='gene_name')` 判斷：當 `v==='intergenic'` 時顯示 `'—'`（region 欄已有此資訊，gene_name 欄不重複顯示）|
 | Web UI 重啟後狀態頁全顯示「等待中」 | pipeline 執行狀態只存在 Flask 記憶體中；web_ui 重啟後 stages 全重設為 pending，即使所有步驟已完成 | `_infer_stages_from_files()` 掃描 results_dir output 檔（multiqc_report.html / count_matrix.tsv / de_results.tsv / report.html 等）→ 升級 pending stage 為 done；`/api/progress` 每次 polling 都呼叫此函式 |
 | `/api/progress` 未回報 report/QC 存在 | 狀態頁「分析報告」和「QC 報告」按鈕依賴 stages 狀態，若 web_ui 重啟後 stages 全 pending，按鈕不顯示 | 在 `/api/progress` 回應中加入 `report_exists`（bool）和 `qc_exists`（bool）欄位；前端 JS 以 `data.report_exists \|\| stage.done` 控制按鈕顯示 |
+| `web_ui.py _update_paths_for_project()` 未更新 `download.sra_cache_dir` / `download.tmp_dir` | 切換到新 GSE 時，`_update_paths_for_project()` 只更新 `raw_dir`、`trimmed_dir`、`results_dir`，不更新 `config.download.sra_cache_dir` 和 `config.download.tmp_dir`；中間 SRA 快取和暫存檔案放到前一個專案的目錄 | `web_ui.py` 的 `_update_paths_for_project()` 加入：讀取 `cfg.get("download", {})`，對 `sra_cache_dir` 和 `tmp_dir` 若含舊 project_id 則做字串替換後寫回 `cfg["download"]` |
+| SSH heredoc 寫入腳本含 CRLF，變數在執行時為空 | 在 SSH double-quoted 命令中用 `<< 'SCRIPT'` heredoc 寫 shell 腳本，Windows 端 SSH client 將行尾轉為 CRLF（`\r\n`）；shell 讀取後變數賦值包含 `\r`，`echo "$VAR"` 看似有值但實際傳入命令時被截斷或輸出空值 | 改用 `printf '%s\n' 'line1' 'line2' ...` 逐行寫入，每行明確加 `\n`，完全避開 heredoc CRLF 問題 |
+| `$TMP` 系統保留變數名稱衝突 | Shell 環境中 `TMP` 是保留變數（通常指向 `/tmp`）；腳本中 `TMP=/home3/.../sra_tmp/SRR...` 看似賦值，但某些情境下 `$TMP` 展開為系統值或空字串，導致 `fasterq-dump --temp $TMP` 路徑錯誤 | 改用自訂名稱 `SRA_TMP`（避開 `TMP`、`TMPDIR`、`TEMP` 等系統保留名）；`SRA_CACHE` 同理（避開 `CACHE`）|
 
 ---
 
@@ -998,7 +1001,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-19 更新）
+## 目前執行進度（2026-06-20 更新）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1340,6 +1343,50 @@ Yang et al. 2017 *Nature Communications*（PMID 28194035）。HCC 肝細胞癌�
 
 ---
 
+### GSE248612（胃癌，配對 tumor/normal）
+
+**🔄 CIRIquant 進行中（2026-06-20）。** 報告位置：`~/GSE248612_results/report.html`（待完成）
+
+胃癌手術切除組織，cancer tissue vs. adjacent normal，6 對配對 T/N，12 samples（SRR26946845–SRR26946856）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 12/12 完成（aria2c S3；845/846 曾遇 HTTPS 慢速，手動改 S3 aria2c 補救）|
+| fastp QC/trim | ✅ 9/12（848/849/852 等 CIRIquant slot 排入）|
+| CIRIquant | 🔄 6/12 完成；3 個進行中（846 BWA-mem、850 BWA-mem、851 HISAT2）；3 個等待（848、849、852）|
+| STAR / DCC / consensus_filter | ⏳ 待 CIRIquant 完成後啟動 |
+| merge_counts 以後 | ⏳ 待 |
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（6T + 6N）：SRR26946848, SRR26946849, SRR26946850, SRR26946854, SRR26946855, SRR26946856（Tumor）；SRR26946845, SRR26946846, SRR26946847, SRR26946851, SRR26946852, SRR26946853（Normal）
+- genome：hg19；配對設計（含 `patient_id` 欄：LSS/QHZ/ZZJ/LFE/WHD/XXC）
+- Condition CSV：`/mnt/c/Users/User/Desktop/GSE248612_condition.csv`
+
+**Server config**（`config/projects/GSE248612.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE248612/raw`
+- `sra_cache_dir: /home3/choukaihsuan/GSE248612/sra_cache`
+- `results_dir: /home3/choukaihsuan/GSE248612_results`
+
+**Snakemake 執行指令**（cores 36，log 追加）：
+```bash
+conda run -n ciriquant snakemake \
+    --snakefile workflow/Snakefile \
+    --configfile config/projects/GSE248612.yaml \
+    --cores 36 \
+    --resources mem_gb=300 \
+    --keep-going \
+    --rerun-incomplete \
+    >> logs/pipeline_GSE248612_c36.log 2>&1
+```
+
+**下載問題處理紀錄**：
+- SRR26946849 / SRR26946846：Snakemake 原本走 HTTPS prefetch（~560 KB/s），手動 kill prefetch + 用 aria2c S3 下載後補 fasterq-dump + pigz，再放入 `raw/`
+- SRR26946846 SRA 檔案損壞（vdb-validate 回報 "zombie file"，`rcBlob,rcCorrupt`）：刪除 `.sra.tmp` 重新 aria2c 下載
+- 已知：`kill -9` 終止 Snakemake 後，worker 變成 orphan，需手動 `kill -9 <orphan_pids>`；避免用 bare `kill`（SIGTERM 觸發 Snakemake cleanup 刪 output 檔）
+
+---
+
 ## GEO / SRA BioProject 資料集選擇指引
 
 ### 支援的 Accession 格式
@@ -1379,6 +1426,7 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 12（6T+6N）| avg 48M spots（~96M reads）| **14,697**（consensus）| **152** | ✅ 完成；6 對配對 T/N；Type_I 95% / Type_II 5%；predict_interactions union 247 circRNAs；report 8.2 MB |
 | **GSE77509** | 組織（HCC 肝癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| **~100bp PE** | 12（6T+6N，6 pairs）| **57–118M spots/sample**（平均 ~85M）| 4,275（consensus）| **41** | ✅ 完成；Top：hsa_circ_0001181（BACH1，score=0.654）；36 Type_I / 5 Type_II；Yang et al. 2017 Nat Commun |
 | **GSE130078** | 組織（ESCC 食道鱗狀細胞癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 12（6T+6N，6 pairs）| **79–101M reads/sample** ✅ | 8,925（consensus）| **12（edgeR）/ 623（limma）** | ⚠️ 深度充足但 BSJ counts 樣本間差異 5.5x（5,775–31,656）；filterByExpr 僅保留 231（2.6%）；ESCC circRNA 全局下調；建議以 limma 為主方法 |
+| **GSE248612** | 組織（胃癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N，6 pairs）| 未確認 | 🔄 進行中 | 🔄 進行中 | 🔄 CIRIquant 6/12 完成；配對設計（LSS/QHZ/ZZJ/LFE/WHD/XXC）|
 | **PRJNA808398** | 組織（TNBC tumor vs. normal）| tumor vs. normal | **cDNA（poly-A）** | 150bp PE | 50（25T+25N）| avg 18M spots（低）| ❌ | ❌ | ❌ 不建議：poly-A selection，circRNA 接近零；A.C. CAMARGO 巴西 |
 
 ### 影響分析品質的關鍵因素

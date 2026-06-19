@@ -245,7 +245,13 @@
     if (!stages || !stages.length)
       return '<div style="color:#94a3b8;font-size:13px">無法取得進度資訊</div>';
     return stages.map(s => {
-      const count   = s.started > 0 ? `${s.done}/${s.started}` : '';
+      // Show "N/M 樣本" for per-sample stages; plain count for single-step ones
+      let count = '';
+      if (s.started > 1) {
+        count = `${s.done}/${s.started} 樣本`;
+      } else if (s.started === 1) {
+        count = s.done >= 1 ? '完成' : '';
+      }
       const dimClass = s.status === 'pending' ? ' pending' : '';
       return `
         <div class="stage-row${dimClass}">

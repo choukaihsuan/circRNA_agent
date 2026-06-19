@@ -1123,7 +1123,7 @@ def _compute_bm_table_data(
             int(r.get("_n_sig", 1)),
             int(lu.get("in_circbase", 0)),
             lu.get("circbase_id", ""),
-            lu.get("circbase_gene") or lu.get("gene_name", ""),
+            (lambda _g: _g if _g and _g.lower() not in ("none","nan","novel","") else lu.get("gene_name",""))(lu.get("circbase_gene","")),
             (lambda _tv, _lu: (
                 str(_tv) if (_tv is not None and _tv == _tv and str(_tv).lower() not in ("nan","none","na",""))
                 else (_lu.get("type_edger") or "—")
@@ -1292,7 +1292,8 @@ def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
 
 
 def _biomarker_section(biomarker_file: Optional[str],
-                       interactions: Optional[dict] = None) -> str:
+                       interactions: Optional[dict] = None,
+                       iso_lookup: Optional[dict] = None) -> str:
     if not biomarker_file or not Path(biomarker_file).exists():
         return ""
     try:
