@@ -1736,6 +1736,29 @@ def build_report(
 
     # Load pre-fetched interaction data
     interactions = _load_interactions(interactions_file)
+
+    # Sync isoform/circbase metadata from the enriched DE table into interactions so that
+    # the Circular Structure modal displays the same gene name as the table.
+    # circbase_gene (e.g. "KIAA0182") takes priority over gene_name (e.g. "GSE1 / KIAA0182
+    # renamed in 2019) because the biomarker/DE tables display circbase_gene in their columns.
+    _iso_lookup: dict = {}
+    if "circ_id" in de.columns:
+        for _, _r in de.iterrows():
+            _cid = str(_r["circ_id"])
+            if _cid not in _iso_lookup:
+                _cb_gene = str(_r.get("circbase_gene", "") or "")
+                _gname   = str(_r.get("gene_name",    "") or "")
+                _iso_lookup[_cid] = {
+                    "gene_name":    _cb_gene if _cb_gene and _cb_gene not in ("nan", "None", "novel") else _gname,
+                    "strand":       str(_r.get("strand",    "") or ""),
+                    "region":       str(_r.get("region",    "") or ""),
+                    "exon_span":    str(_r.get("exon_span", "") or ""),
+                    "circbase_gene": _cb_gene,
+                }
+    for _cid, _entry in interactions.items():
+        if _cid in _iso_lookup:
+            _entry.setdefault("info", {}).update(_iso_lookup[_cid])
+
     import json as _json
     interactions_js = _json.dumps(interactions, ensure_ascii=False)
 
