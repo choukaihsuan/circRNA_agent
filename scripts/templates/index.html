@@ -407,6 +407,14 @@
                    id="normal-label-input" style="width:120px;"
                    title="對照組 label（由 GEO metadata 自動偵測，可手動修改）">
           </label>
+          <label style="flex:1 1 100%;">資料集描述 <span style="font-size:11px;color:#999">（GEO 自動填入，可編輯）</span>
+            <input type="text" name="study_title"
+                   value="{{ config.get('study_title', '') }}"
+                   id="study-title-input"
+                   placeholder="例：ESCC tumor vs. normal, 6 pairs"
+                   style="width:100%;max-width:600px;margin-top:4px;"
+                   title="顯示於報告 Samples 區塊頂部">
+          </label>
           <span id="label-detect-badge" style="font-size:11px;color:#16a34a;display:none;align-items:center;gap:4px;">
             ✓ 自動偵測
           </span>
@@ -947,6 +955,11 @@
     try {
       const r = await fetch(`/api/detect_labels?gse=${encodeURIComponent(gseId)}`);
       const d = await r.json();
+      // Auto-fill GEO title if fetched and field is empty
+      const titleInp = document.getElementById('study-title-input');
+      if (titleInp && d.geo_title && !titleInp.value.trim()) {
+        titleInp.value = d.geo_title;
+      }
       if (!d.detected) return;
       const caseInp = document.getElementById('tumor-label-input');
       const ctrlInp = document.getElementById('normal-label-input');
@@ -958,7 +971,7 @@
         badge.style.display = 'inline-flex';
         setTimeout(() => { badge.style.display = 'none'; }, 6000);
       }
-      console.log(`[detect_labels] GSE=${gseId} case=${d.case} control=${d.control}`);
+      console.log(`[detect_labels] GSE=${gseId} case=${d.case} control=${d.control} title=${d.geo_title}`);
     } catch (_) {}
   }
 

@@ -165,6 +165,13 @@ def _update_paths_for_project(cfg: dict, new_pid: str) -> dict:
         for key in ("raw_dir", "trimmed_dir", "results_dir"):
             if key in cfg and old_pid in cfg[key]:
                 cfg[key] = cfg[key].replace(old_pid, new_pid)
+        # Also update sra_cache_dir / tmp_dir inside the download section
+        dl = cfg.get("download", {})
+        for key in ("sra_cache_dir", "tmp_dir"):
+            if key in dl and old_pid in dl[key]:
+                dl[key] = dl[key].replace(old_pid, new_pid)
+        if dl:
+            cfg["download"] = dl
 
     # Ensure download section exists so download.smk doesn't KeyError
     if "download" not in cfg:
@@ -480,6 +487,7 @@ def update():
     cfg["de"]["fdr_cutoff"]              = float(request.form.get("fdr", 0.05))
     cfg["de"]["log2fc_cutoff"]           = float(request.form.get("log2fc", 1.0))
     cfg["threads"]                       = int(request.form.get("threads", 8))
+    cfg["study_title"]                   = request.form.get("study_title", "").strip()
 
     save_project_snapshot(cfg)
 
@@ -630,6 +638,9 @@ def run_manual():
     notify_email = request.form.get("notify_email", "").strip()
     if notify_email:
         cfg.setdefault("notify", {})["email_to"] = notify_email
+    # Auto-fetch GEO title if not already set
+    if not cfg.get("study_title"):
+        cfg["study_title"] = _fetch_geo_title(project_id)
     save_project_snapshot(cfg)
 
     # ── Kill any leftover pipeline before launching ────────────────────────────
@@ -881,12 +892,32 @@ def api_progress():
     return jsonify(data)
 
 
+def _fetch_geo_title(gse_id: str) -> str:
+    """Fetch GEO study title via NCBI eUtils. Returns empty string on failure."""
+    import re as _re, urllib.request as _ur, json as _js
+    m = _re.match(r"GSE(\d+)", gse_id.upper())
+    if not m:
+        return ""
+    uid = "200" + m.group(1)
+    url = (f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+           f"?db=gds&id={uid}&retmode=json")
+    try:
+        with _ur.urlopen(url, timeout=8) as resp:
+            data = _js.loads(resp.read())
+        return data.get("result", {}).get(uid, {}).get("title", "")
+    except Exception:
+        return ""
+
+
 @app.route("/api/detect_labels")
 def api_detect_labels():
-    """Detect case/control labels from existing metadata for a given GSE."""
+    """Detect case/control labels and GEO title for a given GSE."""
     gse_id = request.args.get("gse", "").strip()
     if not gse_id:
         return jsonify({"error": "missing gse"}), 400
+
+    # Fetch GEO title from NCBI eUtils (non-blocking; empty string on failure)
+    geo_title = _fetch_geo_title(gse_id)
 
     # Look for metadata in standard locations
     candidates = [
@@ -896,7 +927,7 @@ def api_detect_labels():
     meta_path = next((p for p in candidates if p.exists()), None)
     if meta_path is None:
         return jsonify({"detected": False, "case": "tumor", "control": "normal",
-                        "note": "metadata not found yet"})
+                        "geo_title": geo_title, "note": "metadata not found yet"})
 
     try:
         import pandas as _pd
@@ -904,10 +935,10 @@ def api_detect_labels():
         df = _pd.read_csv(str(meta_path))
         case_label, ctrl_label = _detect(df)
         return jsonify({"detected": True, "case": case_label, "control": ctrl_label,
-                        "rows": len(df)})
+                        "rows": len(df), "geo_title": geo_title})
     except Exception as exc:
         return jsonify({"detected": False, "case": "tumor", "control": "normal",
-                        "error": str(exc)})
+                        "geo_title": geo_title, "error": str(exc)})
 
 
 @app.route("/report/<job_id>")

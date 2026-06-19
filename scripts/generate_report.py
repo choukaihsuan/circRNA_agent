@@ -692,6 +692,7 @@ def _sample_overview_section(
     tumor_label: str,
     normal_label: str,
     results_dir: Optional[str] = None,
+    study_title: str = "",
 ) -> str:
     """Return an HTML section describing samples + fastp QC stats."""
     if not groups_file or not Path(groups_file).exists():
@@ -771,9 +772,14 @@ def _sample_overview_section(
         f'<div class="lbl">Other</div></div>'
     ) if n_other else ""
 
+    title_html = (
+        f'<p style="font-size:14px;color:#374151;margin:0 0 12px;font-style:italic">'
+        f'{study_title}</p>'
+    ) if study_title else ""
+
     return f"""
 <h2>Samples</h2>
-<div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px">
+{title_html}<div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px">
   <div class="stat-box"><div class="num" style="color:#2c6fad">{n_case}</div><div class="lbl">{tumor_label.title()}</div></div>
   <div class="stat-box"><div class="num" style="color:#16a34a">{n_ctrl}</div><div class="lbl">{normal_label.title()}</div></div>
   {other_box}
@@ -1694,6 +1700,7 @@ def build_report(
     interactions_file: Optional[str] = None,
     multiqc_file:      Optional[str] = None,
     de_files:          dict  = {},
+    study_title:       str   = "",
 ) -> None:
     de     = pd.read_csv(de_file, sep="\t")
     matrix = pd.read_csv(matrix_file, sep="\t", index_col=0)
@@ -1981,7 +1988,8 @@ def build_report(
 
     results_dir    = str(Path(output_file).parent)
     sample_html    = _sample_overview_section(
-        groups_file, tumor_label, normal_label, results_dir=results_dir)
+        groups_file, tumor_label, normal_label,
+        results_dir=results_dir, study_title=study_title)
     type_html      = _type_section(sig)
     biomarker_html = _biomarker_section(biomarker_file, interactions=interactions)
     isoform_html   = _isoform_section(switching_file,
@@ -3179,4 +3187,5 @@ if "snakemake" in dir():
                                            ("deseq2","de_deseq"),
                                            ("limma","de_limma")]
                               if getattr(snakemake.input, a, None)},               # type: ignore[name-defined]
+        study_title        = str(getattr(snakemake.params, "study_title", "")),    # type: ignore[name-defined]
     )

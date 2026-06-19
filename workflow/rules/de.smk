@@ -193,6 +193,7 @@ rule generate_report:
         tumor_label   = config["de"]["tumor_label"],
         normal_label  = config["de"]["normal_label"],
         heatmap_top_n = config["de"].get("heatmap_top_n", 10),
+        study_title   = config.get("study_title", ""),
     log: "logs/generate_report.log"
     script:
         "../../scripts/generate_report.py"
