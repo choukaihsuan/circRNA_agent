@@ -1317,6 +1317,14 @@ def _biomarker_section(biomarker_file: Optional[str],
 
     n_total = len(bm)
     bm_top = bm.head(30).copy()
+    # Fix circbase_gene: replace "None"/"nan"/"novel" with gene_name from iso_lookup
+    if "circbase_gene" in bm_top.columns and iso_lookup:
+        def _fix_cbg(row):
+            cg = str(row.get("circbase_gene", "") or "")
+            if not cg or cg.lower() in ("none", "nan", "novel"):
+                return iso_lookup.get(str(row.get("circ_id", "")), {}).get("gene_name", "")
+            return cg
+        bm_top["circbase_gene"] = bm_top.apply(_fix_cbg, axis=1)
     disp = _fmt_floats(bm_top[show_cols].copy())
     if "circ_id" in disp.columns and interactions is not None:
         def _link(v: str) -> str:
@@ -2021,7 +2029,7 @@ def build_report(
         groups_file, tumor_label, normal_label,
         results_dir=results_dir, study_title=study_title)
     type_html      = _type_section(sig)
-    biomarker_html = _biomarker_section(biomarker_file, interactions=interactions)
+    biomarker_html = _biomarker_section(biomarker_file, interactions=interactions, iso_lookup=_iso_lookup)
     isoform_html   = _isoform_section(switching_file,
                                        isoform_file=isoform_file,
                                        circbase_file=circbase_file,
