@@ -214,11 +214,15 @@ def parse_circ_ids(count_matrix_path: str) -> pd.DataFrame:
 
 # ── Host gene assignment ──────────────────────────────────────────────────────
 
-def assign_host_gene(circ_df: pd.DataFrame, gene_df: pd.DataFrame) -> pd.DataFrame:
+def assign_host_gene(circ_df: pd.DataFrame, gene_df: pd.DataFrame,
+                     gene_slop: int = 2000) -> pd.DataFrame:
     """
-    For each circRNA, find the smallest gene body that fully contains both
-    BSJ endpoints (containment = g_start <= c_start AND g_end >= c_end).
-    When multiple genes qualify, the narrowest span wins (most specific).
+    For each circRNA, find the smallest gene body that contains both BSJ endpoints.
+
+    Containment uses gene_slop tolerance on both boundaries
+    (g_start - slop <= c_start AND g_end + slop >= c_end) to handle lincRNAs
+    and other genes whose annotation boundaries extend slightly beyond exons.
+    When multiple genes qualify the narrowest span wins (most specific host gene).
     """
     # Index genes by chromosome for O(n_genes/n_chr) per lookup
     by_chrom: Dict[str, pd.DataFrame] = {
@@ -230,10 +234,14 @@ def assign_host_gene(circ_df: pd.DataFrame, gene_df: pd.DataFrame) -> pd.DataFra
     for _, circ in circ_df.iterrows():
         c_chrom, c_start, c_end = circ["chrom"], circ["start"], circ["end"]
         gene_id = gene_name = "intergenic"
+        strand = "."
 
         if c_chrom in by_chrom:
             cands = by_chrom[c_chrom]
-            mask  = (cands["g_start"] <= c_start) & (cands["g_end"] >= c_end)
+            mask  = (
+                (cands["g_start"] - gene_slop <= c_start) &
+                (cands["g_end"]   + gene_slop >= c_end)
+            )
             hits  = cands[mask]
             if not hits.empty:
                 hits = hits.copy()
@@ -241,17 +249,7 @@ def assign_host_gene(circ_df: pd.DataFrame, gene_df: pd.DataFrame) -> pd.DataFra
                 best      = hits.loc[hits["_span"].idxmin()]
                 gene_id   = best["gene_id"]
                 gene_name = best["gene_name"]
-
-        strand = "."
-        if c_chrom in by_chrom:
-            cands = by_chrom[c_chrom]
-            mask  = (cands["g_start"] <= c_start) & (cands["g_end"] >= c_end)
-            hits  = cands[mask]
-            if not hits.empty:
-                hits = hits.copy()
-                hits["_span"] = hits["g_end"] - hits["g_start"]
-                best   = hits.loc[hits["_span"].idxmin()]
-                strand = best.get("strand", ".")
+                strand    = best.get("strand", ".")
 
         results.append({
             "circ_id":    circ["circ_id"],
@@ -263,7 +261,6 @@ def assign_host_gene(circ_df: pd.DataFrame, gene_df: pd.DataFrame) -> pd.DataFra
             "gene_name":  gene_name,
             "isoform_id": f"{gene_id}|{c_chrom}:{c_start}-{c_end}",
         })
-
 
     df = pd.DataFrame(results)
 
