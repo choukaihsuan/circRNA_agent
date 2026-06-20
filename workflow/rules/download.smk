@@ -77,13 +77,15 @@ rule download_fastq:
         r1 = protected(RAW_DIR + "/{srr}_1.fastq.gz"),
         r2 = protected(RAW_DIR + "/{srr}_2.fastq.gz"),
     params:
-        sra_cache  = config.get("download", {}).get("sra_cache_dir",
-                         str(Path(RAW_DIR).parent / "sra_cache")),
-        tmp_dir    = config.get("download", {}).get("tmp_dir",
-                         str(Path(RAW_DIR).parent / "sra_tmp")) + "/{srr}",
-        out_dir    = RAW_DIR,
-        retry      = config.get("download", {}).get("retry", 3),
-        ascp_speed = config.get("download", {}).get("ascp_speed", "500m"),
+        sra_cache       = config.get("download", {}).get("sra_cache_dir",
+                              str(Path(RAW_DIR).parent / "sra_cache")),
+        tmp_dir         = config.get("download", {}).get("tmp_dir",
+                              str(Path(RAW_DIR).parent / "sra_tmp")) + "/{srr}",
+        out_dir         = RAW_DIR,
+        retry           = config.get("download", {}).get("retry", 3),
+        ascp_speed      = config.get("download", {}).get("ascp_speed", "500m"),
+        s3_url_retry    = config.get("download", {}).get("s3_url_retry", 5),
+        s3_retry_wait   = config.get("download", {}).get("s3_retry_wait_sec", 300),
     threads: 3
     log: "logs/download/{srr}.log"
     run:
@@ -121,15 +123,34 @@ rule download_fastq:
                 downloaded = True
                 logf.write(f"[skip] SRA already downloaded: {sra_file}\n")
             if not downloaded and srapath and (not sra_file.exists() or sra_partial):
-                logf.write(f"[s3] Getting S3 URL for {srr}\n")
-                logf.flush()
-                result = subprocess.run(
-                    [srapath, "--location", "s3", srr],
-                    capture_output=True, text=True
-                )
-                s3_url = result.stdout.strip()
+                # Retry S3 URL lookup: S3 is often temporarily unavailable but recovers quickly.
+                # Retry up to s3_url_retry times with s3_retry_wait seconds between attempts
+                # before giving up and falling through to ascp/prefetch.
+                s3_max  = int(params.s3_url_retry)
+                s3_wait = int(params.s3_retry_wait)
+                s3_url  = ""
+                for s3_attempt in range(s3_max + 1):
+                    logf.write(f"[s3] Getting S3 URL for {srr}"
+                               f" (attempt {s3_attempt + 1}/{s3_max + 1})\n")
+                    logf.flush()
+                    result = subprocess.run(
+                        [srapath, "--location", "s3", srr],
+                        capture_output=True, text=True
+                    )
+                    s3_url = result.stdout.strip()
+                    if s3_url.startswith("http"):
+                        logf.write(f"[s3] URL: {s3_url}\n")
+                        break
+                    logf.write(f"[WARN] srapath returned no S3 URL: '{s3_url}'\n")
+                    if s3_attempt < s3_max:
+                        logf.write(f"[s3] Waiting {s3_wait}s before retry…\n")
+                        logf.flush()
+                        time.sleep(s3_wait)
+                    else:
+                        logf.write(f"[WARN] S3 URL unavailable after {s3_max + 1} attempts,"
+                                   f" falling back to ascp/prefetch\n")
+
                 if s3_url.startswith("http"):
-                    logf.write(f"[s3] URL: {s3_url}\n")
                     logf.flush()
                     if aria2c:
                         rc = run_cmd([
@@ -155,8 +176,6 @@ rule download_fastq:
                         logf.write(f"[s3] Download complete\n")
                     else:
                         logf.write(f"[WARN] S3 download failed (rc={rc}), trying ascp\n")
-                else:
-                    logf.write(f"[WARN] srapath returned no S3 URL: {s3_url}\n")
 
             # ── 2. ascp (Aspera) ─────────────────────────────────
             if not downloaded:
