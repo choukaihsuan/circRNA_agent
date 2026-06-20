@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，🔄 進行中）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -1001,7 +1001,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-20 更新）
+## 目前執行進度（2026-06-20 完成 GSE248612）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1345,17 +1345,35 @@ Yang et al. 2017 *Nature Communications*（PMID 28194035）。HCC 肝細胞癌�
 
 ### GSE248612（胃癌，配對 tumor/normal）
 
-**🔄 CIRIquant 進行中（2026-06-20）。** 報告位置：`~/GSE248612_results/report.html`（待完成）
+**✅ 完成（2026-06-20）。** 報告位置：`~/GSE248612_results/report.html`（server）
 
 胃癌手術切除組織，cancer tissue vs. adjacent normal，6 對配對 T/N，12 samples（SRR26946845–SRR26946856）。
 
 | 步驟 | 狀態 |
 |------|------|
 | 下載 SRA | ✅ 12/12 完成（aria2c S3；845/846 曾遇 HTTPS 慢速，手動改 S3 aria2c 補救）|
-| fastp QC/trim | ✅ 9/12（848/849/852 等 CIRIquant slot 排入）|
-| CIRIquant | 🔄 6/12 完成；3 個進行中（846 BWA-mem、850 BWA-mem、851 HISAT2）；3 個等待（848、849、852）|
-| STAR / DCC / consensus_filter | ⏳ 待 CIRIquant 完成後啟動 |
-| merge_counts 以後 | ⏳ 待 |
+| fastp QC/trim | ✅ 12/12 完成 |
+| CIRIquant | ✅ 12/12 完成 |
+| STAR paired-end | ✅ 12/12 完成（846 曾因 star_tmp 殘留目錄失敗，rm -rf 後重跑）|
+| STAR mate1 | ✅ 12/12 完成 |
+| STAR mate2 | ✅ 12/12 完成 |
+| DCC | ✅ 12/12 完成 |
+| consensus_filter（--adaptive）| ✅ 完成（18,391 circRNAs 總計）|
+| merge_counts / assign_isoforms | ✅ 完成（328 tested after filterByExpr）|
+| annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 46 / DESeq2 124 / limma 1,210 significant）|
+| predict_interactions（union mode）| ✅ 完成（233 circRNAs）|
+| isoform_switching | ✅ 完成（66 events，within-gene FDR < 0.1）|
+| rank_biomarkers | ✅ 完成（46 candidates）|
+| report | ✅ 完成（9.9MB，Jun 20 16:26）|
+
+**主要數值結果**：
+- 偵測：18,391 consensus circRNAs；filterByExpr 後 328 tested
+- DE（edgeR_ciriquant）：**46 significant**（nominal p < 0.05，|log2FC| > 1）；上調 10 / 下調 36；**42 Type_I (91.3%) / 4 Type_II (8.7%)**
+- DE（DESeq2）：124 significant；DE（limma-voom）：1,210 significant
+- Top biomarker：chr21:16386665|16415895（**hsa_circ_0004771，NRIP1**；log2FC=5.58，p=0.0064，Type_I，in_circbase=1）
+- Isoform switching：66 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
+- predict_interactions：233 circRNAs（三方法 top-50 union mode）
 
 **設定**：
 - case/control label：`tumor` / `normal`
@@ -1426,7 +1444,7 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 12（6T+6N）| avg 48M spots（~96M reads）| **14,697**（consensus）| **152** | ✅ 完成；6 對配對 T/N；Type_I 95% / Type_II 5%；predict_interactions union 247 circRNAs；report 8.2 MB |
 | **GSE77509** | 組織（HCC 肝癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| **~100bp PE** | 12（6T+6N，6 pairs）| **57–118M spots/sample**（平均 ~85M）| 4,275（consensus）| **41** | ✅ 完成；Top：hsa_circ_0001181（BACH1，score=0.654）；36 Type_I / 5 Type_II；Yang et al. 2017 Nat Commun |
 | **GSE130078** | 組織（ESCC 食道鱗狀細胞癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 12（6T+6N，6 pairs）| **79–101M reads/sample** ✅ | 8,925（consensus）| **12（edgeR）/ 623（limma）** | ⚠️ 深度充足但 BSJ counts 樣本間差異 5.5x（5,775–31,656）；filterByExpr 僅保留 231（2.6%）；ESCC circRNA 全局下調；建議以 limma 為主方法 |
-| **GSE248612** | 組織（胃癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N，6 pairs）| 未確認 | 🔄 進行中 | 🔄 進行中 | 🔄 CIRIquant 6/12 完成；配對設計（LSS/QHZ/ZZJ/LFE/WHD/XXC）|
+| **GSE248612** | 組織（胃癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N，6 pairs）| 未確認 | 18,391（consensus）| **46** | ✅ 完成；Top：hsa_circ_0004771（NRIP1，log2FC=5.58）；42 Type_I / 4 Type_II；6 對配對設計（LSS/QHZ/ZZJ/LFE/WHD/XXC）|
 | **PRJNA808398** | 組織（TNBC tumor vs. normal）| tumor vs. normal | **cDNA（poly-A）** | 150bp PE | 50（25T+25N）| avg 18M spots（低）| ❌ | ❌ | ❌ 不建議：poly-A selection，circRNA 接近零；A.C. CAMARGO 巴西 |
 
 ### 影響分析品質的關鍵因素
