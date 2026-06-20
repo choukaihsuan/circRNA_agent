@@ -1124,7 +1124,7 @@ def _compute_bm_table_data(
             int(r.get("_n_sig", 1)),
             int(lu.get("in_circbase", 0)),
             lu.get("circbase_id", ""),
-            (lambda _g: _g if _g and _g.lower() not in ("none","nan","novel","") else lu.get("gene_name",""))(lu.get("circbase_gene","")),
+            (lambda _g, _n: _g if _g and _g.lower() not in ("none","nan","novel","intergenic","") else (_n if _n and _n.lower() not in ("none","nan","novel","intergenic","") else ""))(lu.get("circbase_gene",""), lu.get("gene_name","")),
             (lambda _tv, _lu: (
                 str(_tv) if (_tv is not None and _tv == _tv and str(_tv).lower() not in ("nan","none","na",""))
                 else (_lu.get("type_edger") or "—")
@@ -1320,10 +1320,12 @@ def _biomarker_section(biomarker_file: Optional[str],
     bm_top = bm.head(30).copy()
     # Fix circbase_gene: replace "None"/"nan"/"novel" with gene_name from iso_lookup
     if "circbase_gene" in bm_top.columns and iso_lookup:
+        _BAD_GENE = {"none", "nan", "novel", "intergenic", ""}
         def _fix_cbg(row):
             cg = str(row.get("circbase_gene", "") or "")
-            if not cg or cg.lower() in ("none", "nan", "novel"):
-                return iso_lookup.get(str(row.get("circ_id", "")), {}).get("gene_name", "")
+            if cg.lower() in _BAD_GENE:
+                gn = iso_lookup.get(str(row.get("circ_id", "")), {}).get("gene_name", "") if iso_lookup else ""
+                return gn if gn and gn.lower() not in _BAD_GENE else "—"
             return cg
         bm_top["circbase_gene"] = bm_top.apply(_fix_cbg, axis=1)
     disp = _fmt_floats(bm_top[show_cols].copy())
