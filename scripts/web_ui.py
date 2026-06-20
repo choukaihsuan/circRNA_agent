@@ -455,6 +455,10 @@ def _infer_stages_from_files(results_dir_str: str, stages: list,
                          if (results_dir / "circRNA" / s / "high_confidence.bed").exists()), n)
 
     # ── Milestone-based cascade (single-output rules) ─────────────────────────
+    # check_ciriquant_config: independent of results_dir; uses project-level touch file
+    if (BASE_DIR / "config" / ".ciriquant_ready").exists():
+        mark_done("check_ciriquant_config")
+
     if (results_dir / "qc" / "multiqc_report.html").exists():
         mark_done("download_fastq", "fastqc_raw", "fastp_trim", "multiqc")
 
