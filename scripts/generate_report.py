@@ -2069,7 +2069,12 @@ function showCircDetail(circId) {{
     const info = d.info || {{}};
     document.getElementById('cm-title').textContent = circId;
     document.getElementById('cm-sub').innerHTML =
-      [info.gene_name, info.strand, info.region, info.exon_span].filter(Boolean).join(' &nbsp;|&nbsp; ');
+      [
+        (info.gene_name && info.gene_name !== 'intergenic') ? info.gene_name : null,
+        (info.strand && info.strand !== '.') ? info.strand : null,
+        info.region || null,
+        (info.exon_span && info.exon_span !== 'nan') ? info.exon_span : null
+      ].filter(Boolean).join(' &nbsp;|&nbsp; ');
     const circEl = document.getElementById('cm-circle-wrap');
     circEl.innerHTML = '';
     _drawCircleRNA(circId, circEl);
@@ -2381,8 +2386,10 @@ function _drawCircleRNA(circId, container) {{
   svg+=`<text x="${{bx.toFixed(1)}}" y="${{(by-13).toFixed(1)}}" text-anchor="middle" font-size="9" fill="#d62728" font-weight="bold">BSJ</text>`;
 
   // Center text
-  const gname=info.gene_name?`${{info.gene_name}}${{info.strand?' ('+info.strand+')':''}}`:'';
-  const eline=info.exon_span?`exon ${{info.exon_span}}`:(info.region||'');
+  const _gn=(info.gene_name && info.gene_name!=='intergenic')?info.gene_name:(info.region||'—');
+  const _st=(info.strand && info.strand!=='.')?` (${{info.strand}})`:'';
+  const gname=`${{_gn}}${{_st}}`;
+  const eline=(info.exon_span && info.exon_span!=='nan')?`exon ${{info.exon_span}}`:(info.region&&info.region!=='intergenic'?info.region:'');
   const lline=totalLen?`${{totalLen}} nt`:'(length unknown)';
   svg+=`<text x="${{cx}}" y="${{cy-18}}" text-anchor="middle" font-size="13" font-weight="bold" fill="#333">${{gname}}</text>`;
   svg+=`<text x="${{cx}}" y="${{cy}}"    text-anchor="middle" font-size="11" fill="#666">${{eline}}</text>`;
