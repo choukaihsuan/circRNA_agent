@@ -2384,6 +2384,8 @@ function _drawCircleRNA(circId, container) {{
   }}
 
   // ── miRNA arcs (outer ring) — group arcs per name, then de-overlapped badges ──
+  let miAnnMap={{}};  // declared here so annLegHtml can always reference it
+  let rbpAnnMap={{}};
   const miMap={{}};let miIdx=0;
   const miLegend=[];
   const miBadgeAngs={{}};
@@ -2421,7 +2423,7 @@ function _drawCircleRNA(circId, container) {{
     }}
     const miOvlSorted=[...miOvlSet].sort((a,b)=>miArcSegsFlat[a].a1-miArcSegsFlat[b].a1);
     miOvlSorted.forEach((fi,li)=>{{miArcSegsFlat[fi].label=SITE_LABELS[li%26];}});
-    const miAnnMap={{}};
+    miAnnMap={{}};
     miOvlSorted.forEach(fi=>{{const s=miArcSegsFlat[fi];if(s.label&&!miAnnMap[s.label])miAnnMap[s.label]={{name:s.name,color:miMap[s.name]?miMap[s.name].color:'#888'}};}});
     // Draw arc groups (each name wrapped in <g> for show/hide)
     Object.entries(miArcGroups).forEach(([name,arcs])=>{{
@@ -2522,7 +2524,7 @@ function _drawCircleRNA(circId, container) {{
     }}
     const rbpOvlSorted=[...rbpOvlSet].sort((a,b)=>rbpArcSegsFlat[a].a1-rbpArcSegsFlat[b].a1);
     rbpOvlSorted.forEach((fi,li)=>{{rbpArcSegsFlat[fi].label=SITE_LABELS[li%26];}});
-    const rbpAnnMap={{}};
+    rbpAnnMap={{}};
     rbpOvlSorted.forEach(fi=>{{const s=rbpArcSegsFlat[fi];if(s.label&&!rbpAnnMap[s.label])rbpAnnMap[s.label]={{name:s.name,color:rbpMap[s.name]?rbpMap[s.name].color:'#888'}};}});
     // Draw RBP arc groups
     Object.entries(rbpArcGroups).forEach(([name,arcs])=>{{
