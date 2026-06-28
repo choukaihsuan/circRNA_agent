@@ -125,6 +125,48 @@
     .param-group input:focus { outline: none; border-color: var(--primary); }
     .param-hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
+    /* ── Tutorial ── */
+    .tut-body { display:none; margin-top:16px; }
+    .tut-body.open { display:block; }
+    .tut-tabs { display:flex; border-bottom:2px solid var(--border); margin-bottom:18px; gap:0; }
+    .tut-tab  { padding:8px 20px; font-size:13px; font-weight:600; cursor:pointer;
+                border:none; background:none; color:var(--muted);
+                border-bottom:2px solid transparent; margin-bottom:-2px; transition:color .15s; }
+    .tut-tab.active { color:#7c3aed; border-bottom-color:#7c3aed; }
+    .tut-panel { display:none; }
+    .tut-panel.active { display:block; }
+    .step-card { display:flex; gap:16px; margin-bottom:22px; align-items:flex-start; }
+    .step-num  { flex-shrink:0; width:32px; height:32px; border-radius:50%;
+                 background:#7c3aed; color:#fff; font-size:15px; font-weight:700;
+                 display:flex; align-items:center; justify-content:center; margin-top:2px; }
+    .step-content h4 { font-size:15px; font-weight:700; margin-bottom:5px; }
+    .step-content p  { font-size:13px; color:#374151; line-height:1.6; margin-bottom:6px; }
+    .tip-box  { background:#fef9c3; border-left:3px solid #eab308; border-radius:6px;
+                padding:8px 12px; font-size:12px; color:#713f12; margin-top:6px; line-height:1.5; }
+    .info-box { background:#eff6ff; border-left:3px solid #3b82f6; border-radius:6px;
+                padding:8px 12px; font-size:12px; color:#1e3a5f; margin-top:6px; line-height:1.5; }
+    .warn-box { background:#fef2f2; border-left:3px solid #ef4444; border-radius:6px;
+                padding:8px 12px; font-size:12px; color:#7f1d1d; margin-top:6px; line-height:1.5; }
+    .code-inline { font-family:monospace; background:#f1f5f9; border:1px solid var(--border);
+                   border-radius:4px; padding:1px 5px; font-size:12px; }
+    .tut-kv   { display:grid; grid-template-columns:auto 1fr; gap:4px 14px;
+                font-size:12px; margin-top:6px; }
+    .tut-kv dt { font-weight:700; color:#4b5563; white-space:nowrap; }
+    .tut-kv dd { color:#374151; line-height:1.5; }
+    .tut-flow { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:10px 0;
+                font-size:12px; font-weight:600; }
+    .tut-flow-step { background:#ede9fe; color:#5b21b6; padding:4px 12px;
+                     border-radius:999px; white-space:nowrap; }
+    .tut-flow-arrow { color:var(--muted); }
+    .rpt-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px;
+                 font-weight:700; margin-right:4px; }
+    .rpt-type1 { background:#d1fae5; color:#065f46; }
+    .rpt-type2 { background:#fef3c7; color:#78350f; }
+    .rpt-ns    { background:#f1f5f9; color:#475569; }
+    .rpt-section-title { font-size:13px; font-weight:700; color:#7c3aed;
+                         margin:20px 0 8px; padding-bottom:4px;
+                         border-bottom:1px solid #ede9fe; }
+
     /* ── Buttons ── */
     .btn-row { display: flex; gap: 12px; margin-top: 24px; }
     .btn { padding: 11px 24px; border: none; border-radius: 8px; font-size: 14px;
@@ -340,6 +382,218 @@
       </div>
     </div>
   </div>
+
+  <!-- ── Tutorial ── -->
+  <div class="section" id="tutorial-section" style="border-color:#ddd6fe; background:linear-gradient(135deg,#faf5ff,#fff);">
+    <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer"
+         onclick="toggleTutorial()">
+      <div>
+        <div class="section-title" style="color:#7c3aed">使用教學</div>
+        <h2 style="margin-bottom:0">📖 Pipeline 使用教學</h2>
+      </div>
+      <span id="tut-arrow" style="font-size:20px;color:var(--muted)">▶</span>
+    </div>
+
+    <div id="tut-body" class="tut-body">
+      <p style="font-size:13px;color:var(--muted);margin:12px 0 16px">
+        從選擇資料集到解讀報告，以下教學涵蓋完整分析流程與結果解讀說明。
+      </p>
+
+      <!-- Tab bar -->
+      <div class="tut-tabs">
+        <button class="tut-tab active" onclick="switchTutTab(this,'tut-workflow')">⚙️ 操作流程</button>
+        <button class="tut-tab"        onclick="switchTutTab(this,'tut-report')">📊 報告解讀</button>
+      </div>
+
+      <!-- ══ Panel 1: 操作流程 ══ -->
+      <div class="tut-panel active" id="tut-workflow">
+
+        <!-- Step 1 -->
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <div class="step-content">
+            <h4>選擇適合的 GEO 資料集</h4>
+            <p>在 <a href="https://www.ncbi.nlm.nih.gov/geo/" target="_blank">NCBI GEO</a> 搜尋 circRNA 相關研究。
+               找到目標 Series 後，確認以下三項關鍵欄位：</p>
+            <dl class="tut-kv">
+              <dt>Library Strategy</dt><dd>RNA-Seq（非 miRNA-Seq / ChIP-Seq）</dd>
+              <dt>Library Selection</dt><dd><b>TOTAL</b> 或 <b>other</b>（rRNA-depleted）；避免 <b>POLY_A</b></dd>
+              <dt>avgLength（SRA RunInfo）</dt><dd>≥ 100 bp（150 bp PE 最佳）</dd>
+            </dl>
+            <div class="tip-box">💡 點開上方「資料集選擇指引」可查看詳細因子評分表與已測試資料集清單。</div>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="step-card">
+          <div class="step-num">2</div>
+          <div class="step-content">
+            <h4>設定分析參數（Step 1–3）</h4>
+            <p>在頁面下方的 Step 1–3 表單依序設定：</p>
+            <dl class="tut-kv">
+              <dt>Step 1 — 偵測工具</dt>
+              <dd>預設選 <b>CIRIquant + DCC（共識模式）</b>；讀長 ≤ 75 bp 時只勾 CIRIquant。
+                  勾選「Adaptive fallback」可在工具偵測數嚴重失衡時自動降為單工具。</dd>
+              <dt>Step 2 — DE 方法</dt>
+              <dd>三種方法（edgeR / DESeq2 / limma-voom）<b>固定全跑</b>；
+                  選「報告主方法」決定報告預設顯示哪種結果。
+                  小樣本（n=3）建議選 <b>edgeR_ciriquant</b> 或 <b>limma-voom</b>。</dd>
+              <dt>Step 3 — 進階參數</dt>
+              <dd>min BSJ reads（過濾雜訊）、FDR / log2FC 閾值；一般保持預設即可。</dd>
+            </dl>
+            <div class="info-box">ℹ️ 設定完成後點「儲存設定」可先存下來，之後再決定是否執行。</div>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="step-card">
+          <div class="step-num">3</div>
+          <div class="step-content">
+            <h4>啟動分析</h4>
+            <p>共三種啟動方式，依資料來源選擇：</p>
+            <dl class="tut-kv">
+              <dt>方式一：GEO 一鍵啟動</dt>
+              <dd>輸入 GSE ID（如 <span class="code-inline">GSE113230</span>），點「🚀 一鍵啟動」。
+                  系統自動從 SRA 下載資料並執行完整 pipeline。適合大多數情況。</dd>
+              <dt>方式二：手動 SRR 清單</dt>
+              <dd>適合從大型資料集中<b>選取特定樣本</b>，或需要自訂 condition 標籤（tumor/normal 等）。
+                  可逐筆填入或上傳 CSV（格式：<span class="code-inline">srr_id,condition</span>）。</dd>
+              <dt>方式三：本地 FASTQ</dt>
+              <dd>Server 上已有 FASTQ 檔時，指定目錄路徑。系統自動偵測配對（支援 _1/_2、_R1/_R2 等格式），
+                  建立 symlink 後直接從 QC 步驟開始，略過下載。</dd>
+            </dl>
+            <div class="warn-box">⚠️ 啟動後請勿重新整理或關閉分析設定頁，改用「監控進度」頁追蹤狀態。</div>
+          </div>
+        </div>
+
+        <!-- Step 4 -->
+        <div class="step-card">
+          <div class="step-num">4</div>
+          <div class="step-content">
+            <h4>監控執行進度</h4>
+            <p>啟動後點「查看執行狀態」或輸入任務編號（格式 <span class="code-inline">GSE113230-XXXX</span>）進入狀態頁。</p>
+            <div class="tut-flow">
+              <span class="tut-flow-step">下載 SRA</span><span class="tut-flow-arrow">→</span>
+              <span class="tut-flow-step">FastQC</span><span class="tut-flow-arrow">→</span>
+              <span class="tut-flow-step">fastp 修剪</span><span class="tut-flow-arrow">→</span>
+              <span class="tut-flow-step">CIRIquant</span><span class="tut-flow-arrow">→</span>
+              <span class="tut-flow-step">STAR ×3</span><span class="tut-flow-arrow">→</span>
+              <span class="tut-flow-step">DCC</span><span class="tut-flow-arrow">→</span>
+              <span class="tut-flow-step">共識過濾</span><span class="tut-flow-arrow">→</span>
+              <span class="tut-flow-step">DE 分析</span><span class="tut-flow-arrow">→</span>
+              <span class="tut-flow-step">報告生成</span>
+            </div>
+            <dl class="tut-kv">
+              <dt>CIRIquant</dt><dd>耗時最長（NFS 環境約 2–4 小時/樣本）；同時最多跑 3 個</dd>
+              <dt>DCC</dt><dd>需 STAR mate1/mate2 完成才能執行；約 15–30 分/樣本</dd>
+              <dt>DE + 報告</dt><dd>全部 circRNA 偵測完成後約需 10–20 分鐘</dd>
+            </dl>
+            <div class="tip-box">💡 狀態頁每 5 秒自動更新。Web UI 重啟後仍可正確推斷已完成步驟。</div>
+          </div>
+        </div>
+
+        <!-- Step 5 -->
+        <div class="step-card">
+          <div class="step-num">5</div>
+          <div class="step-content">
+            <h4>下載並解讀報告</h4>
+            <p>所有步驟完成後，狀態頁頂部出現「📥 下載報告」與「🔗 在線瀏覽」按鈕。</p>
+            <dl class="tut-kv">
+              <dt>report.html</dt><dd>自包含單一 HTML 檔，可離線開啟，含所有互動式圖表</dd>
+              <dt>count_matrix.tsv</dt><dd>BSJ count 矩陣，可用於自訂下游分析</dd>
+              <dt>de_results.tsv</dt><dd>三種 DE 方法的完整結果（logFC、p-value、Type）</dd>
+            </dl>
+            <div class="info-box">ℹ️ 切換到「📊 報告解讀」頁籤，了解報告各區塊的意義與解讀重點。</div>
+          </div>
+        </div>
+
+      </div><!-- /tut-workflow -->
+
+      <!-- ══ Panel 2: 報告解讀 ══ -->
+      <div class="tut-panel" id="tut-report">
+
+        <div class="rpt-section-title">① Summary 統計方塊 &amp; DE 方法切換</div>
+        <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px">
+          報告頂部顯示四個統計方塊（Total circRNAs / Significant / Up / Down）和三個方法切換按鈕。
+        </p>
+        <dl class="tut-kv" style="font-size:12px">
+          <dt>Total circRNAs</dt><dd>通過共識過濾、進入 DE 分析的 circRNA 總數（含低表達過濾後）</dd>
+          <dt>Significant</dt><dd>|log2FC| ≥ 設定閾值（預設 1.0）且 p-value &lt; 0.05 的 circRNA 數</dd>
+          <dt>edgeR_ciriquant</dt><dd>主方法；BSJ/FSJ ratio 測試，區分 Type I/II；小樣本首選</dd>
+          <dt>DESeq2</dt><dd>BSJ count Wald test；poscounts 正規化，避開全零問題；較保守</dd>
+          <dt>limma-voom</dt><dd>TMM + voom weights；稀疏計數最穩健；偵測到的 DE 數最多</dd>
+        </dl>
+        <div class="tip-box">💡 三種方法切換時，Volcano 圖、Heatmap、Top DE 表格、Biomarker 表格全部同步更新，不需重新載入頁面。</div>
+
+        <div class="rpt-section-title">② Venn Diagram — 三方法交集</div>
+        <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px">
+          三個圓分別代表三種 DE 方法偵測到的顯著 circRNA 集合。<b>點擊任意區域</b>可看對應 circRNA 清單。
+        </p>
+        <dl class="tut-kv" style="font-size:12px">
+          <dt>三圓交集（中心）</dt><dd>三種方法均顯著，最可靠的 DE circRNA，優先關注</dd>
+          <dt>僅一圓</dt><dd>方法特異性結果；edgeR 獨有的通常是 FSJ ratio 效果；limma 獨有的多是低豐度</dd>
+          <dt>交集 &gt; 60%</dt><dd>三方法高度一致，表示 DE 結果穩健；小樣本 (n=3) 通常交集較低</dd>
+        </dl>
+
+        <div class="rpt-section-title">③ Type I / II 分類（edgeR_ciriquant 專屬）</div>
+        <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:4px">
+          edgeR_ciriquant 透過 BSJ/FSJ ratio 測試，可區分 circRNA 的調控模式：
+        </p>
+        <div style="font-size:12px;line-height:1.7">
+          <span class="rpt-badge rpt-type1">Type I</span>
+          <b>circRNA 特異性調控</b>：BSJ count ratio 改變，FSJ（線性轉錄本）不變。
+          環化效率真正改變，是 circRNA biomarker 研究的主要目標。典型比例 85–97%。<br>
+          <span class="rpt-badge rpt-type2">Type II</span>
+          <b>兩層同時調控</b>：BSJ ratio 顯著且 FSJ 獨立也顯著。circRNA + parent gene 同步改變。<br>
+          <span class="rpt-badge rpt-ns">Type III / NS</span>
+          FSJ 顯著但 BSJ 不顯著，或統計未達閾值。不計入顯著 DE。
+        </div>
+        <div class="info-box">ℹ️ 高 Type I 比例（&gt;80%）表示分析找到的是 circRNA 專一性調控，臨床生物標記潛力較高。</div>
+
+        <div class="rpt-section-title">④ Biomarker 候選表</div>
+        <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px">
+          對顯著 DE circRNA 計算六維 composite score，由高到低排列 Top 30。
+        </p>
+        <dl class="tut-kv" style="font-size:12px">
+          <dt>sig_norm</dt><dd>−log10(p-value)，越顯著分數越高（上限 10）</dd>
+          <dt>fc_norm</dt><dd>|log2FC|，效應量越大分數越高（上限 5）</dd>
+          <dt>conf_norm</dt><dd>共識 confidence score：log2(BSJ+1) × 座標一致性，越高越可靠</dd>
+          <dt>known_bonus</dt><dd>在 circBase 資料庫中有記錄 → +1（已知 circRNA）</dd>
+          <dt>mirna_norm</dt><dd>distinct miRNA sponge binding 數（來自 CircInteractome/ENCORI）</dd>
+          <dt>rbp_norm</dt><dd>distinct RBP binding 數（來自 CircInteractome/ENCORI）</dd>
+        </dl>
+        <div class="tip-box">💡 點擊任意 circ_id 可開啟詳細 modal，查看 miRNA sponge、RBP binding site、mini Volcano 與 Heatmap。</div>
+
+        <div class="rpt-section-title">⑤ circRNA 詳細 Modal — Circular Structure &amp; Interaction</div>
+        <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px">
+          點擊任意 circ_id 開啟詳細視窗，包含四個分頁：
+        </p>
+        <dl class="tut-kv" style="font-size:12px">
+          <dt>⬛ Circular Structure</dt>
+          <dd>環狀圖顯示 exon 結構；外圈 badge = miRNA binding site；內圈 = RBP binding site。
+              點擊 badge 可展開/收起對應 binding，顯示 binding 序列與位置。可下載 SVG。</dd>
+          <dt>📺 miRNA Sponge</dt>
+          <dd>所有 miRNA binding site 列表，含 Priority Score（8mer seed +4、CLIP evidence +3、已知 circBase +1）。
+              Binding Seq 欄自動從 UCSC hg19 API 取得結合序列。可排序、下載 CSV。</dd>
+          <dt>🧬 RBP Binding</dt>
+          <dd>RBP binding site 列表，Priority Score 含 CLIP evidence、ENCORI 支援、in_circ 分類。</dd>
+          <dt>📈 Volcano / 🔥 Heatmap</dt>
+          <dd>Mini 互動圖表，標示該 circRNA 在全局中的位置；可下載 PNG。</dd>
+        </dl>
+        <div class="info-box">ℹ️ miRNA 和 RBP 資料來自 CircInteractome 與 ENCORI（各取 top-50 up/down 聯集，約 150–250 個 circRNA）。無 interaction data 的 circRNA 對應欄位顯示「—」。</div>
+
+        <div class="rpt-section-title">⑥ Heatmap &amp; Volcano 操作技巧</div>
+        <dl class="tut-kv" style="font-size:12px">
+          <dt>Heatmap Top-N 控制</dt><dd>預設顯示 10 up + 10 down；可調整至最高 50+50。Tumor 欄在左（紅色），Normal 在右（綠色）</dd>
+          <dt>Volcano 標記開關</dt><dd>右上角「Heatmap circles: ON/OFF」切換 Heatmap 前 N 個 circRNA 在 Volcano 上的標記</dd>
+          <dt>圖表下載</dt><dd>Plotly 圖表右上角浮動工具列可下載 PNG；各表格右上角「⬇ CSV」可匯出資料</dd>
+          <dt>列印 / 存 PDF</dt><dd>頁面頂部「🖨 列印」按鈕，支援 @media print 排版（圖表不跨頁，表格從新頁開始）</dd>
+        </dl>
+
+      </div><!-- /tut-report -->
+
+    </div><!-- /tut-body -->
+  </div><!-- /tutorial-section -->
 
   <!-- ── 啟動分析 ── -->
   <div class="section" style="border-color:#99f6e4; background:linear-gradient(135deg,#f0fdfa,#fff);">
@@ -980,6 +1234,22 @@
     const v = document.getElementById('gse-id-input');
     if (v && v.value.trim().length >= 6) detectLabels(v.value.trim());
   })();
+
+  // Tutorial toggle
+  function toggleTutorial() {
+    const body  = document.getElementById('tut-body');
+    const arrow = document.getElementById('tut-arrow');
+    const open  = body.classList.toggle('open');
+    arrow.textContent = open ? '▼' : '▶';
+  }
+
+  // Tutorial inner tabs
+  function switchTutTab(btn, panelId) {
+    document.querySelectorAll('.tut-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tut-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(panelId).classList.add('active');
+  }
 </script>
 </body>
 </html>
