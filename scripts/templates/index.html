@@ -282,6 +282,12 @@
       <button class="lang-btn active" data-lang="zh" onclick="switchLang('zh')">中文</button>
       <button class="lang-btn"        data-lang="en" onclick="switchLang('en')">EN</button>
     </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:8px;">
+      {% if session.email %}
+      <span style="font-size:11px;color:#64748b;">{{ session.email }}</span>
+      <a href="/logout" style="font-size:11px;color:#94a3b8;text-decoration:none;">登出</a>
+      {% endif %}
+    </div>
   </div>
 
   <!-- ── 查詢任務進度 ── -->
@@ -643,11 +649,19 @@
                  min="1" max="96" style="width:70px;padding:10px 8px;border:1px solid var(--border);
                  border-radius:8px;font-size:14px;text-align:center;" title="CPU cores">
           <span style="font-size:12px;color:var(--muted)">cores</span>
-          <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %} data-en="🚀 Launch">
-            🚀 一鍵啟動
+          <button type="submit" class="btn btn-geo" data-en="🚀 Launch">
+            🚀 加入佇列
           </button>
         </div>
-        <div class="geo-hint" data-en="⚙️ Uses current Step 1–3 settings. After launch, go to 'View Status' to track progress.">⚙️ 使用目前 Step 1–3 的參數設定執行；啟動後可至「查看執行狀態」追蹤進度。</div>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+          <input type="email" name="notify_email" placeholder="完成後通知 Email（選填）"
+                 style="flex:1;padding:8px 12px;border:1px solid var(--border);
+                        border-radius:8px;font-size:13px;color:#374151;">
+          <a href="/queue" style="font-size:12px;color:var(--primary);white-space:nowrap;text-decoration:none;">
+            📋 查看佇列 →
+          </a>
+        </div>
+        <div class="geo-hint" data-en="⚙️ Job is added to the FIFO queue and starts automatically.">⚙️ 工作加入排隊後自動依序執行；啟動後可至「查看佇列」追蹤進度。</div>
       </form>
     </div>
 

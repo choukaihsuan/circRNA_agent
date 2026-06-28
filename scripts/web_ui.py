@@ -12,11 +12,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
+import secrets
+import smtplib
+import sqlite3
 import string
 import subprocess
-from datetime import datetime
+import threading
+import time
+from datetime import datetime, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from functools import wraps
 from pathlib import Path
 from typing import Optional
 
@@ -26,13 +35,30 @@ import io
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent))
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import (Flask, jsonify, redirect, render_template,
+                   request, session, url_for)
 
-app = Flask(__name__, template_folder="templates")
 BASE_DIR = Path(__file__).parent.parent
 CONFIG_PATH = BASE_DIR / "config.yaml"
 LOG_PATH = BASE_DIR / "logs" / "pipeline_run.log"
 REGISTRY_PATH = BASE_DIR / "jobs" / "registry.json"
+QUEUE_DB = BASE_DIR / "jobs" / "queue.db"
+SECRET_KEY_FILE = BASE_DIR / "jobs" / "secret_key.txt"
+SESSION_DAYS = 7          # session lifetime
+TOKEN_MINUTES = 30        # magic link expiry
+
+
+def _get_secret_key() -> str:
+    SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if SECRET_KEY_FILE.exists():
+        return SECRET_KEY_FILE.read_text().strip()
+    key = secrets.token_hex(32)
+    SECRET_KEY_FILE.write_text(key)
+    return key
+
+
+app = Flask(__name__, template_folder="templates")
+app.secret_key = _get_secret_key()
 
 
 # ── Job registry ──────────────────────────────────────────────────────────────
@@ -70,6 +96,358 @@ def register_job(job_id: str, gse_id: str, log_path: Path, cores: int) -> None:
 
 def job_log_path(job_id: str) -> Path:
     return BASE_DIR / "logs" / f"pipeline_{job_id}.log"
+
+
+# ── Job Queue (SQLite FIFO) ───────────────────────────────────────────────────
+
+def _qdb() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(QUEUE_DB), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_queue_db() -> None:
+    QUEUE_DB.parent.mkdir(parents=True, exist_ok=True)
+    with _qdb() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id           TEXT PRIMARY KEY,
+                gse_id       TEXT NOT NULL,
+                user_email   TEXT DEFAULT '',
+                submitted_at TEXT NOT NULL,
+                status       TEXT DEFAULT 'pending',
+                started_at   TEXT,
+                completed_at TEXT,
+                cores        INTEGER DEFAULT 8,
+                command      TEXT,
+                log_path     TEXT,
+                error_msg    TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                token      TEXT PRIMARY KEY,
+                email      TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used       INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS login_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                email      TEXT NOT NULL,
+                action     TEXT NOT NULL,
+                ts         TEXT NOT NULL,
+                ip         TEXT DEFAULT ''
+            )
+        """)
+
+
+def queue_add(job_id: str, gse_id: str, command: list,
+              log_path: str, cores: int, user_email: str = "") -> None:
+    with _qdb() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, gse_id, user_email, submitted_at, command, log_path, cores) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (job_id, gse_id, user_email,
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+             json.dumps(command), log_path, cores)
+        )
+
+
+def queue_list() -> list:
+    with _qdb() as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs ORDER BY submitted_at ASC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def queue_next_pending() -> Optional[dict]:
+    with _qdb() as conn:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE status='pending' ORDER BY submitted_at ASC LIMIT 1"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def queue_set_status(job_id: str, status: str, **extra) -> None:
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cols: dict = {"status": status}
+    if status == "running":
+        cols["started_at"] = now_str
+    elif status in ("completed", "failed"):
+        cols["completed_at"] = now_str
+    cols.update(extra)
+    set_clause = ", ".join(f"{k}=?" for k in cols)
+    with _qdb() as conn:
+        conn.execute(
+            f"UPDATE jobs SET {set_clause} WHERE id=?",
+            list(cols.values()) + [job_id]
+        )
+
+
+def queue_get(job_id: str) -> Optional[dict]:
+    with _qdb() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def queue_position(job_id: str) -> int:
+    """1-based position among pending jobs; 0 if not pending."""
+    with _qdb() as conn:
+        row = conn.execute("SELECT status, submitted_at FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row or row["status"] != "pending":
+            return 0
+        pos = conn.execute(
+            "SELECT COUNT(*) FROM jobs "
+            "WHERE status='pending' AND submitted_at <= ?",
+            (row["submitted_at"],)
+        ).fetchone()[0]
+    return pos
+
+
+# ── Auth (magic link) ────────────────────────────────────────────────────────
+
+def auth_create_token(email: str) -> str:
+    token = secrets.token_urlsafe(32)
+    now = datetime.now()
+    expires = (now + timedelta(minutes=TOKEN_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    with _qdb() as conn:
+        conn.execute(
+            "INSERT INTO auth_tokens (token, email, created_at, expires_at) VALUES (?,?,?,?)",
+            (token, email, now.strftime("%Y-%m-%d %H:%M:%S"), expires)
+        )
+    return token
+
+
+def auth_validate_token(token: str) -> Optional[str]:
+    """Return email if token valid; mark used. Return None on failure."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _qdb() as conn:
+        row = conn.execute(
+            "SELECT email, expires_at, used FROM auth_tokens WHERE token=?", (token,)
+        ).fetchone()
+        if not row or row["used"] or row["expires_at"] < now:
+            return None
+        conn.execute("UPDATE auth_tokens SET used=1 WHERE token=?", (token,))
+        return row["email"]
+
+
+def auth_log(email: str, action: str, ip: str = "") -> None:
+    with _qdb() as conn:
+        conn.execute(
+            "INSERT INTO login_log (email, action, ts, ip) VALUES (?,?,?,?)",
+            (email, action, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ip)
+        )
+
+
+def send_magic_link(to_email: str, link: str) -> bool:
+    """Send magic link. Try Resend → SMTP → console (dev fallback)."""
+    subject = "circRNA Pipeline 登入連結"
+    html_body = f"""
+<p>您好，</p>
+<p>請點擊以下連結登入 circRNA Pipeline UI（連結 {TOKEN_MINUTES} 分鐘內有效）：</p>
+<p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
+<p style="color:#666;font-size:12px;">如非您本人操作，請忽略此信件。</p>
+"""
+    # 1. Resend API
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    if api_key:
+        try:
+            import urllib.request, urllib.parse
+            payload = json.dumps({
+                "from": os.environ.get("RESEND_FROM", "onboarding@resend.dev"),
+                "to": [to_email],
+                "subject": subject,
+                "html": html_body,
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.resend.com/emails",
+                data=payload,
+                headers={"Authorization": f"Bearer {api_key}",
+                         "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status < 300
+        except Exception as e:
+            print(f"[Auth] Resend failed: {e}", flush=True)
+
+    # 2. SMTP（自訂 SMTP_HOST）
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    if smtp_host:
+        try:
+            smtp_port = int(os.environ.get("SMTP_PORT", 587))
+            smtp_user = os.environ.get("SMTP_USER", "")
+            smtp_pass = os.environ.get("SMTP_PASS", "")
+            from_addr = os.environ.get("SMTP_FROM", smtp_user or "noreply@localhost")
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"]    = from_addr
+            msg["To"]      = to_email
+            msg.attach(MIMEText(html_body, "html"))
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as s:
+                s.ehlo()
+                if smtp_port == 587:
+                    s.starttls()
+                if smtp_user:
+                    s.login(smtp_user, smtp_pass)
+                s.sendmail(from_addr, to_email, msg.as_string())
+            return True
+        except Exception as e:
+            print(f"[Auth] SMTP failed: {e}", flush=True)
+
+    # 3. Gmail fallback（複用 notify.py 的 NOTIFY_EMAIL_FROM / NOTIFY_EMAIL_PASS）
+    gmail_user = os.environ.get("NOTIFY_EMAIL_FROM", "")
+    gmail_pass = os.environ.get("NOTIFY_EMAIL_PASS", "")
+    if gmail_user and gmail_pass:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"]    = gmail_user
+            msg["To"]      = to_email
+            msg.attach(MIMEText(html_body, "html"))
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:
+                s.ehlo()
+                s.starttls()
+                s.login(gmail_user, gmail_pass)
+                s.sendmail(gmail_user, to_email, msg.as_string())
+            print(f"[Auth] Gmail sent to {to_email}", flush=True)
+            return True
+        except Exception as e:
+            print(f"[Auth] Gmail failed: {e}", flush=True)
+
+    # 3. Console fallback (dev / no mail configured)
+    print(f"\n{'='*60}", flush=True)
+    print(f"[Magic Link] To: {to_email}", flush=True)
+    print(f"  {link}", flush=True)
+    print(f"{'='*60}\n", flush=True)
+    return True  # always "succeeds" in dev mode
+
+
+# ── before_request: enforce login ─────────────────────────────────────────────
+
+_NO_AUTH_ENDPOINTS = {"login", "auth_magic_link", "logout", "static"}
+
+
+@app.before_request
+def require_login():
+    if request.endpoint in _NO_AUTH_ENDPOINTS:
+        return None
+    email = session.get("email")
+    expires = session.get("session_expires", "")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if not email or (expires and now > expires):
+        session.clear()
+        return redirect(url_for("login", next=request.path))
+    return None
+
+
+# ── Auth routes ────────────────────────────────────────────────────────────────
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    sent = request.args.get("sent")
+    error = ""
+    sent_email = ""
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        if not email or "@" not in email:
+            error = "請輸入有效的 Email 地址。"
+        else:
+            token = auth_create_token(email)
+            base = request.url_root.rstrip("/")
+            link = f"{base}/auth/{token}"
+            send_magic_link(email, link)
+            auth_log(email, "request_magic_link", request.remote_addr)
+            sent_email = email
+            sent = "1"
+    return render_template("login.html", sent=sent, sent_email=sent_email, error=error,
+                           TOKEN_MINUTES=TOKEN_MINUTES)
+
+
+@app.route("/auth/<token>")
+def auth_magic_link(token: str):
+    email = auth_validate_token(token)
+    if not email:
+        return render_template("login.html", sent=None, sent_email="",
+                               error="連結已失效或已使用，請重新登入。",
+                               TOKEN_MINUTES=TOKEN_MINUTES)
+    session["email"] = email
+    session["session_expires"] = (
+        datetime.now() + timedelta(days=SESSION_DAYS)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    auth_log(email, "login_success", request.remote_addr)
+    return redirect(request.args.get("next") or url_for("index"))
+
+
+@app.route("/logout")
+def logout():
+    email = session.get("email", "")
+    if email:
+        auth_log(email, "logout", request.remote_addr)
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ── Background Queue Worker ───────────────────────────────────────────────────
+
+_worker_lock = threading.Lock()
+
+
+def _reset_orphaned_running() -> None:
+    """On startup: if no Snakemake process exists, reset 'running' jobs to 'pending'."""
+    if not pipeline_is_running():
+        with _qdb() as conn:
+            conn.execute(
+                "UPDATE jobs SET status='pending', started_at=NULL WHERE status='running'"
+            )
+
+
+def _run_queued_job(job: dict) -> None:
+    job_id   = job["id"]
+    gse_id   = job["gse_id"]
+    cores    = job["cores"]
+    log_path = Path(job["log_path"])
+    try:
+        cmd = json.loads(job["command"])
+    except (json.JSONDecodeError, TypeError):
+        queue_set_status(job_id, "failed", error_msg="Invalid command JSON")
+        return
+
+    queue_set_status(job_id, "running")
+    register_job(job_id, gse_id, log_path, cores)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(log_path, "w") as lf:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(BASE_DIR),
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                env=_snake_env(),
+            )
+        proc.wait()
+        status = "completed" if proc.returncode == 0 else "failed"
+        queue_set_status(job_id, status)
+    except Exception as exc:
+        queue_set_status(job_id, "failed", error_msg=str(exc))
+
+
+def _queue_worker() -> None:
+    _reset_orphaned_running()
+    while True:
+        try:
+            with _worker_lock:
+                if not pipeline_is_running():
+                    job = queue_next_pending()
+                    if job:
+                        _run_queued_job(job)
+        except Exception as exc:
+            print(f"[Queue Worker] {exc}", flush=True)
+        time.sleep(10)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -577,30 +955,22 @@ def update():
     save_project_snapshot(cfg)
 
     if request.form.get("action") == "run":
-        kill_pipeline()
         cores = cfg["threads"] * 4
         gse_id = cfg.get("project_id", "pipeline")
         job_id = generate_job_id(gse_id)
         log_path = job_log_path(job_id)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "w") as log_f:
-            subprocess.Popen(
-                [
-                    _snake_bin(),
-                    "--snakefile", "workflow/Snakefile",
-                    "--configfile", _configfile_for(gse_id),
-                    "--cores", str(cores),
-                    "--resources", f"mem_gb={cfg.get('resources', {}).get('mem_gb', 300)}",
-                    "--keep-going",
-                    "--rerun-incomplete",
-                ],
-                cwd=str(BASE_DIR),
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                env=_snake_env(),
-            )
-        register_job(job_id, gse_id, log_path, cores)
-        return redirect(url_for("status_job", job_id=job_id))
+        user_email = request.form.get("notify_email", "").strip()
+        cmd = [
+            _snake_bin(),
+            "--snakefile", "workflow/Snakefile",
+            "--configfile", _configfile_for(gse_id),
+            "--cores", str(cores),
+            "--resources", f"mem_gb={cfg.get('resources', {}).get('mem_gb', 300)}",
+            "--keep-going",
+            "--rerun-incomplete",
+        ]
+        queue_add(job_id, gse_id, cmd, str(log_path), cores, user_email)
+        return redirect(url_for("queue_page"))
 
     return redirect(url_for("index"))
 
@@ -637,16 +1007,10 @@ def run_gse():
 
     save_project_snapshot(cfg)
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w") as log_f:
-        subprocess.Popen(
-            ["python", "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)],
-            cwd=str(BASE_DIR),
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-        )
-    register_job(job_id, gse_id, log_path, cores)
-    return redirect(url_for("status_job", job_id=job_id))
+    user_email = request.form.get("notify_email", "").strip()
+    cmd = [_sys.executable, "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)]
+    queue_add(job_id, gse_id, cmd, str(log_path), cores, user_email)
+    return redirect(url_for("queue_page"))
 
 
 @app.route("/run_manual", methods=["POST"])
@@ -728,29 +1092,19 @@ def run_manual():
         cfg["study_title"] = _fetch_geo_title(project_id)
     save_project_snapshot(cfg)
 
-    # ── Kill any leftover pipeline before launching ────────────────────────────
-    kill_pipeline()
-
-    # ── Launch Snakemake via same Python env as web_ui ──────────────────────────
-    _snake = _snake_bin()
-
+    # ── Enqueue job (FIFO) ──────────────────────────────────────────────────────
     job_id   = generate_job_id(project_id)
     log_path = job_log_path(job_id)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w") as log_f:
-        subprocess.Popen(
-            [_snake,
-             "--snakefile", "workflow/Snakefile",
-             "--configfile", _configfile_for(project_id),
-             "--cores", str(cores),
-             "--keep-going", "--rerun-incomplete"],
-            cwd=str(BASE_DIR),
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-            env=_snake_env(),
-        )
-    register_job(job_id, project_id, log_path, cores)
-    return redirect(url_for("status_job", job_id=job_id))
+    user_email = notify_email  # already extracted above
+    cmd = [
+        _snake_bin(),
+        "--snakefile", "workflow/Snakefile",
+        "--configfile", _configfile_for(project_id),
+        "--cores", str(cores),
+        "--keep-going", "--rerun-incomplete",
+    ]
+    queue_add(job_id, project_id, cmd, str(log_path), cores, user_email)
+    return redirect(url_for("queue_page"))
 
 
 @app.route("/api/scan_fastq")
@@ -869,25 +1223,18 @@ def run_local():
         cfg.setdefault("notify", {})["email_to"] = notify_email
     save_project_snapshot(cfg)
 
-    kill_pipeline()
-    _snake   = _snake_bin()
-    job_id   = generate_job_id(project_id)
-    log_path = job_log_path(job_id)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w") as log_f:
-        subprocess.Popen(
-            [_snake,
-             "--snakefile", "workflow/Snakefile",
-             "--configfile", _configfile_for(project_id),
-             "--cores", str(cores),
-             "--keep-going", "--rerun-incomplete"],
-            cwd=str(BASE_DIR),
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-            env=_snake_env(),
-        )
-    register_job(job_id, project_id, log_path, cores)
-    return redirect(url_for("status_job", job_id=job_id))
+    job_id     = generate_job_id(project_id)
+    log_path   = job_log_path(job_id)
+    user_email = request.form.get("notify_email", "").strip()
+    cmd = [
+        _snake_bin(),
+        "--snakefile", "workflow/Snakefile",
+        "--configfile", _configfile_for(project_id),
+        "--cores", str(cores),
+        "--keep-going", "--rerun-incomplete",
+    ]
+    queue_add(job_id, project_id, cmd, str(log_path), cores, user_email)
+    return redirect(url_for("queue_page"))
 
 
 @app.route("/status")
@@ -905,25 +1252,76 @@ def status():
     )
 
 
+@app.route("/queue")
+def queue_page():
+    jobs = queue_list()
+    pending_pos = 0
+    for j in jobs:
+        if j["status"] == "pending":
+            pending_pos += 1
+            j["position"] = pending_pos
+        else:
+            j["position"] = None
+    return render_template("queue.html", jobs=jobs)
+
+
+@app.route("/api/queue")
+def api_queue():
+    jobs = queue_list()
+    return jsonify({"jobs": jobs, "count": len(jobs)})
+
+
+@app.route("/api/queue/position/<job_id>")
+def api_queue_position(job_id: str):
+    qjob = queue_get(job_id)
+    if qjob is None:
+        return jsonify({"job_id": job_id, "status": "unknown", "position": 0})
+    pos = queue_position(job_id) if qjob["status"] == "pending" else 0
+    return jsonify({
+        "job_id":   job_id,
+        "status":   qjob["status"],
+        "position": pos,
+        "gse_id":   qjob["gse_id"],
+        "submitted_at": qjob["submitted_at"],
+    })
+
+
 @app.route("/status/<job_id>")
 def status_job(job_id: str):
     registry = load_registry()
     job = registry.get(job_id)
-    if job is None:
+    # Job might be queued but not yet started (not in registry yet)
+    qjob = queue_get(job_id)
+    if job is None and qjob is None:
         return render_template(
             "status.html",
             log=f"找不到任務編號：{job_id}",
             running=False,
             job=None,
             job_id=job_id,
+            queue_status=None,
         ), 404
-    log_path = BASE_DIR / job["log"]
+    # Pending job: not started yet, show queue position
+    if qjob and qjob["status"] == "pending":
+        pos = queue_position(job_id)
+        return render_template(
+            "status.html",
+            log="",
+            running=False,
+            job={"job_id": job_id, "gse_id": qjob["gse_id"],
+                 "start_time": qjob["submitted_at"], "cores": qjob["cores"],
+                 "log": f"logs/pipeline_{job_id}.log"},
+            job_id=job_id,
+            queue_status={"status": "pending", "position": pos},
+        )
+    log_path = BASE_DIR / (job or {}).get("log", f"logs/pipeline_{job_id}.log")
     return render_template(
         "status.html",
         log=tail_log(path=log_path),
         running=pipeline_is_running(),
-        job=job,
+        job=job or qjob,
         job_id=job_id,
+        queue_status={"status": qjob["status"]} if qjob else None,
     )
 
 
@@ -1095,5 +1493,12 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
+
+    # Initialise queue DB and start background worker
+    init_queue_db()
+    _worker = threading.Thread(target=_queue_worker, daemon=True)
+    _worker.start()
+    print("  [Queue Worker] started (FIFO, SQLite)", flush=True)
+
     print(f"  circRNA Pipeline UI  →  http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, debug=False)

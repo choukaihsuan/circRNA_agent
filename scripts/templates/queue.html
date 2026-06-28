@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>工作佇列 – circRNA Pipeline</title>
+  <style>
+    :root { --primary:#2563eb; --success:#16a34a; --warn:#d97706;
+            --error:#dc2626; --border:#e2e8f0; --bg:#f8fafc; --radius:12px; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+           background:var(--bg); color:#1e293b; }
+    .container { max-width:960px; margin:0 auto; padding:32px 16px 64px; }
+
+    .header { display:flex; align-items:center; gap:12px; margin-bottom:28px; }
+    .header h1 { font-size:20px; font-weight:700; }
+    .back-link { font-size:13px; color:var(--primary); text-decoration:none;
+                 margin-left:auto; }
+    .back-link:hover { text-decoration:underline; }
+
+    .card { background:white; border:1px solid var(--border);
+            border-radius:var(--radius); padding:24px; margin-bottom:20px; }
+
+    /* Stats row */
+    .stats { display:flex; gap:16px; margin-bottom:24px; flex-wrap:wrap; }
+    .stat-box { background:white; border:1px solid var(--border);
+                border-radius:10px; padding:16px 20px; flex:1; min-width:120px; }
+    .stat-num  { font-size:28px; font-weight:700; }
+    .stat-label{ font-size:12px; color:#64748b; margin-top:2px; }
+    .stat-box.running { border-color:var(--primary); }
+    .stat-box.pending  { border-color:var(--warn); }
+    .stat-box.done    { border-color:var(--success); }
+    .stat-box.failed  { border-color:var(--error); }
+
+    /* Table */
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { background:#f1f5f9; padding:10px 12px; text-align:left;
+         font-weight:600; border-bottom:2px solid var(--border); }
+    td { padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:middle; }
+    tr:last-child td { border-bottom:none; }
+    tr:hover td { background:#f8fafc; }
+
+    /* Status badges */
+    .badge { display:inline-flex; align-items:center; gap:5px;
+             padding:3px 10px; border-radius:20px; font-size:12px; font-weight:600; }
+    .badge-pending  { background:#fef3c7; color:#92400e; }
+    .badge-running  { background:#dbeafe; color:var(--primary);
+                      animation:pulse 1.2s ease-in-out infinite; }
+    .badge-completed{ background:#dcfce7; color:#15803d; }
+    .badge-failed   { background:#fee2e2; color:var(--error); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+    .pos-chip { display:inline-block; background:#fef3c7; color:#92400e;
+                border-radius:20px; padding:2px 8px; font-size:11px;
+                font-weight:700; margin-left:6px; }
+
+    .btn-sm { padding:4px 12px; border-radius:6px; font-size:12px;
+              font-weight:600; text-decoration:none; color:white;
+              background:var(--primary); border:none; cursor:pointer; }
+    .btn-sm:hover { opacity:.85; }
+
+    .empty { text-align:center; padding:40px; color:#94a3b8; }
+    .refresh-note { font-size:11px; color:#94a3b8; text-align:right;
+                    margin-top:8px; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>📋 工作佇列</h1>
+    <a class="back-link" href="/">← 返回主頁</a>
+  </div>
+
+  <!-- Stats -->
+  {% set n_pending   = jobs | selectattr('status','eq','pending')   | list | length %}
+  {% set n_running   = jobs | selectattr('status','eq','running')   | list | length %}
+  {% set n_completed = jobs | selectattr('status','eq','completed') | list | length %}
+  {% set n_failed    = jobs | selectattr('status','eq','failed')    | list | length %}
+
+  <div class="stats">
+    <div class="stat-box pending">
+      <div class="stat-num">{{ n_pending }}</div>
+      <div class="stat-label">⏳ 排隊中</div>
+    </div>
+    <div class="stat-box running">
+      <div class="stat-num">{{ n_running }}</div>
+      <div class="stat-label">🔄 執行中</div>
+    </div>
+    <div class="stat-box done">
+      <div class="stat-num">{{ n_completed }}</div>
+      <div class="stat-label">✅ 已完成</div>
+    </div>
+    <div class="stat-box failed">
+      <div class="stat-num">{{ n_failed }}</div>
+      <div class="stat-label">❌ 失敗</div>
+    </div>
+  </div>
+
+  <!-- Queue table -->
+  <div class="card">
+    {% if jobs %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Job ID</th>
+          <th>GSE / 專案</th>
+          <th>Email</th>
+          <th>送出時間</th>
+          <th>狀態</th>
+          <th>開始</th>
+          <th>完成</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td style="color:#94a3b8;font-size:12px;">{{ loop.index }}</td>
+          <td style="font-family:monospace;font-size:12px;">{{ job.id }}</td>
+          <td><strong>{{ job.gse_id }}</strong></td>
+          <td style="color:#64748b;">{{ job.user_email or '—' }}</td>
+          <td style="font-size:12px;color:#64748b;">{{ job.submitted_at }}</td>
+          <td>
+            {% if job.status == 'pending' %}
+              <span class="badge badge-pending">
+                ⏳ 排隊中
+                {% if job.position %}
+                  <span class="pos-chip">第 {{ job.position }} 位</span>
+                {% endif %}
+              </span>
+            {% elif job.status == 'running' %}
+              <span class="badge badge-running">🔄 執行中</span>
+            {% elif job.status == 'completed' %}
+              <span class="badge badge-completed">✅ 完成</span>
+            {% else %}
+              <span class="badge badge-failed">❌ 失敗</span>
+            {% endif %}
+          </td>
+          <td style="font-size:12px;color:#64748b;">{{ job.started_at or '—' }}</td>
+          <td style="font-size:12px;color:#64748b;">{{ job.completed_at or '—' }}</td>
+          <td>
+            {% if job.status in ('running', 'completed', 'failed') %}
+            <a class="btn-sm" href="/status/{{ job.id }}">查看進度</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+      <p style="font-size:32px;margin-bottom:8px;">🎉</p>
+      <p>佇列是空的，沒有任何工作</p>
+      <a href="/" style="color:var(--primary);font-size:13px;">← 送出新分析</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <p class="refresh-note">每 15 秒自動重新整理</p>
+</div>
+
+<script>setTimeout(() => location.reload(), 15000);</script>
+</body>
+</html>
