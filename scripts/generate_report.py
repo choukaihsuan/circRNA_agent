@@ -1931,6 +1931,28 @@ def build_report(
         except Exception:
             pass
 
+    # Override n_mirna / n_rbp from current interactions.json (may be newer than biomarker_candidates.tsv)
+    # rank_biomarkers.py counts only entries where in_circ=True (or CircInteractome source).
+    # After predict_interactions re-run with --gtf, more ENCORI entries have in_circ=True.
+    def _is_in_circ_entry(e: dict) -> bool:
+        return e.get("source") == "CircInteractome" or bool(e.get("in_circ", False))
+    if interactions:
+        for _oc, _olu in _bm_lookup.items():
+            if _oc in interactions:
+                _ixn = interactions[_oc]
+                _nm = len(set(m.get("miRNAName", "") for m in _ixn.get("mirna", [])
+                              if m.get("miRNAName") and _is_in_circ_entry(m)))
+                _nr = len(set(r.get("RBPName", "") for r in _ixn.get("rbp", [])
+                              if r.get("RBPName") and _is_in_circ_entry(r)))
+                _olu["n_mirna"] = _nm
+                _olu["n_rbp"]   = _nr
+        # Recompute pre-normalized mirna_n / rbp_n in _bm_lookup after override
+        _ixn_mirna_mx = max((_bm_lookup[c].get("n_mirna", 0) for c in _bm_lookup), default=1) or 1
+        _ixn_rbp_mx   = max((_bm_lookup[c].get("n_rbp",   0) for c in _bm_lookup), default=1) or 1
+        for _olu in _bm_lookup.values():
+            _olu["mirna_n"] = _olu.get("n_mirna", 0) / _ixn_mirna_mx
+            _olu["rbp_n"]   = _olu.get("n_rbp",   0) / _ixn_rbp_mx
+
     # Supplement _bm_lookup from circbase_annotated.tsv + interactions
     # for circRNAs significant in DESeq2/limma but not in edgeR biomarker_candidates.tsv
     _mirna_mx_lk = max((_bm_lookup[c].get("n_mirna", 0) for c in _bm_lookup), default=1) or 1
@@ -2084,8 +2106,8 @@ function showCircDetail(circId) {{
       d.mirna||[], ['_priority','miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source','in_circ'],
       ['Priority','miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'mirna');
     document.getElementById('cm-rbp').innerHTML = _buildInteractionTable(
-      d.rbp||[], ['_priority','RBPName','bindingSites','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
-      ['Priority','RBP','Sites','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
+      d.rbp||[], ['_priority','RBPName','bindingSites','_mapped','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
+      ['Priority','RBP','Sites','Mapped','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
     _fetchSeqsInTable('cm-mirna');
     _fetchSeqsInTable('cm-rbp');
     const vEl = document.getElementById('cm-volcano');
@@ -2224,7 +2246,8 @@ function _drawCircleRNA(circId, container) {{
   if(totalLen>0&&rbpList.filter(r=>r.location==='internal').length>0)
     svg+=`<circle cx="${{cx}}" cy="${{cy}}" r="${{(RBP_OUT+RBP_IN)/2}}" fill="none" stroke="#e8f0e8" stroke-width="${{RBP_OUT-RBP_IN}}"/>`;
 
-  // ── Proportional exon boundaries ──
+  // ── Proportional exon boundaries (divider lines only here; labels drawn last) ──
+  let exonLabelSvg='';
   if(exonBds.length>0&&totalLen>0){{
     exonBds.forEach(eb=>{{
       // divider line at exon junction
@@ -2233,7 +2256,7 @@ function _drawCircleRNA(circId, container) {{
         const [lx1,ly1]=polar(RIN-2,a),[lx2,ly2]=polar(ROUT+2,a);
         svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="#999" stroke-width="1.5"/>`;
       }}
-      // exon label on the middle ring (between RIN and ROUT)
+      // exon label — collected and drawn after arcs so labels are on top
       const arcFrac=(eb.cum_end-eb.cum_start)/totalLen;
       const arcPx=arcFrac*2*Math.PI*(RIN+ROUT)/2;
       if(arcPx>30){{  // only label if enough space
@@ -2242,7 +2265,7 @@ function _drawCircleRNA(circId, container) {{
         const isLow=(aMid>0&&aMid<Math.PI);
         const tdeg=isLow?(aMid*180/Math.PI-90):(aMid*180/Math.PI+90);
         const exonLabel=eb.label.replace(/^e(\\d+)$/,'exon $1');
-        svg+=`<text transform="translate(${{lx.toFixed(1)}},${{ly.toFixed(1)}}) rotate(${{tdeg.toFixed(1)}})" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#444" font-weight="600">${{exonLabel}}</text>`;
+        exonLabelSvg+=`<text transform="translate(${{lx.toFixed(1)}},${{ly.toFixed(1)}}) rotate(${{tdeg.toFixed(1)}})" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#444" font-weight="600">${{exonLabel}}</text>`;
       }}
     }});
   }}
@@ -2266,7 +2289,10 @@ function _drawCircleRNA(circId, container) {{
   if(totalLen>0){{
     mirnaList.forEach(item=>{{
       const name=item.miRNAName||'';
-      const m=(item.circ_pos||'').match(/(\\d+)[–-](\\d+)/);
+      const rawCp=String(item.circ_pos||'');
+      // Skip absolute chromosome coords (ENCORI liftover failed) — cannot draw arc
+      if(/^chr/.test(rawCp))return;
+      const m=rawCp.match(/(\\d+)[–-](\\d+)/);
       if(!m)return;
       if(!(name in miMap)){{
         miIdx++;
@@ -2325,14 +2351,18 @@ function _drawCircleRNA(circId, container) {{
       if(!(name in rbpMap)){{
         rbpIdx++;
         rbpMap[name]={{num:rbpIdx,color:RBP_COLORS[(rbpIdx-1)%RBP_COLORS.length]}};
-        rbpLegend.push({{num:rbpIdx,name,color:rbpMap[name].color,ns:(item.sites||[]).length,src:item.source||''}});
+        const rbpTotal=parseInt(item.bindingSites||0)||(item.sites||[]).length;
+        const rbpMapped=(item.sites||[]).length;
+        rbpLegend.push({{num:rbpIdx,name,color:rbpMap[name].color,ns:rbpTotal,nm:rbpMapped,src:item.source||''}});
         rbpArcGroups[name]=[];
       }}
       const e=rbpMap[name];
       const sites=item.sites||[];
       if(sites.length>0){{
         sites.forEach(s=>{{
-          const a1=posToAngle(s.circ_start),a2=posToAngle(Math.max(s.circ_end,s.circ_start+1));
+          const s0=Math.max(0,s.circ_start);
+          const s1=Math.min(Math.max(s.circ_end,s0+1),totalLen); // clamp to [0, totalLen]
+          const a1=posToAngle(s0),a2=posToAngle(s1);
           rbpArcGroups[name].push({{d:arcPath(RBP_OUT,RBP_IN,a1,a2),title:`${{name}} · ${{s.circ_pos}}`}});
           if(!(name in rbpBadgeAngs)) rbpBadgeAngs[name]=normA((a1+a2)/2);
         }});
@@ -2347,7 +2377,7 @@ function _drawCircleRNA(circId, container) {{
     Object.entries(rbpArcGroups).forEach(([name,arcs])=>{{
       const e=rbpMap[name];
       svg+=`<g id="_rbparc_${{e.num}}" class="_rbparc">`;
-      arcs.forEach(a=>svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.8"><title>${{a.title}}</title></path>`);
+      arcs.forEach(a=>svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.9" stroke="rgba(0,0,0,0.3)" stroke-width="0.8"><title>${{a.title}}</title></path>`);
       svg+=`</g>`;
     }});
     // build + de-overlap badge list, place inside RBP ring (in center-hole)
@@ -2375,6 +2405,9 @@ function _drawCircleRNA(circId, container) {{
       svg+=`</g>`;
     }});
   }}
+
+  // ── Exon labels drawn last (on top of all arc layers) ──
+  svg+=exonLabelSvg;
 
   // BSJ junction line — middle ring only, same weight as exon dividers
   {{
@@ -2429,7 +2462,7 @@ function _drawCircleRNA(circId, container) {{
     rbpLegend.forEach(e=>{{
       legHtml+=`<span id="_leg_rbp_${{e.num}}" onclick="_toggleBadge('rbp',${{e.num}},this)"
         title="點擊顯示/隱藏" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;border:1px solid #eee">
-        ${{badge(e.color,e.num)}}${{e.name}} (${{e.ns}} sites)${{e.src?srcBadge(e.src):''}}</span>`;
+        ${{badge(e.color,e.num)}}${{e.name}} (${{e.nm>0&&e.nm<e.ns?`${{e.nm}}/${{e.ns}}`:`${{e.ns}}`}} sites)${{e.src?srcBadge(e.src):''}}</span>`;
     }});
     legHtml+='</div></div>';
   }}
@@ -2666,6 +2699,20 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
              +`padding:2px 7px;font-size:11px">${{sc.toFixed(1)}}</span></td>`;
         return;
       }}
+      if(k==='_mapped') {{
+        const mapped=(r.sites||[]).length;
+        const total=parseInt(r.bindingSites||0)||mapped;
+        if(mapped===0) {{
+          html+=`<td data-val="0"><span style="color:#bbb;font-size:11px">0</span></td>`;
+        }} else if(mapped<total) {{
+          html+=`<td data-val="${{mapped}}" title="${{mapped}} / ${{total}} sites have hg19 position">`
+               +`<span style="color:#e07b39;font-weight:bold">${{mapped}}</span>`
+               +`<span style="color:#aaa;font-size:10px"> /${{total}}</span></td>`;
+        }} else {{
+          html+=`<td data-val="${{mapped}}">${{mapped}}</td>`;
+        }}
+        return;
+      }}
       if(k==='circ_pos') v=_absPos(v);
       if(k==='_seq_logo') {{
         const rawPos=String(r.circ_pos||'');
@@ -2683,7 +2730,7 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
         }}
         if(seqChrom) {{
           const len=seqE-seqS;
-          if(len>80)
+          if(len>200)
             v=`<span style="color:#aaa;font-size:10px">${{len}}bp</span>`;
           else
             v=`<span class="_seqCell" data-chrom="${{seqChrom}}" data-s="${{seqS}}" data-e="${{seqE}}"
@@ -2755,6 +2802,45 @@ function _fetchSeqsInTable(containerId) {{
   }}));
 }}
 
+function _spotlight(type, num, chip) {{
+  const wrap = document.getElementById('cm-circle-wrap');
+  if (!wrap) return;
+  const isOn = chip.dataset.spotlight === '1';
+  // Reset all arcs and chips for this type
+  wrap.querySelectorAll(`._${{type}}arc`).forEach(g => {{
+    g.style.opacity = '';
+    g.querySelectorAll('path').forEach(p => {{ p.style.stroke=''; p.style.strokeWidth=''; }});
+  }});
+  wrap.querySelectorAll(`._${{type}}badge`).forEach(g => g.style.opacity = '');
+  document.querySelectorAll(`[id^="_leg_${{type}}_"]`).forEach(c => {{
+    c.dataset.spotlight = '0';
+    c.style.boxShadow = '';
+    c.style.fontWeight = '';
+    c.style.background = '';
+  }});
+  if (!isOn) {{
+    // Dim all arcs and badges
+    wrap.querySelectorAll(`._${{type}}arc`).forEach(g => g.style.opacity = '0.04');
+    wrap.querySelectorAll(`._${{type}}badge`).forEach(g => g.style.opacity = '0.15');
+    // Spotlight selected arc
+    const selArc = wrap.querySelector(`#_${{type}}arc_${{num}}`);
+    if (selArc) {{
+      selArc.style.opacity = '1';
+      selArc.querySelectorAll('path').forEach(p => {{
+        p.style.stroke = 'rgba(0,0,0,0.45)';
+        p.style.strokeWidth = '1.5';
+      }});
+    }}
+    // Spotlight selected badge
+    const selBadge = wrap.querySelector(`#_${{type}}b_${{num}}`);
+    if (selBadge) selBadge.style.opacity = '1';
+    chip.dataset.spotlight = '1';
+    chip.style.boxShadow = '0 0 0 2px #333';
+    chip.style.fontWeight = 'bold';
+    chip.style.background = '#f5f5f5';
+  }}
+}}
+
 function _toggleBadge(type, num, chip) {{
   const wrap = document.getElementById('cm-circle-wrap');
   if (!wrap) return;
@@ -2772,6 +2858,17 @@ function _toggleBadge(type, num, chip) {{
 function _toggleAll(type, show, container) {{
   const wrap = document.getElementById('cm-circle-wrap');
   if (!wrap) return;
+  // Clear any spotlight state first
+  wrap.querySelectorAll(`._${{type}}arc`).forEach(g => {{
+    g.style.opacity = '';
+    g.querySelectorAll('path').forEach(p => {{ p.style.stroke=''; p.style.strokeWidth=''; }});
+  }});
+  wrap.querySelectorAll(`._${{type}}badge`).forEach(g => g.style.opacity = '');
+  if (container) {{
+    container.querySelectorAll(`[id^="_leg_${{type}}_"]`).forEach(c => {{
+      c.dataset.spotlight='0'; c.style.boxShadow=''; c.style.fontWeight=''; c.style.background='';
+    }});
+  }}
   wrap.querySelectorAll(`._${{type}}badge`).forEach(el => el.style.display = show ? '' : 'none');
   wrap.querySelectorAll(`._${{type}}arc`).forEach(el   => el.style.display = show ? '' : 'none');
   if (container) {{

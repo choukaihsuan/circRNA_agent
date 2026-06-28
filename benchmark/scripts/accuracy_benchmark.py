@@ -10,7 +10,8 @@ Three multi-tool detection strategies evaluated (single-tool methods excluded):
      CIRIquant + CIRCexplorer2 + find_circ, slop=0 (exact coords), min_tools=2
 
 Metrics: Precision, Recall, F1, Specificity, AUC-PR
-Stratification: low BSJ (1–4), mid (5–19), high (≥20 RPM in total RNA)
+Stratification: BSJ count quartile in total RNA (Q1 / Q2-Q3 / Q4)
+  Boundaries computed from ground-truth set (CirComPara2 / nf-core style)
 
 Outputs:
   --output-summary    results/benchmark/accuracy_summary.tsv
@@ -24,6 +25,7 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -203,26 +205,38 @@ def stratified_f1(
     method_ids: set[str],
     truth: pd.DataFrame,
     match_slop: int,
+    q1_cutoff: float,
+    q3_cutoff: float,
 ) -> dict[str, float]:
-    """F1 score stratified by BSJ RPM tier in total RNA sample."""
-    gt  = truth[truth["is_true"].isin([0, 1])]
+    """F1 score stratified by BSJ count quartile in total RNA sample.
+
+    Tier boundaries are computed from the ground-truth set (CirComPara2 / nf-core style):
+      low_Q1   : bsj_total ≤ Q1  (bottom 25%)
+      mid_Q2Q3 : Q1 < bsj_total ≤ Q3  (middle 50%)
+      high_Q4  : bsj_total > Q3  (top 25%)
+    """
+    gt = truth[truth["is_true"].isin([0, 1])]
     tiers = [
-        (1.0,  4.99,  "low_1-4"),
-        (5.0,  19.99, "mid_5-19"),
-        (20.0, 1e9,   "high_ge20"),
+        (0,          q1_cutoff, "low_Q1"),
+        (q1_cutoff,  q3_cutoff, "mid_Q2Q3"),
+        (q3_cutoff,  1e9,       "high_Q4"),
     ]
     result: dict[str, float] = {}
     for lo, hi, label in tiers:
-        tier = gt[(gt["bsj_total"] >= lo) & (gt["bsj_total"] <= hi)]
-        tp = fp = fn = 0
+        tier = gt[(gt["bsj_total"] > lo) & (gt["bsj_total"] <= hi)]
+        tp = fp = fn = tn = 0
         for _, row in tier.iterrows():
             detected = _coord_match_in_set(row["circ_id"], method_ids, match_slop)
             lbl = int(row["is_true"])
-            if lbl == 1 and detected:   tp += 1
-            elif lbl == 0 and detected: fp += 1
-            elif lbl == 1:              fn += 1
-        _, _, f1 = _prf(tp, fp, fn)
+            if lbl == 1 and detected:     tp += 1
+            elif lbl == 0 and detected:   fp += 1
+            elif lbl == 1:                fn += 1
+            else:                         tn += 1
+        prec, _, f1 = _prf(tp, fp, fn)
+        spec = round(tn / (tn + fp), 4) if (tn + fp) > 0 else float("nan")
         result[label] = f1
+        result[f"prec_{label}"] = prec
+        result[f"spec_{label}"] = spec
     return result
 
 
@@ -521,9 +535,9 @@ def main() -> None:
                         help="Our method WITHOUT pseudo-circ QC (max_junction_ratio=99)")
     parser.add_argument("--our-no-qc-summary",     default=None,
                         help="Summary TSV for no-QC ablation")
-    parser.add_argument("--circompara2-bed",        required=True,
-                        help="CirComPara2 sim BED (slop=10, no BSJ/FSJ QC)")
-    parser.add_argument("--circompara2-summary",    required=True,
+    parser.add_argument("--circompara2-bed",        default=None,
+                        help="CirComPara2 sim BED (slop=10, no BSJ/FSJ QC; optional ablation)")
+    parser.add_argument("--circompara2-summary",    default=None,
                         help="CirComPara2 sim summary TSV")
     parser.add_argument("--circompara2-4tools-bed",     default=None,
                         help="CirComPara2 full 5-tool BED (CIRI2+CIRIquant+DCC+CIRCexplorer2+find_circ, slop=10)")
@@ -558,43 +572,47 @@ def main() -> None:
     print(f"[accuracy] Ground truth: TP={n_tp}, TN={n_tn} "
           f"(ambiguous excluded)", file=sys.stderr)
 
+    # Quartile boundaries for stratified F1 (CirComPara2 / nf-core style)
+    _gt_bsj = truth.loc[truth["is_true"].isin([0, 1]), "bsj_total"].dropna()
+    q1_cutoff = float(np.percentile(_gt_bsj, 25))
+    q3_cutoff = float(np.percentile(_gt_bsj, 75))
+    print(f"[accuracy] BSJ count quartiles: Q1={q1_cutoff:.1f}, Q3={q3_cutoff:.1f}",
+          file=sys.stderr)
+
     # ── Load predictions ──────────────────────────────────────────────────────
     our_ids              = _load_bed(args.our_bed)
     our_scores           = _load_summary_scores(args.our_summary)
     our_no_qc_ids        = _load_bed(args.our_no_qc_bed) if args.our_no_qc_bed else None
     our_no_qc_scores     = _load_summary_scores(args.our_no_qc_summary) if args.our_no_qc_summary else None
-    circompara2_ids      = _load_bed(args.circompara2_bed)
-    circompara2_scores   = _load_summary_scores(args.circompara2_summary)
+    circompara2_ids    = _load_bed(args.circompara2_bed) if args.circompara2_bed else None
+    circompara2_scores = _load_summary_scores(args.circompara2_summary) if args.circompara2_summary else None
     cp2_4t_ids    = _load_bed(args.circompara2_4tools_bed) if args.circompara2_4tools_bed else None
     cp2_4t_scores = _load_summary_scores(args.circompara2_4tools_summary) if args.circompara2_4tools_summary else None
-    nfcore_ids           = _load_bed(args.nfcore_bed)
-    nfcore_scores        = (
+    nfcore_ids     = _load_bed(args.nfcore_bed)
+    nfcore_scores  = (
         _load_summary_scores(args.nfcore_summary)
         if args.nfcore_summary else None
     )
 
-    print(
-        f"[accuracy] Detected: ours={len(our_ids)}, "
-        + (f"ours_no_qc={len(our_no_qc_ids)}, " if our_no_qc_ids is not None else "")
-        + f"circompara2_sim={len(circompara2_ids)}, "
-        f"nfcore_3tools={len(nfcore_ids)}",
-        file=sys.stderr,
-    )
+    det_msg = f"[accuracy] Detected: ours={len(our_ids)}"
+    if our_no_qc_ids is not None:
+        det_msg += f", ours_no_qc={len(our_no_qc_ids)}"
+    if circompara2_ids is not None:
+        det_msg += f", circompara2_sim={len(circompara2_ids)}"
+    if cp2_4t_ids is not None:
+        det_msg += f", circompara2_4tools={len(cp2_4t_ids)}"
+    det_msg += f", nfcore_3tools={len(nfcore_ids)}"
+    print(det_msg, file=sys.stderr)
 
     # ── Evaluate each method ──────────────────────────────────────────────────
-    methods = [
-        ("Our_adaptive",    our_ids,        args.slop, our_scores),
-        ("CirComPara2_sim", circompara2_ids, args.slop, circompara2_scores),
-        ("nfcore_3tools",   nfcore_ids,      0,         nfcore_scores),
-    ]
-    # Ablation: no pseudo-circ QC (F1 upper bound study)
+    methods = [("Our_adaptive", our_ids, args.slop, our_scores)]
     if our_no_qc_ids is not None:
-        methods.insert(1, ("Our_no_QC", our_no_qc_ids, args.slop, our_no_qc_scores))
-    # Full 5-tool CirComPara2 (CIRI2 + CIRIquant + DCC + CIRCexplorer2 + find_circ)
+        methods.append(("Our_no_QC", our_no_qc_ids, args.slop, our_no_qc_scores))
+    if circompara2_ids is not None:
+        methods.append(("CirComPara2_sim", circompara2_ids, args.slop, circompara2_scores))
     if cp2_4t_ids is not None:
-        # Insert after CirComPara2_sim
-        pos = next((i for i, m in enumerate(methods) if m[0] == "CirComPara2_sim"), len(methods)) + 1
-        methods.insert(pos, ("CirComPara2_4tools", cp2_4t_ids, args.slop, cp2_4t_scores))
+        methods.append(("CirComPara2_4tools", cp2_4t_ids, args.slop, cp2_4t_scores))
+    methods.append(("nfcore_3tools", nfcore_ids, 0, nfcore_scores))
 
     summary_rows = []
     strat_rows   = []
@@ -602,8 +620,9 @@ def main() -> None:
         m = evaluate(ids, truth, slop, scores)
         summary_rows.append({"Method": name, **m})
 
-        s = stratified_f1(ids, truth, slop)
-        strat_rows.append({"Method": name, **s})
+        s = stratified_f1(ids, truth, slop, q1_cutoff, q3_cutoff)
+        strat_rows.append({"Method": name, **s,
+                           "q1_cutoff": q1_cutoff, "q3_cutoff": q3_cutoff})
         print(
             f"[accuracy] {name:22s}  "
             f"Prec={m['Precision']:.3f}  Rec={m['Recall']:.3f}  "
@@ -665,9 +684,11 @@ def main() -> None:
     print(f"[accuracy] Stratified → {args.output_stratified}", file=sys.stderr)
 
     # ── FP score distribution comparison (Our vs CirComPara2) ─────────────────
-    if args.output_fp_comparison:
+    cp2_ref_ids    = circompara2_ids    if circompara2_ids    is not None else cp2_4t_ids
+    cp2_ref_scores = circompara2_scores if circompara2_scores is not None else cp2_4t_scores
+    if args.output_fp_comparison and cp2_ref_ids is not None:
         our_bins = fp_score_binned(our_ids, our_scores, truth, args.slop)
-        cp2_bins = fp_score_binned(circompara2_ids, circompara2_scores, truth, args.slop)
+        cp2_bins = fp_score_binned(cp2_ref_ids, cp2_ref_scores, truth, args.slop)
         fp_rows = []
         for o, c in zip(our_bins, cp2_bins):
             fp_rows.append({

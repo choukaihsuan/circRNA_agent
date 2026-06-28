@@ -2,7 +2,7 @@
 rnaser_ground_truth.py – Build a circRNA ground truth set from RNase R enrichment.
 
 RNase R是一種外切核酸酶，能降解線性RNA但保留環狀RNA。
-Enrichment Ratio (ER) = RNase R 處理後的 BSJ RPM / Total RNA 的 BSJ RPM
+Enrichment Ratio (ER) = RNase R 處理後的 raw BSJ count / Total RNA 的 raw BSJ count
   ER ≥ er_tp → True Positive（環狀 RNA，被 RNase R 富集）
   ER ≤ er_tn → True Negative（線性偽陽性，被 RNase R 降解）
   中間值  → Ambiguous（排除）
@@ -63,7 +63,7 @@ def _parse_gtf(path: str) -> dict[str, dict]:
     return records
 
 
-def _bsj_rpm(records: dict) -> dict[str, float]:
+def _bsj_counts(records: dict) -> dict[str, float]:
     """Return raw BSJ counts for cross-sample ER comparison.
 
     Per-sample total-BSJ normalization is NOT used here because RNase R treatment
@@ -78,10 +78,10 @@ def _bsj_rpm(records: dict) -> dict[str, float]:
 
 # ── Fuzzy coordinate matching ─────────────────────────────────────────────────
 
-def _build_index(rpm_map):
-    """Pre-parse RPM map keys into {chrom: [(start, end, val), ...]} for O(N) lookup."""
+def _build_index(count_map):
+    """Pre-parse BSJ count map keys into {chrom: [(start, end, val), ...]} for O(N) lookup."""
     idx = {}
-    for key, val in rpm_map.items():
+    for key, val in count_map.items():
         m = re.match(r'^(.+):(\d+)\|(\d+)$', key)
         if m:
             chrom = m.group(1)
@@ -90,7 +90,7 @@ def _build_index(rpm_map):
 
 
 def _coord_match(circ_id, index, slop):
-    """Find best-matching RPM value within slop bp using pre-built chromosome index."""
+    """Find best-matching BSJ count within slop bp using pre-built chromosome index."""
     m = re.match(r'^(.+):(\d+)\|(\d+)$', circ_id)
     if not m:
         return 0.0
@@ -134,15 +134,15 @@ def main() -> None:
     args = parser.parse_args()
 
     # ── Parse input GTFs ──────────────────────────────────────────────────────
-    total_recs = _parse_gtf(args.total)
-    total_rpm  = _bsj_rpm(total_recs)
+    total_recs    = _parse_gtf(args.total)
+    total_counts  = _bsj_counts(total_recs)
     print(f"[ground_truth] Total RNA ({Path(args.total).stem}): "
           f"{len(total_recs)} circRNAs", file=sys.stderr)
 
-    rnaser_rpms: list[dict[str, float]] = []
+    rnaser_counts: list[dict[str, float]] = []
     for path in args.rnaser:
         recs = _parse_gtf(path)
-        rnaser_rpms.append(_bsj_rpm(recs))
+        rnaser_counts.append(_bsj_counts(recs))
         print(f"[ground_truth] RNase R  ({Path(path).stem}): "
               f"{len(recs)} circRNAs", file=sys.stderr)
 
@@ -154,8 +154,8 @@ def main() -> None:
     all_ids: set[str] = set(total_recs.keys())
 
     # ── Pre-build chromosome indices (avoids O(N²) regex in inner loop) ──────
-    total_index    = _build_index(total_rpm)
-    rnaser_indices = [_build_index(rpm) for rpm in rnaser_rpms]
+    total_index    = _build_index(total_counts)
+    rnaser_indices = [_build_index(c) for c in rnaser_counts]
 
     # ── Compute enrichment ratios ─────────────────────────────────────────────
     rows = []

@@ -146,12 +146,14 @@ def main() -> None:
         total_wall = align_wall + cons_wall
         source_str = "This study (measured with /usr/bin/time -v)"
     else:
-        align_wall = 135.0
-        dcc_wall   = 15.0
-        cons_wall  = 1.0
-        total_wall = align_wall + dcc_wall + cons_wall
-        peak_ram   = 26.0
-        source_str = "This study (estimated from CLAUDE.md run history)"
+        ciriquant_wall = 710.0
+        star_wall      = 169.1   # paired 87.3 + mate1 34.6 + mate2 47.2
+        dcc_wall       = 17.9
+        align_wall     = ciriquant_wall + star_wall + dcc_wall
+        cons_wall      = 1.0
+        total_wall     = align_wall + cons_wall
+        peak_ram       = 49.1
+        source_str     = "This study (estimated from CLAUDE.md run history)"
         print("[compute_cost] No time logs found; using estimated values.",
               file=sys.stderr)
 
@@ -166,7 +168,12 @@ def main() -> None:
 
     our_row = {
         "Pipeline":             "Our pipeline",
-        "Tool_combination":     "CIRIquant + STAR + DCC (adaptive consensus)",
+        "Tool_combination":     "CIRIquant + STAR×3 + DCC (adaptive consensus)",
+        "CIRIquant_min":        round(ciriquant_wall, 1),
+        "STAR_min":             round(star_wall, 1),
+        "DCC_min":              round(dcc_wall, 1),
+        "CIRCexplorer2_min":    None,
+        "find_circ_min":        None,
         "Alignment_wall_min":   round(align_wall, 1),
         "Consensus_wall_min":   round(cons_wall, 1),
         "Total_wall_min":       round(total_wall, 1),
@@ -243,9 +250,19 @@ def main() -> None:
 
     # Digby-Bell et al. (2023) BMC Bioinformatics 24:430
     # https://doi.org/10.1186/s12859-023-05509-y
+    _nfc_ciriquant   = nfcore_times.get("ciriquant", 701.1) if nfcore_has_real else 139.0
+    _nfc_star        = step_times.get("star", 87.3)          # STAR_paired (shared)
+    _nfc_ce2         = nfcore_times.get("circexplorer2", 0.1) if nfcore_has_real else None
+    _nfc_fc          = (nfcore_times.get("fc_map", 224.5) +
+                        nfcore_times.get("fc_detect", 161.1)) if nfcore_has_real else None
     nfcore_row = {
         "Pipeline":             "nf-core/circrna",
         "Tool_combination":     "CIRIquant + CIRCexplorer2 + find_circ (fixed ≥2/3 tools, exact)",
+        "CIRIquant_min":        round(_nfc_ciriquant, 1),
+        "STAR_min":             round(_nfc_star, 1),
+        "DCC_min":              None,
+        "CIRCexplorer2_min":    round(_nfc_ce2, 1) if _nfc_ce2 is not None else None,
+        "find_circ_min":        round(_nfc_fc, 1)  if _nfc_fc  is not None else None,
         "Alignment_wall_min":   nfcore_align,
         "Consensus_wall_min":   nfcore_cons,
         "Total_wall_min":       nfcore_total,
@@ -315,9 +332,18 @@ def main() -> None:
         nfcore_step_ram.get("fc_map", 3.5), 1)
     _c4_cores        = args.our_cores
 
+    _c4_star_only = (step_times.get("star", 87.3) +
+                     step_times.get("star_mate1", 34.6) +
+                     step_times.get("star_mate2", 47.2))
+    _c4_dcc_only  = step_times.get("dcc", 17.9)
     circompara2_4tools_row = {
         "Pipeline":          "CirComPara2_4tools",
-        "Tool_combination":  "CIRIquant + STAR+DCC + CIRCexplorer2 + find_circ (≥2/4 consensus, slop=10)",
+        "Tool_combination":  "CIRIquant + STAR×3+DCC + CIRCexplorer2 + find_circ (≥2/4 consensus, slop=10)",
+        "CIRIquant_min":     round(_c4_ciriquant, 1),
+        "STAR_min":          round(_c4_star_only, 1),
+        "DCC_min":           round(_c4_dcc_only, 1),
+        "CIRCexplorer2_min": round(_c4_ce2, 1),
+        "find_circ_min":     round(_c4_find_circ, 1),
         "Alignment_wall_min":   round(_c4_total, 1),
         "Consensus_wall_min":   0.0,
         "Total_wall_min":       round(_c4_total, 1),
@@ -326,13 +352,7 @@ def main() -> None:
         "CPU_cores":            _c4_cores,
         "CPU_hours":            round(_c4_total / 60 * _c4_cores, 1),
         "Source": "This study (measured with /usr/bin/time -v, SRR444655)",
-        "Note": (
-            f"Sum of individual tool wall times: CIRIquant={_c4_ciriquant}min, "
-            f"STAR×3={round(step_times.get('star',87.3)+step_times.get('star_mate1',34.6)+step_times.get('star_mate2',47.2),1)}min, "
-            f"DCC={round(step_times.get('dcc',17.9),1)}min, "
-            f"find_circ={round(_c4_find_circ,1)}min, CIRCexplorer2={_c4_ce2}min; "
-            "slop=10 bp, no BSJ/FSJ pseudo-circ QC"
-        ),
+        "Note": "slop=10 bp, no BSJ/FSJ pseudo-circ QC",
     }
 
     circompara2_row = {

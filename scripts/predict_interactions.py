@@ -317,7 +317,7 @@ def _fetch_encori_mirna(gene_name: str, clip_exp_num: int = 1,
         print(f"[predict] ENCORI miRNA error ({gene_name}): {exc}", file=sys.stderr)
         return []
 
-    # aggregate by miRNA name: keep max clipExpNum, collect distinct cell types + positions
+    # aggregate by miRNA name: keep max clipExpNum, collect distinct cell types + ALL positions
     agg: dict = {}
     for row in rows:
         name = row.get("miRNAname", "").strip()
@@ -330,27 +330,30 @@ def _fetch_encori_mirna(gene_name: str, clip_exp_num: int = 1,
         start = row.get("start", "").strip()
         end   = row.get("end", "").strip()
         pos   = f"{chrom}:{start}-{end}" if chrom and start and end else "—"
-        # hg38 coords as tuple for liftover (0-based half-open)
         hg38  = (chrom, int(start) - 1, int(end)) if (chrom and start.isdigit() and end.isdigit()) else None
         if name not in agg:
-            agg[name] = {"clip": clip, "cells": set(), "site": site, "pos": pos, "hg38": hg38}
+            agg[name] = {"clip": clip, "cells": set(), "site": site, "pos": pos, "hg38_list": []}
         else:
             agg[name]["clip"] = max(agg[name]["clip"], clip)
         if cell:
             agg[name]["cells"].add(cell)
+        if hg38 and hg38 not in agg[name]["hg38_list"]:
+            agg[name]["hg38_list"].append(hg38)
 
     _circ_pos_re = re.compile(r'^\d+[–\-]\d+$')
     mirna_list = []
     for name, info in agg.items():
         circ_pos = info["pos"]
-        if lo is not None and coord_idx is not None and exon_nums and info["hg38"]:
-            hg38 = info["hg38"]
-            lifted = _liftover_interval(lo, hg38[0], hg38[1], hg38[2])
-            if lifted:
+        if lo is not None and coord_idx is not None and exon_nums and info["hg38_list"]:
+            for hg38 in info["hg38_list"]:
+                lifted = _liftover_interval(lo, hg38[0], hg38[1], hg38[2])
+                if not lifted:
+                    continue
                 mapped = _map_to_circ_pos(lifted[0], lifted[1], lifted[2],
                                           gene_name, exon_nums, coord_idx)
                 if mapped:
                     circ_pos = mapped
+                    break  # use first successfully mapped position
         in_circ = bool(_circ_pos_re.match(circ_pos))
         mirna_list.append({
             "miRNAName":  name,
@@ -395,7 +398,7 @@ def _fetch_encori_rbp(gene_name: str, clip_exp_num: int = 1,
         print(f"[predict] ENCORI RBP error ({gene_name}): {exc}", file=sys.stderr)
         return []
 
-    # aggregate by RBP name: max clipExpNum, collect cell types + positions
+    # aggregate by RBP name: max clipExpNum, collect cell types + ALL binding positions
     agg: dict = {}
     for row in rows:
         name  = row.get("RBP", "").strip()
@@ -409,29 +412,37 @@ def _fetch_encori_rbp(gene_name: str, clip_exp_num: int = 1,
         pos   = f"{chrom}:{start}-{end}" if chrom and start and end else "—"
         hg38  = (chrom, int(start) - 1, int(end)) if (chrom and start.isdigit() and end.isdigit()) else None
         if name not in agg:
-            agg[name] = {"clip": clip, "cells": set(), "pos": pos, "hg38": hg38}
+            agg[name] = {"clip": clip, "cells": set(), "pos": pos, "hg38_list": []}
         else:
             agg[name]["clip"] = max(agg[name]["clip"], clip)
         if cell:
             agg[name]["cells"].add(cell)
+        if hg38 and hg38 not in agg[name]["hg38_list"]:
+            agg[name]["hg38_list"].append(hg38)
 
     _circ_pos_re2 = re.compile(r'^(\d+)[–\-](\d+)$')
     rbp_list = []
     for name, info in agg.items():
         circ_pos = info["pos"]
         sites: List[dict] = []
-        if lo is not None and coord_idx is not None and exon_nums and info["hg38"]:
-            hg38   = info["hg38"]
-            lifted = _liftover_interval(lo, hg38[0], hg38[1], hg38[2])
-            if lifted:
+        if lo is not None and coord_idx is not None and exon_nums and info["hg38_list"]:
+            seen_ranges: set = set()
+            for hg38 in info["hg38_list"]:
+                lifted = _liftover_interval(lo, hg38[0], hg38[1], hg38[2])
+                if not lifted:
+                    continue
                 mapped = _map_to_circ_pos(lifted[0], lifted[1], lifted[2],
                                           gene_name, exon_nums, coord_idx)
-                if mapped:
-                    circ_pos = mapped
-                    m2 = _circ_pos_re2.match(mapped)
-                    if m2:
-                        cs, ce = int(m2.group(1)), int(m2.group(2))
-                        sites = [{"circ_start": cs, "circ_end": ce, "circ_pos": mapped}]
+                if not mapped:
+                    continue
+                if circ_pos == info["pos"]:
+                    circ_pos = mapped  # use first successful mapping as display coord
+                m2 = _circ_pos_re2.match(mapped)
+                if m2:
+                    cs, ce = int(m2.group(1)), int(m2.group(2))
+                    if (cs, ce) not in seen_ranges:
+                        seen_ranges.add((cs, ce))
+                        sites.append({"circ_start": cs, "circ_end": ce, "circ_pos": mapped})
         in_circ = bool(_circ_pos_re2.match(circ_pos))
         rbp_list.append({
             "RBPName":      name,

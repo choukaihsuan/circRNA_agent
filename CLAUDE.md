@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，⏳ 待執行）；GSE221107（攝護腺癌 tumor vs. normal，6 pairs，🔄 執行中）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -1402,6 +1402,69 @@ conda run -n ciriquant snakemake \
 - SRR26946849 / SRR26946846：Snakemake 原本走 HTTPS prefetch（~560 KB/s），手動 kill prefetch + 用 aria2c S3 下載後補 fasterq-dump + pigz，再放入 `raw/`
 - SRR26946846 SRA 檔案損壞（vdb-validate 回報 "zombie file"，`rcBlob,rcCorrupt`）：刪除 `.sra.tmp` 重新 aria2c 下載
 - 已知：`kill -9` 終止 Snakemake 後，worker 變成 orphan，需手動 `kill -9 <orphan_pids>`；避免用 bare `kill`（SIGTERM 觸發 Snakemake cleanup 刪 output 檔）
+
+**磁碟清理（2026-06-27）**：GSE221107 啟動前釋放磁碟（原本 /home3 剩 62G → 清理後 633G）：
+- `GSE130078/raw/`（81G）+ `GSE130078/trimmed/`（81G）→ 已刪除
+- `GSE130078_results/circRNA/*/Aligned.sortedByCoord.out.bam` + `*/mate1/` + `*/mate2/` → 已刪除
+- `GSE248612/raw/`（61G）+ `GSE248612/trimmed/`（64G）+ `GSE248612/sra_cache/`（7G）→ 已刪除
+- `GSE248612_results/circRNA/*/Aligned.sortedByCoord.out.bam` + `*/mate1/` + `*/mate2/` → 已刪除
+- 保留：report.html、count_matrix.tsv、DE 結果、circRNA GTF/BED/DCC/consensus
+
+---
+
+## 目前執行中：GSE221107（攝護腺癌，2026-06-27）
+
+**進行中（2026-06-28 11:35，78/118 steps 66%）。** 報告位置：`~/GSE221107_results/report.html`（待完成）
+
+攝護腺癌手術切除組織，cancer tissue vs. adjacent normal，20 對配對，從中選深度最高的 **6 對**（Pair 8/11/14/16/18/20）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 12/12 完成（4 個 HTTPS prefetch + 8 個 aria2c S3） |
+| fastp QC/trim | ✅ 12/12 完成 |
+| CIRIquant | 🔄 7/12 完成（SRR22757439 09:27 / SRR22757430 13:32 / SRR22757434 19:10 / SRR22757416 23:58 Jun27；SRR22757436 03:08 / SRR22757422 05:14 / SRR22757410 09:02 Jun28）；SRR22757414 BWA執行中（~12:58 完成）|
+| STAR paired+mate1+mate2 | 🔄 25/36 完成 |
+| DCC | 🔄 部分完成（SRR22757416/419/434/442 已完成）|
+| consensus_filter | 🔄 4/12 完成 |
+| merge_counts / DE / report | ⏳ 待執行 |
+
+**預估完成**：12 個 CIRIquant 全部完成 **~Jun 29 00:30**；DE + report **~Jun 29 03:00**
+
+**各 CIRIquant 實測耗時**（--cores 12，NFS）：
+- 平均 ~2.75–3.5h/sample（HISAT2 ~32 min + BWA ~80 min + CIRI2 ~30 min + de novo ~30 min + 量化 ~15 min）
+- 夜間 I/O 較快：SRR22757422 僅 2h 4min（03:56–05:14）
+- 白天較慢：SRR22757410 2h 49min（06:13–09:02）
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（6T + 6N，選 Pair 8/11/14/16/18/20）：
+  - Pair 14: PC14=SRR22757436(tumor) + PN14=SRR22757416(normal)
+  - Pair 8: PC8=SRR22757442(tumor) + PN8=SRR22757422(normal)
+  - Pair 18: PC18=SRR22757432(tumor) + PN18=SRR22757412(normal)
+  - Pair 20: PC20=SRR22757430(tumor) + PN20=SRR22757410(normal)
+  - Pair 11: PC11=SRR22757439(tumor) + PN11=SRR22757419(normal)
+  - Pair 16: PC16=SRR22757434(tumor) + PN16=SRR22757414(normal)
+- genome：hg19（原論文用 GRCh38，raw FASTQ 可重新比對到 hg19）
+- Condition CSV：`/mnt/c/Users/User/Desktop/GSE221107_condition.csv`（含 `patient_id` 欄，啟用配對設計）
+- GEO：GSE221107（SubSeries of GSE221109）/ SRA：PRJNA912767
+- 論文：Signal Transduction and Targeted Therapy 2025（enhancer RNA + ferroptosis, Tongji Hospital）
+- Library：Ribo-off rRNA Depletion Kit + KC Stranded Library（stranded PE150）
+- 平台：Illumina NovaSeq 6000，~50–60M spots/sample
+
+**Server config**（`config/projects/GSE221107.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE221107/raw`
+- `results_dir: /home3/choukaihsuan/GSE221107_results`
+
+**Snakemake 執行指令**（cores 12，log）：
+```bash
+conda run -n ciriquant snakemake \
+    --snakefile workflow/Snakefile \
+    --configfile config/projects/GSE221107.yaml \
+    --cores 12 \
+    --keep-going \
+    --rerun-incomplete \
+    >> logs/pipeline_GSE221107-9R6M.log 2>&1
+```
 
 ---
 

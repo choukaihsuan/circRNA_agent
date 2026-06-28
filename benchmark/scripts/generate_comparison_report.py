@@ -137,6 +137,15 @@ _STYLE = """
                 cursor: pointer; }
   .print-btn:hover { background: rgba(255,255,255,.15); }
 
+  /* DE quality table — clickable cells */
+  .de-clickable {
+    cursor: pointer;
+    color: #1a5276;
+    font-weight: bold;
+    text-decoration: underline dotted #1a5276;
+  }
+  .de-clickable:hover { background: #d6eaf8 !important; }
+
   /* Print styles */
   @media print {
     .print-bar, .dl-btn, .no-print { display: none !important; }
@@ -176,6 +185,162 @@ function dlCSV(tid, fname) {
   a.click();
   document.body.removeChild(a);
 }
+
+/* ── Sortable list table ───────────────────────────────────── */
+var _LIST_SORT = {col: -1, dir: 1};
+function _parseVal(s) {
+  if (s === '—' || s === '' || s == null) return Infinity;
+  // scientific notation (p-value)
+  var n = parseFloat(s);
+  return isNaN(n) ? s.toString().toLowerCase() : n;
+}
+function sortCircList(th, colIdx) {
+  var table = th.closest('table');
+  var tbody = table.querySelector('tbody');
+  var rows  = Array.from(tbody.querySelectorAll('tr'));
+  if (_LIST_SORT.col === colIdx) { _LIST_SORT.dir *= -1; }
+  else { _LIST_SORT.col = colIdx; _LIST_SORT.dir = 1; }
+  var dir = _LIST_SORT.dir;
+  th.closest('tr').querySelectorAll('th').forEach(function(h, i) {
+    var sp = h.querySelector('.si');
+    if (sp) sp.textContent = (i === colIdx) ? (dir===1?' ▲':' ▼') : ' ⇅';
+  });
+  rows.sort(function(a, b) {
+    var tda = a.querySelectorAll('td')[colIdx];
+    var tdb = b.querySelectorAll('td')[colIdx];
+    var va = tda ? (tda.dataset.val !== undefined ? tda.dataset.val : tda.textContent.trim()) : '';
+    var vb = tdb ? (tdb.dataset.val !== undefined ? tdb.dataset.val : tdb.textContent.trim()) : '';
+    var pa = _parseVal(va), pb = _parseVal(vb);
+    if (typeof pa === 'number' && typeof pb === 'number') return dir * (pa - pb);
+    return dir * String(pa).localeCompare(String(pb));
+  });
+  rows.forEach(function(r, i) {
+    var fc = r.querySelectorAll('td')[0];
+    if (fc) fc.textContent = i + 1;
+    tbody.appendChild(r);
+  });
+}
+
+/* ── DE quality interactive list ───────────────────────────── */
+var _DE_LIST_CUR = null;
+function showDEList(method, col) {
+  var lists = (typeof DE_LISTS !== 'undefined') ? DE_LISTS : {};
+  var data = (lists[method] || {})[col];
+  if (!data || !data.length) { alert('無可用清單資料'); return; }
+  var colLabels = {
+    'Sig_DE_circRNAs':         '顯著 DE circRNA',
+    'Up_regulated':            '上調 circRNA',
+    'Down_regulated':          '下調 circRNA',
+    'Type_I_count':            'Type I circRNA',
+    'Type_II_count':           'Type II circRNA',
+    'Type_I_unique_vs_DESeq2': 'Type I（僅本方法偵測）',
+    'Top20_in_circBase':       'Top 20 DE（circBase 已知）'
+  };
+  document.getElementById('de-list-title').textContent =
+    method.replace(/_/g,' ') + ' — ' + (colLabels[col] || col);
+  document.getElementById('de-list-count').textContent =
+    '共 ' + data.length + ' 個 circRNA';
+  var hasType = data.some(function(r){ return r.Type; });
+  var hdrs = ['#','circ_id','gene_name','log2FC','p-value','circbase_id'];
+  if (hasType) hdrs.push('Type');
+  var TH = 'style="background:#1a5276;color:#fff;padding:6px 10px;text-align:left;white-space:nowrap"';
+  var html = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+    + '<thead><tr>' + hdrs.map(function(h){return '<th '+TH+'>'+h+'</th>';}).join('') + '</tr></thead><tbody>';
+  data.forEach(function(r,i){
+    var lfc  = (r.log2FC  != null) ? r.log2FC.toFixed(2)         : '—';
+    var pval = (r.p_value != null) ? r.p_value.toExponential(2)  : '—';
+    var lc = r.log2FC > 0 ? '#c0392b' : r.log2FC < 0 ? '#1a5276' : '';
+    var cc = (r.circbase_id && r.circbase_id !== 'novel') ? '#e67e22' : '';
+    var bg = i%2===0 ? '#f9f9f9' : '#fff';
+    var TD = 'style="padding:5px 10px;border-bottom:1px solid #eee"';
+    var cells = [
+      '<td '+TD+' style="padding:5px 10px;border-bottom:1px solid #eee;color:#888">'+(i+1)+'</td>',
+      '<td '+TD+' style="padding:5px 10px;border-bottom:1px solid #eee;font-family:monospace;font-size:11px">'+r.circ_id+'</td>',
+      '<td '+TD+'>'+(r.gene_name||'—')+'</td>',
+      '<td '+TD+' style="padding:5px 10px;border-bottom:1px solid #eee;color:'+lc+';font-weight:bold">'+lfc+'</td>',
+      '<td '+TD+'>'+pval+'</td>',
+      '<td '+TD+' style="padding:5px 10px;border-bottom:1px solid #eee;color:'+cc+'">'+(r.circbase_id||'—')+'</td>'
+    ];
+    if (hasType) cells.push('<td '+TD+'>'+(r.Type||'—')+'</td>');
+    html += '<tr style="background:'+bg+'">'+cells.join('')+'</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById('de-list-body').innerHTML = html;
+  document.getElementById('de-list-modal').style.display = 'block';
+  _DE_LIST_CUR = {data:data, method:method, col:col, hdrs:hdrs};
+}
+function closeDeList() {
+  document.getElementById('de-list-modal').style.display = 'none';
+}
+function dlDeList() {
+  if (!_DE_LIST_CUR) return;
+  var rows = [_DE_LIST_CUR.hdrs.join(',')];
+  _DE_LIST_CUR.data.forEach(function(r,i){
+    var line = [i+1,'"'+r.circ_id+'"','"'+(r.gene_name||'')+'"',
+      (r.log2FC!=null?r.log2FC:''), (r.p_value!=null?r.p_value:''),
+      '"'+(r.circbase_id||'')+'"'];
+    if (_DE_LIST_CUR.hdrs.indexOf('Type')>=0) line.push('"'+(r.Type||'')+'"');
+    rows.push(line.join(','));
+  });
+  var blob = new Blob([rows.join('\\n')],{type:'text/csv;charset=utf-8;'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = _DE_LIST_CUR.method+'_'+_DE_LIST_CUR.col+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+/* ── Jaccard pairwise interactive list ─────────────────────── */
+function _renderCircList(data, extraHdr) {
+  var hdrs = ['#','circ_id','gene_name','log2FC','p-value','circbase_id'];
+  if (extraHdr) hdrs.push(extraHdr);
+  var TH_S = 'background:#1a5276;color:#fff;padding:6px 10px;text-align:left;white-space:nowrap;cursor:pointer;user-select:none';
+  var html = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+    + '<thead><tr>' + hdrs.map(function(h,i){
+        var si = i===0 ? '' : '<span class="si" style="opacity:0.6"> ⇅</span>';
+        var click = i===0 ? '' : ' onclick="sortCircList(this,'+i+')"';
+        return '<th style="'+TH_S+'"'+click+'>'+h+si+'</th>';
+      }).join('') + '</tr></thead><tbody>';
+  _LIST_SORT = {col: -1, dir: 1};
+  data.forEach(function(r,i){
+    var lfcRaw = (r.log2FC  != null) ? r.log2FC  : null;
+    var pvRaw  = (r.p_value != null) ? r.p_value : null;
+    var lfc    = lfcRaw  != null ? lfcRaw.toFixed(2)         : '—';
+    var pval   = pvRaw   != null ? pvRaw.toExponential(2)    : '—';
+    var lc = lfcRaw > 0 ? '#c0392b' : lfcRaw < 0 ? '#1a5276' : '';
+    var cc = (r.circbase_id && r.circbase_id !== 'novel') ? '#e67e22' : '';
+    var bg = i%2===0 ? '#f9f9f9' : '#fff';
+    var TD = 'padding:5px 10px;border-bottom:1px solid #eee';
+    var gene = (r.gene_name && r.gene_name !== 'intergenic') ? r.gene_name : (r.gene_name === 'intergenic' ? '<span style="color:#aaa">intergenic</span>' : '—');
+    var cells = [
+      '<td style="'+TD+';color:#888">'+(i+1)+'</td>',
+      '<td style="'+TD+';font-family:monospace;font-size:11px" data-val="'+r.circ_id+'">'+r.circ_id+'</td>',
+      '<td style="'+TD+'" data-val="'+(r.gene_name||'')+'">'+gene+'</td>',
+      '<td style="'+TD+';color:'+lc+';font-weight:bold" data-val="'+(lfcRaw!=null?lfcRaw:'Infinity')+'">'+lfc+'</td>',
+      '<td style="'+TD+'" data-val="'+(pvRaw!=null?pvRaw:'Infinity')+'">'+pval+'</td>',
+      '<td style="'+TD+';color:'+cc+'" data-val="'+(r.circbase_id||'')+'">'+  (r.circbase_id||'—')+'</td>'
+    ];
+    if (extraHdr) cells.push('<td style="'+TD+'" data-val="'+(r.Type||'')+'">'+  (r.Type||'—')+'</td>');
+    html += '<tr style="background:'+bg+'">'+cells.join('')+'</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+function showJaccardList(rowIdx, col) {
+  var lists = (typeof DE_LISTS !== 'undefined') ? DE_LISTS : {};
+  var jac = lists['_jaccard'] || [];
+  var entry = jac[rowIdx] || {};
+  var data = entry[col] || [];
+  if (!data.length) { alert('無可用清單資料'); return; }
+  var colLabels = {'A_only':'A 方法獨有 circRNA','B_only':'B 方法獨有 circRNA','Both':'兩方法共同 circRNA'};
+  var title = (entry.Method_A||'').replace(/_/g,' ') + ' vs ' + (entry.Method_B||'').replace(/_/g,' ')
+            + ' — ' + (colLabels[col] || col);
+  document.getElementById('de-list-title').textContent = title;
+  document.getElementById('de-list-count').textContent = '共 ' + data.length + ' 個 circRNA';
+  document.getElementById('de-list-body').innerHTML = _renderCircList(data, null);
+  document.getElementById('de-list-modal').style.display = 'block';
+  _DE_LIST_CUR = {data:data, method:(entry.Method_A||'')+'_vs_'+(entry.Method_B||''), col:col,
+                  hdrs:['#','circ_id','gene_name','log2FC','p-value','circbase_id']};
+}
 </script>
 """
 
@@ -186,19 +351,32 @@ def _df_html(df: pd.DataFrame, best_col: str | None = None,
              best_max: bool = True,
              table_id: str | None = None,
              csv_filename: str | None = None,
-             title: str = "") -> str:
-    """Render DataFrame as HTML table with optional CSV download button."""
+             title: str = "",
+             highlight_cols: dict | None = None) -> str:
+    """Render DataFrame as HTML table with optional CSV download button.
+
+    highlight_cols: {col_name: True(max)/False(min)} — highlight best value in each listed column.
+    """
+    # Build per-column best values
+    _best = {}
+    if best_col:
+        highlight_cols = dict(highlight_cols or {})
+        highlight_cols[best_col] = best_max
+    for col, is_max in (highlight_cols or {}).items():
+        if col in df.columns:
+            col_vals = pd.to_numeric(df[col], errors="coerce").dropna()
+            if not col_vals.empty:
+                _best[col] = col_vals.max() if is_max else col_vals.min()
+
     rows_html = ""
     for i, row in df.iterrows():
         cells = ""
         for col in df.columns:
             val = row[col]
             cls = ""
-            if best_col and col == best_col:
+            if col in _best:
                 try:
-                    col_vals = pd.to_numeric(df[col], errors="coerce").dropna()
-                    best_v = col_vals.max() if best_max else col_vals.min()
-                    if abs(float(val) - float(best_v)) < 1e-9:
+                    if abs(float(val) - float(_best[col])) < 1e-9:
                         cls = ' class="best"'
                 except (TypeError, ValueError):
                     pass
@@ -223,6 +401,97 @@ def _df_html(df: pd.DataFrame, best_col: str | None = None,
     )
     return (
         f'{header_bar}<div class="tbl-wrap"><table{tid}>'
+        f"<thead><tr>{headers}</tr></thead>"
+        f"<tbody>{rows_html}</tbody></table></div>"
+    )
+
+
+_DE_CLICKABLE_COLS = {
+    "Sig_DE_circRNAs", "Up_regulated", "Down_regulated",
+    "Type_I_count", "Type_II_count", "Type_I_unique_vs_DESeq2", "Top20_in_circBase",
+}
+
+
+def _de_quality_table_html(
+    de: pd.DataFrame,
+    de_display_cols: list,
+    de_lists: dict | None,
+) -> str:
+    """Render DE quality table; numeric cells in clickable columns open circRNA modal."""
+    dl_btn = '<button class="dl-btn no-print" onclick="dlCSV(\'tbl_de\',\'de_quality_summary.csv\')">⬇ CSV</button>'
+    headers = "".join(f"<th>{c}</th>" for c in de_display_cols)
+    rows_html = ""
+    for _, row in de[de_display_cols].iterrows():
+        method = str(row.get("Method", ""))
+        cells = ""
+        for col in de_display_cols:
+            val = row[col]
+            is_na = val in (None, "N/A") or (isinstance(val, float) and pd.isna(val))
+            if is_na:
+                cells += '<td class="na">—</td>'
+            elif (
+                de_lists is not None
+                and col in _DE_CLICKABLE_COLS
+                and de_lists.get(method, {}).get(col)
+            ):
+                cells += (
+                    f'<td class="de-clickable" '
+                    f'onclick="showDEList(\'{method}\',\'{col}\')" '
+                    f'title="點擊查看 circRNA 清單">{val}</td>'
+                )
+            else:
+                cells += f"<td>{val}</td>"
+        rows_html += f"<tr>{cells}</tr>"
+    return (
+        f'<div class="tbl-header">{dl_btn}</div>'
+        f'<div class="tbl-wrap"><table id="tbl_de">'
+        f"<thead><tr>{headers}</tr></thead>"
+        f"<tbody>{rows_html}</tbody></table></div>"
+    )
+
+
+_JAC_CLICKABLE = {"A_only", "B_only", "Both"}
+
+
+def _jaccard_table_html(jac: pd.DataFrame, de_lists: "dict | None") -> str:
+    """Render Jaccard table with A_only / B_only / Both cells clickable."""
+    jac_list_data = (de_lists or {}).get("_jaccard", [])
+    idx_map: dict = {}
+    for i, entry in enumerate(jac_list_data):
+        key = (entry.get("Method_A", ""), entry.get("Method_B", ""))
+        idx_map[key] = i
+
+    dl_btn = '<button class="dl-btn no-print" onclick="dlCSV(\'tbl_jaccard\',\'de_jaccard.csv\')">⬇ CSV</button>'
+    cols = list(jac.columns)
+    headers = "".join(f"<th>{c}</th>" for c in cols)
+    rows_html = ""
+    for _, row in jac.iterrows():
+        ma = str(row.get("Method_A", ""))
+        mb = str(row.get("Method_B", ""))
+        row_idx = idx_map.get((ma, mb))
+        cells = ""
+        for col in cols:
+            val = row[col]
+            is_na = val in (None, "N/A") or (isinstance(val, float) and pd.isna(val))
+            if is_na:
+                cells += '<td class="na">—</td>'
+            elif (
+                col in _JAC_CLICKABLE
+                and row_idx is not None
+                and jac_list_data
+                and jac_list_data[row_idx].get(col)
+            ):
+                cells += (
+                    f'<td class="de-clickable" '
+                    f'onclick="showJaccardList({row_idx},\'{col}\')" '
+                    f'title="點擊查看 circRNA 清單">{val}</td>'
+                )
+            else:
+                cells += f"<td>{val}</td>"
+        rows_html += f"<tr>{cells}</tr>"
+    return (
+        f'<div class="tbl-header">{dl_btn}</div>'
+        f'<div class="tbl-wrap"><table id="tbl_jaccard">'
         f"<thead><tr>{headers}</tr></thead>"
         f"<tbody>{rows_html}</tbody></table></div>"
     )
@@ -360,30 +629,53 @@ def _feature_table() -> str:
 
 
 def _stratified_chart(strat: pd.DataFrame) -> str:
-    tiers = ["low_1-4", "mid_5-19", "high_ge20"]
-    tier_labels = ["Low BSJ (1–4 RPM)", "Mid BSJ (5–19 RPM)", "High BSJ (≥20 RPM)"]
+    # Recover quartile cutoffs stored as extra columns (same value in every row)
+    q1 = float(strat["q1_cutoff"].iloc[0]) if "q1_cutoff" in strat.columns else None
+    q3 = float(strat["q3_cutoff"].iloc[0]) if "q3_cutoff" in strat.columns else None
+
+    tiers = ["low_Q1", "mid_Q2Q3", "high_Q4"]
+    if q1 is not None and q3 is not None:
+        tier_labels = [
+            f"Low BSJ count (Q1, ≤{q1:.0f} reads)",
+            f"Mid BSJ count (Q2–Q3, {q1:.0f}–{q3:.0f} reads)",
+            f"High BSJ count (Q4, >{q3:.0f} reads)",
+        ]
+    else:
+        tier_labels = ["Low (Q1)", "Mid (Q2–Q3)", "High (Q4)"]
+
     colors_by_method = {
-        "Our_adaptive":    "c1",
-        "CirComPara2_sim": "c2",
-        "nfcore_3tools":   "c3",
+        "Our_adaptive":       "c1",
+        "CirComPara2_4tools": "c2",
+        "nfcore_3tools":      "c3",
+        "CirComPara2_sim":    "c2",
     }
 
+    our_row = strat[strat["Method"] == "Our_adaptive"]
+    if our_row.empty:
+        return ""
+
+    row = our_row.iloc[0]
+    metrics = [
+        ("F1",          tiers,                      "c1"),
+        ("Precision",   [f"prec_{t}" for t in tiers], "c2"),
+        ("Specificity", [f"spec_{t}" for t in tiers], "c3"),
+    ]
+
     html = ""
-    for tier, tier_lbl in zip(tiers, tier_labels):
-        if tier not in strat.columns:
-            continue
-        html += f'<h3 style="margin-bottom:6px">{tier_lbl}</h3>'
-        max_val = float(strat[tier].max()) if not strat[tier].isna().all() else 1.0
-        for i, row in strat.iterrows():
-            val  = float(row[tier]) if pd.notna(row[tier]) else 0.0
-            pct  = round(val / max_val * 100, 1) if max_val > 0 else 0
-            name = str(row["Method"]).replace("_", " ")
-            c    = colors_by_method.get(str(row["Method"]), "c1")
+    for metric_name, col_keys, color in metrics:
+        html += f'<h4 style="margin:12px 0 4px">{metric_name}</h4>'
+        vals = []
+        for col_key, tier_lbl in zip(col_keys, tier_labels):
+            v = float(row[col_key]) if col_key in strat.columns and pd.notna(row.get(col_key, float("nan"))) else 0.0
+            vals.append((tier_lbl, v))
+        max_val = max(v for _, v in vals) or 1.0
+        for lbl, val in vals:
+            pct = round(val / max_val * 100, 1) if max_val > 0 else 0
             html += (
                 f'<div class="bar-group">'
-                f'<span class="bar-label">{name}</span>'
+                f'<span class="bar-label">{lbl}</span>'
                 f'<div class="bar-wrap">'
-                f'<div class="bar-fill {c}" style="width:{pct}%">'
+                f'<div class="bar-fill {color}" style="width:{pct}%">'
                 f'{val:.3f}</div></div>'
                 f'<span class="bar-val">{val:.3f}</span>'
                 f'</div>'
@@ -763,7 +1055,9 @@ def build_report(
     fp_comparison_tsv: str | None,
     output_html:     str,
     pr_curve_tsv:    str | None = None,
+    de_lists_json:   str | None = None,
 ) -> None:
+    import json as _json
     acc    = pd.read_csv(accuracy_tsv,   sep="\t")
     strat  = pd.read_csv(stratified_tsv, sep="\t")
     comp   = pd.read_csv(compute_tsv,    sep="\t")
@@ -771,6 +1065,12 @@ def build_report(
     jac    = pd.read_csv(de_jaccard_tsv, sep="\t")
     fp_cmp = pd.read_csv(fp_comparison_tsv, sep="\t") if fp_comparison_tsv else None
     pr_curve = pd.read_csv(pr_curve_tsv, sep="\t") if pr_curve_tsv else None
+
+    de_lists: dict | None = None
+    if de_lists_json and Path(de_lists_json).exists():
+        with open(de_lists_json, encoding="utf-8") as _fh:
+            de_lists = _json.load(_fh)
+    de_lists_js = _json.dumps(de_lists or {}, ensure_ascii=False)
 
     # Key summary numbers
     n_tp = int(acc["TP"].max()) if "TP" in acc.columns else "—"
@@ -800,9 +1100,25 @@ def build_report(
     # Filter compute cost to multi-tool pipelines only
     _SINGLE_TOOL_PIPE = {"circRNA-sponging", "CLEAR"}
     comp = comp[~comp["Pipeline"].isin(_SINGLE_TOOL_PIPE)].reset_index(drop=True)
-    comp_display = comp[["Pipeline", "Tool_combination", "Alignment_wall_min",
-                          "Total_wall_min", "Peak_RAM_GB", "Parallel_Peak_RAM_GB",
-                          "CPU_cores", "CPU_hours", "Source"]].copy()
+    _per_tool_cols = ["CIRIquant_min", "STAR_min", "DCC_min",
+                      "CIRCexplorer2_min", "find_circ_min"]
+    _rename_map = {
+        "CIRIquant_min":    "CIRIquant (min)",
+        "STAR_min":         "STAR×3 (min)",
+        "DCC_min":          "DCC (min)",
+        "CIRCexplorer2_min":"CIRCexplorer2 (min)",
+        "find_circ_min":    "find_circ (min)",
+        "Total_wall_min":   "Total (min)",
+        "Peak_RAM_GB":      "Peak RAM (GB)",
+        "Parallel_Peak_RAM_GB": "Parallel RAM (GB)",
+        "CPU_cores":        "Cores",
+        "CPU_hours":        "CPU-h",
+    }
+    comp_display = comp[["Pipeline", "Tool_combination"]
+                        + [c for c in _per_tool_cols if c in comp.columns]
+                        + ["Total_wall_min", "Peak_RAM_GB", "Parallel_Peak_RAM_GB",
+                           "CPU_cores", "CPU_hours", "Source"]].copy()
+    comp_display = comp_display.rename(columns=_rename_map)
 
     de_display_cols = [c for c in [
         "Method", "DE_method", "Total_input_circRNAs", "Sig_DE_circRNAs",
@@ -820,6 +1136,7 @@ def build_report(
   <title>circRNA Pipeline Benchmark — Comparison Report</title>
   {_STYLE}
   {_SCRIPT}
+  <script>const DE_LISTS = {de_lists_js};</script>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" charset="utf-8"></script>
 </head>
 <body>
@@ -876,21 +1193,19 @@ def build_report(
 </p>
 
 <h3>Precision / Recall / F1 / AUC-PR</h3>
-{_df_html(acc_display, best_col="F1", best_max=True,
-          table_id="tbl_accuracy", csv_filename="accuracy_summary.csv")}
+{_df_html(acc_display, best_col=None,
+          table_id="tbl_accuracy", csv_filename="accuracy_summary.csv",
+          highlight_cols={"Precision": True, "Specificity": True})}
 
-{_bar_chart(acc, "F1", title="F1 Score by Method")}
-{_bar_chart(acc, "Precision", title="Precision by Method")}
-{_bar_chart(acc, "Recall", title="Recall by Method")}
-{_bar_chart(acc, "Specificity", title="Specificity by Method") if "Specificity" in acc.columns else ""}
 
-<h3>Stratified F1 by BSJ count tier</h3>
+<h3>Stratified F1 by BSJ count quartile</h3>
 <p class="note">
-  BSJ RPM tiers based on total RNA sample (SRR444655).
-  Low (1–4 RPM) = weakly expressed; High (≥20 RPM) = robustly expressed.
+  BSJ count quartiles computed from ground-truth set (total RNA sample SRR444655,
+  CirComPara2 / nf-core style). Q1 = 25th percentile; Q4 = top 25%.
+  Low (Q1) = weakly expressed; High (Q4) = robustly expressed.
 </p>
-{_df_html(strat, table_id="tbl_stratified", csv_filename="stratified_f1.csv")}
-{_stratified_chart(strat)}
+{_df_html(strat[strat["Method"]=="Our_adaptive"].drop(columns=["q1_cutoff","q3_cutoff"], errors="ignore"),
+          table_id="tbl_stratified", csv_filename="stratified_f1.csv")}
 
 <p class="note">
   * nf-core/circrna simulation uses CIRIquant + CIRCexplorer2 + find_circ (≥2/3 tools,
@@ -915,7 +1230,7 @@ def build_report(
   nf-core and circRNA-sponging values are from published literature (see Source column).
   All pipelines used 8 CPU cores unless noted.
 </p>
-{_df_html(comp_display, best_col="Total_wall_min", best_max=False,
+{_df_html(comp_display, best_col="Total (min)", best_max=False,
           table_id="tbl_compute", csv_filename="compute_cost.csv")}
 <p class="note">
   所有 pipeline 均以 /usr/bin/time -v 實測（SRR444655，~100 M read pairs，HPC NFS 環境，8 cores）。
@@ -923,9 +1238,9 @@ def build_report(
   數值為各工具 wall time 加總（未扣除平行執行）。
 </p>
 
-{_bar_chart(comp_display, "Total_wall_min", label_col="Pipeline",
+{_bar_chart(comp_display, "Total (min)", label_col="Pipeline",
             title="Total Wall Time (min) — lower is better")}
-{_bar_chart(comp_display, "Parallel_Peak_RAM_GB", label_col="Pipeline",
+{_bar_chart(comp_display, "Parallel RAM (GB)", label_col="Pipeline",
             title="Parallel Execution Peak RAM (GB) — lower is better (realistic Snakemake usage)")}
 </div>
 
@@ -944,8 +1259,10 @@ def build_report(
 </p>
 
 <h3>Significant DE circRNAs &amp; Classification</h3>
-{_df_html(de[de_display_cols],
-          table_id="tbl_de", csv_filename="de_quality_summary.csv")}
+<p class="note" style="margin-bottom:8px">
+  帶底線數字可點擊，查看對應 circRNA 清單。
+</p>
+{_de_quality_table_html(de, de_display_cols, de_lists)}
 
 <h3>Overlap &amp; Directional Concordance</h3>
 <p class="note">
@@ -953,7 +1270,7 @@ def build_report(
   Directional_concordance_pct: among circRNAs significant in <em>both</em> methods,
   percentage with the same up/down direction — a proxy for cross-method biological agreement.
 </p>
-{_df_html(jac, table_id="tbl_jaccard", csv_filename="de_jaccard.csv")}
+{_jaccard_table_html(jac, de_lists)}
 </div>
 
 
@@ -968,6 +1285,25 @@ def build_report(
   Generated by circRNA_agent benchmark pipeline &nbsp;·&nbsp;
   circRNA_agent/benchmark/scripts/generate_comparison_report.py
 </footer>
+
+<!-- DE circRNA detail modal -->
+<div id="de-list-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+     background:rgba(0,0,0,.55);z-index:2000;overflow:auto"
+     onclick="if(event.target===this)closeDeList()">
+  <div style="background:#fff;margin:60px auto;padding:24px;max-width:940px;border-radius:8px;
+       max-height:80vh;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 id="de-list-title" style="margin:0;color:#1a5276"></h3>
+      <div style="display:flex;gap:8px">
+        <button class="dl-btn no-print" onclick="dlDeList()">&#8659; CSV</button>
+        <button class="dl-btn no-print" onclick="closeDeList()"
+                style="border-color:#c0392b;color:#c0392b">&times; 關閉</button>
+      </div>
+    </div>
+    <div id="de-list-count" style="color:#666;font-size:13px;margin-bottom:10px"></div>
+    <div id="de-list-body"></div>
+  </div>
+</div>
 
 </body>
 </html>
@@ -993,6 +1329,8 @@ def main() -> None:
                         help="FP score comparison TSV (from accuracy_benchmark.py)")
     parser.add_argument("--pr-curve",       default=None,   dest="pr_curve",
                         help="Threshold-based PR curve TSV (from accuracy_benchmark.py)")
+    parser.add_argument("--de-lists",       default=None,   dest="de_lists",
+                        help="JSON circRNA detail lists (from de_quality_benchmark.py --output-lists)")
     parser.add_argument("--output",         required=True)
     args = parser.parse_args()
 
@@ -1005,6 +1343,7 @@ def main() -> None:
         fp_comparison_tsv = args.fp_comparison,
         output_html       = args.output,
         pr_curve_tsv      = args.pr_curve,
+        de_lists_json     = args.de_lists,
     )
 
 

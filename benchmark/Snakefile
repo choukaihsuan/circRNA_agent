@@ -192,19 +192,27 @@ rule bench_star_paired:
     shell:
         """
         mkdir -p {params.tmp}
+        SORT_TMP=/home3/choukaihsuan/timing_tmp/samtools_sort_{wildcards.srr}
+        mkdir -p $SORT_TMP
         /usr/bin/time -v -o {output.time_log} \
             sh -c 'STAR --runThreadN {threads} --genomeDir {params.index} \
              --readFilesIn {input.r1} {input.r2} \
              --readFilesCommand zcat \
-             --outSAMtype BAM SortedByCoordinate \
+             --outSAMtype BAM Unsorted \
              --outFileNamePrefix {params.prefix} \
              --outTmpDir {params.tmp}/_STARtmp \
              --chimSegmentMin 5 --chimOutType Junctions \
              --chimJunctionOverhangMin 5 \
              --alignSJDBoverhangMin 5 \
              --outSAMattributes NH HI NM MD AS \
-             > {log} 2>&1 && samtools index {output.bam}'
-        rm -rf {params.tmp}
+             > {log} 2>&1 \
+             && samtools sort -@ {threads} -m 2G \
+                -T '"$SORT_TMP"'/sort \
+                {params.prefix}Aligned.out.bam \
+                -o {output.bam} \
+             && samtools index {output.bam} \
+             && rm -f {params.prefix}Aligned.out.bam'
+        rm -rf {params.tmp} $SORT_TMP
         """
 
 
