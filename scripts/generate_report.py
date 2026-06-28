@@ -639,67 +639,61 @@ _SCRIPT = """
 <script>
 // ── Language switcher ─────────────────────────────────────────────────────────
 let _LANG = localStorage.getItem('circrna_report_lang') || 'zh';
-const _LS = {{
-  zh: {{
-    hmStatus:   (n,u,d)=>`（已顯示 ${{n}} 筆；資料庫最多 ${{u}} up + ${{d}} down）`,
+const _LS = {
+  zh: {
+    hmStatus:   (n,u,d)=>`（已顯示 ${n} 筆；資料庫最多 ${u} up + ${d} down）`,
     swConc:     p=>p<0.05?'✗ 非常態 / Non-normal (α=0.05)':'✓ 常態 / Normal (α=0.05)',
     obsDist:    '觀測分布',
-    bmAll:      n=>`全部（${{n}}）`,
-    bm2:        n=>`≥ 2 方法顯著（${{n}}）`,
-    bm3:        n=>`3 方法均顯著（${{n}}）`,
+    bmAll:      n=>`全部（${n}）`,
+    bm2:        n=>`≥ 2 方法顯著（${n}）`,
+    bm3:        n=>`3 方法均顯著（${n}）`,
     bmNSig:     '在所選方法下不顯著',
     toggleShow: '全顯示',
     toggleHide: '全隱藏',
     toggleTip:  '點擊顯示/隱藏',
-  }},
-  en: {{
-    hmStatus:   (n,u,d)=>`(showing ${{n}}; pool: ${{u}} up + ${{d}} down)`,
+  },
+  en: {
+    hmStatus:   (n,u,d)=>`(showing ${n}; pool: ${u} up + ${d} down)`,
     swConc:     p=>p<0.05?'✗ Non-normal (α=0.05)':'✓ Normal (α=0.05)',
     obsDist:    'Observed distribution',
-    bmAll:      n=>`All (${{n}})`,
-    bm2:        n=>`≥ 2 methods (${{n}})`,
-    bm3:        n=>`All 3 methods (${{n}})`,
+    bmAll:      n=>`All (${n})`,
+    bm2:        n=>`≥ 2 methods (${n})`,
+    bm3:        n=>`All 3 methods (${n})`,
     bmNSig:     'Not significant under selected method',
     toggleShow: 'Show all',
     toggleHide: 'Hide all',
     toggleTip:  'Click to show/hide',
-  }},
-}};
+  },
+};
 
-function switchReportLang(lang) {{
+function switchReportLang(lang) {
   _LANG = lang;
   localStorage.setItem('circrna_report_lang', lang);
-  // Short text via data-en
-  document.querySelectorAll('[data-en]').forEach(function(el) {{
-    if (lang === 'en') {{
+  document.querySelectorAll('[data-en]').forEach(function(el) {
+    if (lang === 'en') {
       if (!el.dataset.zh) el.dataset.zh = el.innerHTML;
       el.innerHTML = el.dataset.en;
-    }} else {{
+    } else {
       if (el.dataset.zh !== undefined) el.innerHTML = el.dataset.zh;
-    }}
-  }});
-  // Toggle button state
-  document.querySelectorAll('.lang-btn-rpt').forEach(function(b) {{
+    }
+  });
+  document.querySelectorAll('.lang-btn-rpt').forEach(function(b) {
     b.classList.toggle('active', b.dataset.lang === lang);
-  }});
-  // Re-render dynamic content
+  });
   const statusEl = document.getElementById('heatmap-status');
-  if (statusEl && statusEl.dataset.n) {{
+  if (statusEl && statusEl.dataset.n) {
     statusEl.textContent = _LS[_LANG].hmStatus(statusEl.dataset.n, statusEl.dataset.u, statusEl.dataset.d);
-  }}
-  // Re-render biomarker filter buttons
+  }
   _updateBMFilterBtnLabels();
-  // Venn detail title
   const vennPanel = document.getElementById('venn-detail');
-  if (vennPanel && vennPanel.dataset.active) {{
+  if (vennPanel && vennPanel.dataset.active) {
     const d = VENN_REGION_DATA[vennPanel.dataset.active];
     if (d) document.getElementById('venn-detail-title').textContent = d['label_' + _LANG] || d.label_zh;
-  }}
-  // Biomarker normality conclusion in Plotly annotation
+  }
   _refreshBMHistLang();
-}}
+}
 
-function _updateBMFilterBtnLabels() {{
+function _updateBMFilterBtnLabels() {
   const btns = document.querySelectorAll('.bm-filter-btn');
   const tbody = document.querySelector('#tbl_biomarker tbody');
   if (!btns.length || !tbody) return;
@@ -707,25 +701,24 @@ function _updateBMFilterBtnLabels() {{
   const n_all = allRows.length;
   const n2 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 2).length;
   const n3 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 3).length;
-  btns.forEach((b, i) => {{
+  btns.forEach((b, i) => {
     if (i === 0) b.textContent = _LS[_LANG].bmAll(n_all);
     else if (i === 1) b.textContent = _LS[_LANG].bm2(n2);
     else if (i === 2) b.textContent = _LS[_LANG].bm3(n3);
-  }});
-}}
+  });
+}
 
-function _refreshBMHistLang() {{
+function _refreshBMHistLang() {
   if (typeof Plotly === 'undefined' || !document.getElementById('bm-hist-plot')) return;
-  try {{
-    Plotly.restyle('bm-hist-plot', {{name: [_LS[_LANG].obsDist]}}, [0]);
-  }} catch(e) {{}}
-}}
+  try {
+    Plotly.restyle('bm-hist-plot', {name: [_LS[_LANG].obsDist]}, [0]);
+  } catch(e) {}
+}
 
-// Restore saved language on load
-(function() {{
+(function() {
   var saved = localStorage.getItem('circrna_report_lang');
   if (saved === 'en') switchReportLang('en');
-}})();
+})();
 
 function _parseGenCoord(s) {
   // Parse chrN:start|end → {c: chrNum, p: startPos} for genomic sort
