@@ -776,8 +776,8 @@
         </table>
 
         <div style="margin-top:16px">
-          <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %}>
-            🚀 啟動分析
+          <button type="submit" class="btn btn-geo">
+            🚀 加入佇列
           </button>
         </div>
 
@@ -852,8 +852,8 @@
           <input type="hidden" id="lf-normal-label" name="normal_label">
           <input type="hidden" id="lf-cores"        name="cores">
           <input type="hidden" id="lf-notify-email" name="notify_email">
-          <button type="button" onclick="submitLocal()" class="btn btn-geo" {% if running %}disabled{% endif %}>
-            🚀 啟動分析
+          <button type="button" onclick="submitLocal()" class="btn btn-geo">
+            🚀 加入佇列
           </button>
         </form>
       </div>
@@ -1037,8 +1037,8 @@
         💾 儲存設定
       </button>
       <button type="submit" name="action" value="run" class="btn btn-run"
-              id="run-btn" {% if running %}disabled{% endif %} data-en="🚀 Save & Run">
-        🚀 儲存並執行分析
+              id="run-btn" data-en="🚀 Save & Run">
+        🚀 儲存並加入佇列
       </button>
       <a href="/status" class="btn btn-status" style="text-decoration:none" data-en="📊 View Status">
         📊 查看執行狀態
