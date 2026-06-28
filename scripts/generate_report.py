@@ -2421,6 +2421,8 @@ function _drawCircleRNA(circId, container) {{
     }}
     const miOvlSorted=[...miOvlSet].sort((a,b)=>miArcSegsFlat[a].a1-miArcSegsFlat[b].a1);
     miOvlSorted.forEach((fi,li)=>{{miArcSegsFlat[fi].label=SITE_LABELS[li%26];}});
+    const miAnnMap={{}};
+    miOvlSorted.forEach(fi=>{{const s=miArcSegsFlat[fi];if(s.label&&!miAnnMap[s.label])miAnnMap[s.label]={{name:s.name,color:miMap[s.name]?miMap[s.name].color:'#888'}};}});
     // Draw arc groups (each name wrapped in <g> for show/hide)
     Object.entries(miArcGroups).forEach(([name,arcs])=>{{
       const e=miMap[name];
@@ -2431,6 +2433,7 @@ function _drawCircleRNA(circId, container) {{
         if(fi>=0&&miOvlSet.has(fi)){{
           const seg=miArcSegsFlat[fi];
           const dp=BOUND_DASH[(seg.num-1)%BOUND_DASH.length];
+          if(seg.label)svg+=`<g id="_ann_mi_${{seg.label}}" class="_miann">`;
           [a.a1,a.a2].forEach(ang=>{{
             const [lx1,ly1]=polar(MI_IN-1,ang),[lx2,ly2]=polar(MI_OUT+1,ang);
             svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="${{e.color}}" stroke-width="2.5" stroke-dasharray="${{dp}}" opacity="0.95"/>`;
@@ -2441,6 +2444,7 @@ function _drawCircleRNA(circId, container) {{
             svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="6" fill="${{e.color}}" opacity="0.93" stroke="white" stroke-width="0.8"/>`;
             svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{seg.label}}</text>`;
           }}
+          if(seg.label)svg+=`</g>`;
         }}
       }});
       svg+=`</g>`;
@@ -2518,6 +2522,8 @@ function _drawCircleRNA(circId, container) {{
     }}
     const rbpOvlSorted=[...rbpOvlSet].sort((a,b)=>rbpArcSegsFlat[a].a1-rbpArcSegsFlat[b].a1);
     rbpOvlSorted.forEach((fi,li)=>{{rbpArcSegsFlat[fi].label=SITE_LABELS[li%26];}});
+    const rbpAnnMap={{}};
+    rbpOvlSorted.forEach(fi=>{{const s=rbpArcSegsFlat[fi];if(s.label&&!rbpAnnMap[s.label])rbpAnnMap[s.label]={{name:s.name,color:rbpMap[s.name]?rbpMap[s.name].color:'#888'}};}});
     // Draw RBP arc groups
     Object.entries(rbpArcGroups).forEach(([name,arcs])=>{{
       const e=rbpMap[name];
@@ -2528,6 +2534,7 @@ function _drawCircleRNA(circId, container) {{
         if(fi>=0&&rbpOvlSet.has(fi)){{
           const seg=rbpArcSegsFlat[fi];
           const dp=BOUND_DASH[(seg.num-1)%BOUND_DASH.length];
+          if(seg.label)svg+=`<g id="_ann_rbp_${{seg.label}}" class="_rbpann">`;
           [a.a1,a.a2].forEach(ang=>{{
             const [lx1,ly1]=polar(RBP_IN-1,ang),[lx2,ly2]=polar(RBP_OUT+1,ang);
             svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="${{e.color}}" stroke-width="2.5" stroke-dasharray="${{dp}}" opacity="0.95"/>`;
@@ -2538,6 +2545,7 @@ function _drawCircleRNA(circId, container) {{
             svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="6" fill="${{e.color}}" opacity="0.93" stroke="white" stroke-width="0.8"/>`;
             svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{seg.label}}</text>`;
           }}
+          if(seg.label)svg+=`</g>`;
         }}
       }});
       svg+=`</g>`;
@@ -2628,7 +2636,39 @@ function _drawCircleRNA(circId, container) {{
     }});
     legHtml+='</div></div>';
   }}
-  container.innerHTML=`<div style="text-align:center">${{svg}}</div>`+legHtml;
+  // Build letter annotation legend (Level 2 toggle panel)
+  let annLegHtml='';
+  const miAnns=Object.entries(miAnnMap).sort((a,b)=>a[0].localeCompare(b[0]));
+  const rbpAnns=Object.entries(rbpAnnMap).sort((a,b)=>a[0].localeCompare(b[0]));
+  if(miAnns.length+rbpAnns.length>0){{
+    annLegHtml='<div style="font-size:10px;padding:6px 0 0 10px;border-left:2px solid #d8e8f4;min-width:150px;max-width:210px;align-self:flex-start;margin-top:8px">';
+    annLegHtml+='<div style="font-weight:600;margin-bottom:5px;color:#446;font-size:10px">🔍 重疊位點 / Overlapping sites</div>';
+    annLegHtml+='<div style="font-size:9px;color:#888;margin-bottom:2px">點擊字母切換顯示 / Click to toggle</div>';
+    if(miAnns.length>0){{
+      annLegHtml+='<div style="font-size:9px;font-weight:600;color:#888;margin:5px 0 3px">miRNA</div>';
+      miAnns.forEach(([letter,info])=>{{
+        annLegHtml+=`<div class="_annrow" data-type="mi" data-letter="${{letter}}" onclick="_toggleAnn('mi','${{letter}}',this)"
+          style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 4px;border-radius:4px;margin-bottom:2px;transition:opacity .15s">
+          <span style="background:${{info.color}};color:white;border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:bold;flex-shrink:0">${{letter}}</span>
+          <span style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:9px" title="${{info.name}}">${{info.name}}</span>
+          <span class="_eye" style="font-size:10px">👁</span>
+        </div>`;
+      }});
+    }}
+    if(rbpAnns.length>0){{
+      annLegHtml+='<div style="font-size:9px;font-weight:600;color:#888;margin:5px 0 3px">RBP</div>';
+      rbpAnns.forEach(([letter,info])=>{{
+        annLegHtml+=`<div class="_annrow" data-type="rbp" data-letter="${{letter}}" onclick="_toggleAnn('rbp','${{letter}}',this)"
+          style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 4px;border-radius:4px;margin-bottom:2px;transition:opacity .15s">
+          <span style="background:${{info.color}};color:white;border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:bold;flex-shrink:0">${{letter}}</span>
+          <span style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:9px" title="${{info.name}}">${{info.name}}</span>
+          <span class="_eye" style="font-size:10px">👁</span>
+        </div>`;
+      }});
+    }}
+    annLegHtml+='</div>';
+  }}
+  container.innerHTML=`<div style="display:flex;justify-content:center;align-items:flex-start;gap:6px"><div style="text-align:center">${{svg}}</div>${{annLegHtml}}</div>`+legHtml;
 }}
 
 // ── Mini heatmap ──────────────────────────────────────────────────────────────
@@ -3001,6 +3041,19 @@ function _spotlight(type, num, chip) {{
     chip.style.fontWeight = 'bold';
     chip.style.background = '#f5f5f5';
   }}
+}}
+
+function _toggleAnn(type, letter, row) {{
+  // Level 2: toggle annotation visibility (boundary + label) only; arc stays visible
+  const wrap = document.getElementById('cm-circle-wrap');
+  if (!wrap) return;
+  const g = wrap.querySelector(`#_ann_${{type}}_${{letter}}`);
+  if (!g) return;
+  const nowVis = g.style.visibility !== 'hidden';
+  g.style.visibility = nowVis ? 'hidden' : '';
+  const eye = row ? row.querySelector('._eye') : null;
+  if (eye) eye.textContent = nowVis ? '🙈' : '👁';
+  if (row) row.style.opacity = nowVis ? '0.4' : '1';
 }}
 
 function _toggleBadge(type, num, chip) {{
