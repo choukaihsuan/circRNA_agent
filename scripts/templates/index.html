@@ -125,6 +125,15 @@
     .param-group input:focus { outline: none; border-color: var(--primary); }
     .param-hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
+    /* ── Language Switcher ── */
+    .lang-switcher { display:flex; gap:4px; margin-left:auto; align-items:center; }
+    .lang-btn { padding:4px 12px; border:1.5px solid var(--border); border-radius:6px;
+                font-size:12px; font-weight:700; cursor:pointer; background:#fff;
+                color:var(--muted); transition:all .15s; letter-spacing:.04em; }
+    .lang-btn:hover { border-color:var(--primary); color:var(--primary); }
+    .lang-btn.active { background:var(--primary); border-color:var(--primary);
+                       color:#fff; }
+
     /* ── Tutorial ── */
     .tut-body { display:none; margin-top:16px; }
     .tut-body.open { display:block; }
@@ -265,31 +274,36 @@
       <p>{{ config.get('project_id', 'circRNA Pipeline') }} ／ 設定分析方法並執行</p>
     </div>
     {% if running %}
-    <span class="status-pill pill-running">⏳ 執行中</span>
+    <span class="status-pill pill-running" data-en="⏳ Running">⏳ 執行中</span>
     {% else %}
-    <span class="status-pill pill-idle">● 閒置</span>
+    <span class="status-pill pill-idle" data-en="● Idle">● 閒置</span>
     {% endif %}
+    <div class="lang-switcher">
+      <button class="lang-btn active" data-lang="zh" onclick="switchLang('zh')">中文</button>
+      <button class="lang-btn"        data-lang="en" onclick="switchLang('en')">EN</button>
+    </div>
   </div>
 
   <!-- ── 查詢任務進度 ── -->
   <div class="section" style="border-color:#ddd6fe; background:linear-gradient(135deg,#faf5ff,#fff);">
-    <div class="section-title">查詢進度</div>
-    <h2>輸入任務編號</h2>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+    <div class="section-title" data-en="Query Progress">查詢進度</div>
+    <h2 data-en="Enter Job ID">輸入任務編號</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px;" data-en="After submitting an analysis, a job ID will be assigned (format: <code>GSE113230-F7X2</code>). Enter the ID to check progress.">
       提交分析後系統會分配任務編號（格式：<code>GSE113230-F7X2</code>），輸入編號即可查看進度。
     </p>
     <form method="GET" action="/status-query" style="margin:0">
       <div class="geo-row">
         <input class="job-input" type="text" name="job_id"
                placeholder="GSE113230-F7X2" autocomplete="off" required>
-        <button type="submit" class="btn btn-query">查詢進度 →</button>
+        <button type="submit" class="btn btn-query" data-en="Query →">查詢進度 →</button>
       </div>
     </form>
 
     {% if recent_jobs %}
     <div style="margin-top:16px">
       <div style="font-size:12px;font-weight:600;color:var(--muted);
-                  text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">
+                  text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px"
+           data-en="Recent Jobs">
         最近任務
       </div>
       {% for job_id, job in recent_jobs %}
@@ -308,8 +322,8 @@
     <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer"
          onclick="toggleGuide()">
       <div>
-        <div class="section-title">選擇指引</div>
-        <h2 style="margin-bottom:0">📋 資料集選擇指引</h2>
+        <div class="section-title" data-en="Dataset Guide">選擇指引</div>
+        <h2 style="margin-bottom:0" data-en="📋 Dataset Selection Guide">📋 資料集選擇指引</h2>
       </div>
       <span id="guide-arrow" style="font-size:20px;color:var(--muted)">▶</span>
     </div>
@@ -388,21 +402,22 @@
     <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer"
          onclick="toggleTutorial()">
       <div>
-        <div class="section-title" style="color:#7c3aed">使用教學</div>
-        <h2 style="margin-bottom:0">📖 Pipeline 使用教學</h2>
+        <div class="section-title" style="color:#7c3aed" data-en="Tutorial">使用教學</div>
+        <h2 style="margin-bottom:0" data-en="📖 Pipeline Tutorial">📖 Pipeline 使用教學</h2>
       </div>
       <span id="tut-arrow" style="font-size:20px;color:var(--muted)">▶</span>
     </div>
 
     <div id="tut-body" class="tut-body">
-      <p style="font-size:13px;color:var(--muted);margin:12px 0 16px">
+      <p id="tut-intro" style="font-size:13px;color:var(--muted);margin:12px 0 16px"
+         data-en="This tutorial covers the complete workflow from dataset selection to report interpretation.">
         從選擇資料集到解讀報告，以下教學涵蓋完整分析流程與結果解讀說明。
       </p>
 
       <!-- Tab bar -->
       <div class="tut-tabs">
-        <button class="tut-tab active" onclick="switchTutTab(this,'tut-workflow')">⚙️ 操作流程</button>
-        <button class="tut-tab"        onclick="switchTutTab(this,'tut-report')">📊 報告解讀</button>
+        <button class="tut-tab active" onclick="switchTutTab(this,'tut-workflow')" data-en="⚙️ Workflow">⚙️ 操作流程</button>
+        <button class="tut-tab"        onclick="switchTutTab(this,'tut-report')"  data-en="📊 Report Guide">📊 報告解讀</button>
       </div>
 
       <!-- ══ Panel 1: 操作流程 ══ -->
@@ -597,19 +612,20 @@
 
   <!-- ── 啟動分析 ── -->
   <div class="section" style="border-color:#99f6e4; background:linear-gradient(135deg,#f0fdfa,#fff);">
-    <div class="section-title">快速入口</div>
-    <h2>啟動分析</h2>
+    <div class="section-title" data-en="Quick Start">快速入口</div>
+    <h2 data-en="Launch Analysis">啟動分析</h2>
 
     <!-- Tab bar -->
     <div class="launch-tabs">
-      <button class="launch-tab active" onclick="switchTab('gse', this)">🌐 GEO 資料集</button>
-      <button class="launch-tab" onclick="switchTab('manual', this)">✏️ 手動 SRR 清單</button>
-      <button class="launch-tab" onclick="switchTab('local', this)">📁 本地 FASTQ</button>
+      <button class="launch-tab active" onclick="switchTab('gse', this)"    data-en="🌐 GEO Dataset">🌐 GEO 資料集</button>
+      <button class="launch-tab" onclick="switchTab('manual', this)"        data-en="✏️ Manual SRR">✏️ 手動 SRR 清單</button>
+      <button class="launch-tab" onclick="switchTab('local', this)"         data-en="📁 Local FASTQ">📁 本地 FASTQ</button>
     </div>
 
     <!-- Panel A: GSE / SRA BioProject -->
     <div class="launch-panel active" id="panel-gse">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:12px;"
+         data-en="Enter a GEO or SRA accession. The system will automatically download metadata, assign tumor/normal labels, and run the full pipeline.<br><span style='color:#64748b;'>Supported: <code>GSE113230</code> (GEO Series) · <code>PRJNA808398</code> (SRA BioProject) · <code>SRP156355</code> (SRA Study)</span>">
         輸入 GEO 或 SRA 編號，系統自動下載 metadata、分配 tumor/normal 標籤，並執行完整 pipeline。<br>
         <span style="color:#64748b;">支援格式：
           <code>GSE113230</code>（GEO Series）・
@@ -627,11 +643,11 @@
                  min="1" max="96" style="width:70px;padding:10px 8px;border:1px solid var(--border);
                  border-radius:8px;font-size:14px;text-align:center;" title="CPU cores">
           <span style="font-size:12px;color:var(--muted)">cores</span>
-          <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %}>
+          <button type="submit" class="btn btn-geo" {% if running %}disabled{% endif %} data-en="🚀 Launch">
             🚀 一鍵啟動
           </button>
         </div>
-        <div class="geo-hint">⚙️ 使用目前 Step 1–3 的參數設定執行；啟動後可至「查看執行狀態」追蹤進度。</div>
+        <div class="geo-hint" data-en="⚙️ Uses current Step 1–3 settings. After launch, go to 'View Status' to track progress.">⚙️ 使用目前 Step 1–3 的參數設定執行；啟動後可至「查看執行狀態」追蹤進度。</div>
       </form>
     </div>
 
@@ -836,7 +852,7 @@
     <!-- ── Step 1: circRNA Detection Tools ── -->
     <div class="section">
       <div class="section-title">Step 1</div>
-      <h2>circRNA 偵測工具</h2>
+      <h2 data-en="circRNA Detection Tools">circRNA 偵測工具</h2>
 
       <div class="tool-grid">
 
@@ -847,7 +863,7 @@
                  {% if 'ciriquant' in selected_tools %}checked{% endif %}>
           <div class="tool-name">CIRIquant</div>
           <div class="tool-algo">HISAT2 + BWA-MEM</div>
-          <div class="tool-desc">
+          <div class="tool-desc" data-en="Aligns BSJ reads with BWA-MEM, quantifies expression with HISAT2; outputs BSJ counts and GTF per circRNA.">
             以 BWA 比對 BSJ reads，HISAT2 quantify expression；
             提供每個 circRNA 的 BSJ count 與 GTF 輸出。
           </div>
@@ -861,7 +877,7 @@
                  {% if 'dcc' in selected_tools %}checked{% endif %}>
           <div class="tool-name">DCC</div>
           <div class="tool-algo">STAR chimeric junctions</div>
-          <div class="tool-desc">
+          <div class="tool-desc" data-en="Detects back-splice junctions via STAR chimeric reads; requires separate mate1, mate2, and paired-end alignments.">
             利用 STAR 的 chimeric junction 偵測 back-splice；
             需各別比對 mate1、mate2 及 paired-end reads。
           </div>
@@ -874,13 +890,13 @@
       <div id="consensus-badge">
         <span class="badge-icon">🔀</span>
         <span>
-          <strong>雙工具共識模式</strong>：兩個工具同時執行，取交集（consensus filter）後輸出高可信度 circRNA。
+          <strong data-en="Dual-tool consensus mode">雙工具共識模式</strong><span data-en=": Both tools run in parallel; high-confidence circRNAs are selected by consensus filter.">：兩個工具同時執行，取交集（consensus filter）後輸出高可信度 circRNA。</span>
         </span>
       </div>
 
       <!-- min_tools (shown when both selected) -->
       <div id="min-tools-row">
-        <label for="min_tools">最少需要幾個工具支持：</label>
+        <label for="min_tools" data-en="Minimum tools required:">最少需要幾個工具支持：</label>
         <input type="number" name="min_tools" id="min_tools"
                value="{{ config.get('consensus', {}).get('min_tools', 2) }}" min="1" max="2">
         <span style="font-size:12px; color:var(--muted)">（2 = 兩工具都支持才算，1 = 任一工具即可）</span>
@@ -890,15 +906,15 @@
     <!-- ── Step 2: DE Method ── -->
     <div class="section">
       <div class="section-title">Step 2</div>
-      <h2>差異表現分析方法</h2>
+      <h2 data-en="Differential Expression Methods">差異表現分析方法</h2>
 
       <!-- Always-run notice -->
       <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;
                   background:#f0fdf4;border:1px solid #86efac;border-radius:8px;margin-bottom:16px">
         <span style="font-size:18px">✅</span>
         <div style="font-size:13px;color:#166534">
-          <strong>三種方法全部執行</strong>（edgeR + FSJ offset、DESeq2、limma-voom）<br>
-          <span style="font-size:12px;color:#15803d">
+          <strong data-en="All 3 methods run automatically">三種方法全部執行</strong><span data-en=" (edgeR + FSJ offset, DESeq2, limma-voom)">（edgeR + FSJ offset、DESeq2、limma-voom）</span><br>
+          <span style="font-size:12px;color:#15803d" data-en="Results exported as separate TSVs; switch methods instantly in the report.">
             結果分別輸出為獨立 TSV，報告內可即時切換比較。
           </span>
         </div>
@@ -906,7 +922,7 @@
 
       <!-- Primary display method selector -->
       <div style="font-size:13px;color:#555;margin-bottom:8px;font-weight:600">
-        報告預設顯示方法（主方法）
+        <span data-en="Primary display method in report">報告預設顯示方法（主方法）</span>
       </div>
       <div class="method-grid">
 
@@ -914,8 +930,8 @@
                onclick="selectMethod('edgeR_ciriquant')">
           <input type="radio" name="de_method" value="edgeR_ciriquant"
                  {% if de_method == 'edgeR_ciriquant' %}checked{% endif %}>
-          <div class="method-name">edgeR + FSJ offset <span class="rec-badge">推薦</span></div>
-          <div class="method-desc">
+          <div class="method-name">edgeR + FSJ offset <span class="rec-badge" data-en="Recommended">推薦</span></div>
+          <div class="method-desc" data-en="Tests BSJ/FSJ ratio shift; classifies Type I/II; most biologically meaningful for circRNA.">
             BSJ/FSJ 比值測試；輸出 Type I / II 分類；最具 circRNA 生物意義。
           </div>
         </label>
@@ -925,7 +941,7 @@
           <input type="radio" name="de_method" value="deseq2"
                  {% if de_method == 'deseq2' %}checked{% endif %}>
           <div class="method-name">DESeq2</div>
-          <div class="method-desc">最保守；適合樣本數較多（n ≥ 5）或作為嚴格基準。</div>
+          <div class="method-desc" data-en="Most conservative; best for larger sample sizes (n ≥ 5) or as a strict reference.">最保守；適合樣本數較多（n ≥ 5）或作為嚴格基準。</div>
         </label>
 
         <label class="method-card {% if de_method == 'limma' %}selected{% endif %}"
@@ -933,7 +949,7 @@
           <input type="radio" name="de_method" value="limma"
                  {% if de_method == 'limma' %}checked{% endif %}>
           <div class="method-name">limma-voom</div>
-          <div class="method-desc">小樣本（n = 3）最穩定；recall 最高；適合探索性分析。</div>
+          <div class="method-desc" data-en="Most stable for small samples (n = 3); highest recall; good for exploratory analysis.">小樣本（n = 3）最穩定；recall 最高；適合探索性分析。</div>
         </label>
 
       </div>
@@ -947,10 +963,10 @@
 
     <!-- ── Step 3: Advanced params ── -->
     <div class="section">
-      <div class="section-title">Step 3（可選）</div>
-      <h2>進階參數</h2>
+      <div class="section-title" data-en="Step 3 (Optional)">Step 3（可選）</div>
+      <h2 data-en="Advanced Parameters">進階參數</h2>
       <div class="advanced-toggle" onclick="toggleAdvanced()">
-        <span id="adv-arrow">▶</span> 展開進階設定
+        <span id="adv-arrow">▶</span> <span data-en="Expand advanced settings">展開進階設定</span>
       </div>
       <div class="advanced-body" id="advanced-body">
         <div class="param-grid">
@@ -959,39 +975,39 @@
             <label>min BSJ reads</label>
             <input type="number" name="min_bsj" min="1" max="20"
                    value="{{ config.get('consensus', {}).get('min_bsj_reads', 2) }}">
-            <div class="param-hint">每個工具最低支持 read 數</div>
+            <div class="param-hint" data-en="Minimum supporting reads per tool">每個工具最低支持 read 數</div>
           </div>
 
           <div class="param-group">
-            <label>座標容忍度 (bp)</label>
+            <label data-en="Coordinate tolerance (bp)">座標容忍度 (bp)</label>
             <input type="number" name="slop" min="0" max="100"
                    value="{{ config.get('consensus', {}).get('slop', 10) }}">
-            <div class="param-hint">兩工具座標差距容忍值</div>
+            <div class="param-hint" data-en="Coordinate tolerance between tools">兩工具座標差距容忍值</div>
           </div>
 
           <div class="param-group">
-            <label>FDR 閾值</label>
+            <label data-en="FDR threshold">FDR 閾值</label>
             <input type="number" name="fdr" step="0.01" min="0.01" max="0.2"
                    value="{{ config.get('de', {}).get('fdr_cutoff', 0.05) }}">
-            <div class="param-hint">差異表現 adjusted p-value 上限</div>
+            <div class="param-hint" data-en="Adjusted p-value cutoff for DE">差異表現 adjusted p-value 上限</div>
           </div>
 
           <div class="param-group">
-            <label>log₂FC 閾值</label>
+            <label data-en="log₂FC threshold">log₂FC 閾值</label>
             <input type="number" name="log2fc" step="0.1" min="0" max="5"
                    value="{{ config.get('de', {}).get('log2fc_cutoff', 1.0) }}">
-            <div class="param-hint">差異表現最小折數（log₂）</div>
+            <div class="param-hint" data-en="Minimum fold change (log₂) for DE">差異表現最小折數（log₂）</div>
           </div>
 
           <div class="param-group">
             <label>max BSJ/FSJ ratio</label>
             <input type="number" name="max_junction_ratio" step="0.1" min="0.1" max="10"
                    value="{{ config.get('consensus', {}).get('max_junction_ratio', 1.0) }}">
-            <div class="param-hint">Pseudo-circ QC：BSJ/FSJ 上限（1.0 = 排除 BSJ&gt;FSJ）</div>
+            <div class="param-hint" data-en="Pseudo-circ QC: max BSJ/FSJ ratio (1.0 = exclude if BSJ&gt;FSJ)">Pseudo-circ QC：BSJ/FSJ 上限（1.0 = 排除 BSJ&gt;FSJ）</div>
           </div>
 
           <div class="param-group">
-            <label>Threads（每個 job）</label>
+            <label data-en="Threads (per job)">Threads（每個 job）</label>
             <input type="number" name="threads" min="1" max="64"
                    value="{{ config.get('threads', 8) }}">
             <div class="param-hint">CPU 核心數 / sample</div>
@@ -1003,14 +1019,14 @@
 
     <!-- ── Buttons ── -->
     <div class="btn-row">
-      <button type="submit" name="action" value="save" class="btn btn-save">
+      <button type="submit" name="action" value="save" class="btn btn-save" data-en="💾 Save Settings">
         💾 儲存設定
       </button>
       <button type="submit" name="action" value="run" class="btn btn-run"
-              id="run-btn" {% if running %}disabled{% endif %}>
+              id="run-btn" {% if running %}disabled{% endif %} data-en="🚀 Save & Run">
         🚀 儲存並執行分析
       </button>
-      <a href="/status" class="btn btn-status" style="text-decoration:none">
+      <a href="/status" class="btn btn-status" style="text-decoration:none" data-en="📊 View Status">
         📊 查看執行狀態
       </a>
     </div>
@@ -1233,6 +1249,236 @@
   (function() {
     const v = document.getElementById('gse-id-input');
     if (v && v.value.trim().length >= 6) detectLabels(v.value.trim());
+  })();
+
+  // ── Language switcher ─────────────────────────────────────────────────────
+  const _LANG_ZH = {};
+  const _LANG_EN_CONTAINERS = {
+    'guide-body': `
+      <p style="font-size:13px;color:var(--muted);margin:12px 0 14px">
+        Verify these conditions before searching for a new dataset on GEO to maximize circRNA detection quality and DE significance.
+      </p>
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:#0f766e;">✅ Required Conditions Checklist</div>
+      <ul class="guide-checklist">
+        <li><span class="gi">✅</span><span><b>Read length ≥ 100 bp PE</b> (BSJ detection requires reads spanning the back-splice junction)</span></li>
+        <li><span class="gi">✅</span><span><b>Total RNA (rRNA-depleted)</b>, not poly-A selection</span></li>
+        <li><span class="gi">✅</span><span><b>≥ 3 replicates per group</b> (≥ 5 recommended to pass FDR correction)</span></li>
+        <li><span class="gi">✅</span><span><b>Clear case vs. control</b> (tumor/normal, treatment/vehicle)</span></li>
+        <li><span class="gi">⚠️</span><span>Sequencing depth <b>≥ 50M reads/sample</b> (&lt;30M significantly reduces sensitivity)</span></li>
+        <li><span class="gi">⚠️</span><span>Tissue samples preferred (cell lines have fewer circRNAs; low biomarker translatability)</span></li>
+      </ul>
+      <div style="font-weight:700;font-size:13px;margin:14px 0 8px;color:#0f766e;">📊 Key Factor Quick Reference</div>
+      <table class="guide-factor-table">
+        <thead><tr><th>Factor</th><th class="gf-ok">✅ Recommended</th><th class="gf-warn">⚠️ Acceptable</th><th class="gf-bad">❌ Avoid</th></tr></thead>
+        <tbody>
+          <tr><td><b>Read length</b></td><td>≥ 150 bp PE</td><td>75–100 bp PE</td><td>50 bp PE (DCC nearly fails; adaptive fallback required)</td></tr>
+          <tr><td><b>RNA-Seq type</b></td><td>Total RNA (rRNA-depleted)</td><td>RNase R enriched</td><td>poly-A selection (circRNA ≈ 0)</td></tr>
+          <tr><td><b>Sample type</b></td><td>Tissue (tumor/normal)</td><td>Cell line (KO/OE)</td><td>Cell line + drug (limited circRNA DE)</td></tr>
+          <tr><td><b>Sample count</b></td><td>≥ 5 per group</td><td>3–4 per group</td><td>&lt;3 per group (insufficient statistical power)</td></tr>
+          <tr><td><b>Study design</b></td><td>Paired tumor/normal (same patient)</td><td>Unpaired tumor vs. normal</td><td>No control group</td></tr>
+        </tbody>
+      </table>`,
+
+    'tut-workflow': `
+      <div class="step-card">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h4>Select a GEO Dataset</h4>
+          <p>Search for circRNA-related studies on <a href="https://www.ncbi.nlm.nih.gov/geo/" target="_blank">NCBI GEO</a>.
+             Verify these three key fields for your target Series:</p>
+          <dl class="tut-kv">
+            <dt>Library Strategy</dt><dd>RNA-Seq (not miRNA-Seq / ChIP-Seq)</dd>
+            <dt>Library Selection</dt><dd><b>TOTAL</b> or <b>other</b> (rRNA-depleted); avoid <b>POLY_A</b></dd>
+            <dt>avgLength (SRA RunInfo)</dt><dd>≥ 100 bp (150 bp PE is optimal)</dd>
+          </dl>
+          <div class="tip-box">💡 Open the "Dataset Selection Guide" above for a detailed factor table and list of tested datasets.</div>
+        </div>
+      </div>
+      <div class="step-card">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h4>Configure Analysis Parameters (Steps 1–3)</h4>
+          <p>Fill in the Step 1–3 forms below the launch panel:</p>
+          <dl class="tut-kv">
+            <dt>Step 1 — Detection tools</dt>
+            <dd>Default: <b>CIRIquant + DCC (consensus mode)</b>. For read length ≤ 75 bp, use CIRIquant only.
+                Enable "Adaptive fallback" to auto-downgrade to single-tool mode when detection counts are severely imbalanced.</dd>
+            <dt>Step 2 — DE methods</dt>
+            <dd>All three methods (edgeR / DESeq2 / limma-voom) <b>always run</b>.
+                Choose a "primary display method" for the report. For small samples (n=3), recommend <b>edgeR_ciriquant</b> or <b>limma-voom</b>.</dd>
+            <dt>Step 3 — Advanced params</dt>
+            <dd>min BSJ reads (noise filter), FDR / log2FC thresholds; defaults are fine for most datasets.</dd>
+          </dl>
+          <div class="info-box">ℹ️ Click "Save Settings" to save your configuration without launching the pipeline yet.</div>
+        </div>
+      </div>
+      <div class="step-card">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h4>Launch Analysis</h4>
+          <p>Three launch modes — choose based on your data source:</p>
+          <dl class="tut-kv">
+            <dt>Mode 1: GEO One-Click</dt>
+            <dd>Enter a GSE ID (e.g. <span class="code-inline">GSE113230</span>) and click "🚀 Launch".
+                The system downloads FASTQ from SRA and runs the complete pipeline automatically.</dd>
+            <dt>Mode 2: Manual SRR List</dt>
+            <dd>Ideal for <b>selecting specific samples</b> from a large dataset, or customizing condition labels (tumor/normal, etc.).
+                Enter SRR IDs row by row, or upload a CSV (<span class="code-inline">srr_id,condition</span>).</dd>
+            <dt>Mode 3: Local FASTQ</dt>
+            <dd>If FASTQ files already exist on the server, specify the directory path. The system auto-detects read pairs
+                (_1/_2, _R1/_R2, etc.), creates symlinks, and starts from the QC step — skipping download.</dd>
+          </dl>
+          <div class="warn-box">⚠️ After launching, use the "View Status" page to monitor progress — do not refresh the settings page.</div>
+        </div>
+      </div>
+      <div class="step-card">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h4>Monitor Progress</h4>
+          <p>After launch, click "📊 View Status" or enter the job ID (format <span class="code-inline">GSE113230-XXXX</span>).</p>
+          <div class="tut-flow">
+            <span class="tut-flow-step">Download SRA</span><span class="tut-flow-arrow">→</span>
+            <span class="tut-flow-step">FastQC</span><span class="tut-flow-arrow">→</span>
+            <span class="tut-flow-step">fastp trim</span><span class="tut-flow-arrow">→</span>
+            <span class="tut-flow-step">CIRIquant</span><span class="tut-flow-arrow">→</span>
+            <span class="tut-flow-step">STAR ×3</span><span class="tut-flow-arrow">→</span>
+            <span class="tut-flow-step">DCC</span><span class="tut-flow-arrow">→</span>
+            <span class="tut-flow-step">Consensus filter</span><span class="tut-flow-arrow">→</span>
+            <span class="tut-flow-step">DE analysis</span><span class="tut-flow-arrow">→</span>
+            <span class="tut-flow-step">Report</span>
+          </div>
+          <dl class="tut-kv">
+            <dt>CIRIquant</dt><dd>Longest step (~2–4 h/sample on NFS); up to 3 run in parallel</dd>
+            <dt>DCC</dt><dd>Requires STAR mate1/mate2 to finish first; ~15–30 min/sample</dd>
+            <dt>DE + Report</dt><dd>~10–20 min after all circRNA detection completes</dd>
+          </dl>
+          <div class="tip-box">💡 The status page auto-refreshes every 5 seconds. Completed stages are correctly inferred even after web UI restart.</div>
+        </div>
+      </div>
+      <div class="step-card">
+        <div class="step-num">5</div>
+        <div class="step-content">
+          <h4>Download &amp; Interpret Results</h4>
+          <p>When all steps complete, "📥 Download Report" and "🔗 Open Online" buttons appear at the top of the status page.</p>
+          <dl class="tut-kv">
+            <dt>report.html</dt><dd>Self-contained single HTML file; opens offline with all interactive charts</dd>
+            <dt>count_matrix.tsv</dt><dd>BSJ count matrix; usable for custom downstream analysis</dd>
+            <dt>de_results.tsv</dt><dd>Full results for all 3 DE methods (logFC, p-value, Type classification)</dd>
+          </dl>
+          <div class="info-box">ℹ️ Switch to the "📊 Report Guide" tab above to understand each section of the report.</div>
+        </div>
+      </div>`,
+
+    'tut-report': `
+      <div class="rpt-section-title">① Summary Stat-Boxes &amp; DE Method Switcher</div>
+      <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px">
+        The report header shows four stat-boxes (Total circRNAs / Significant / Up / Down) and three method toggle buttons.
+      </p>
+      <dl class="tut-kv" style="font-size:12px">
+        <dt>Total circRNAs</dt><dd>circRNAs passing consensus filter and entering DE analysis (after low-expression filtering)</dd>
+        <dt>Significant</dt><dd>circRNAs with |log2FC| ≥ threshold (default 1.0) and p-value &lt; 0.05</dd>
+        <dt>edgeR_ciriquant</dt><dd>Primary method; BSJ/FSJ ratio test; classifies Type I/II; best for small samples</dd>
+        <dt>DESeq2</dt><dd>BSJ count Wald test; poscounts normalization; most conservative</dd>
+        <dt>limma-voom</dt><dd>TMM + voom weights; most robust for sparse counts; highest DE count</dd>
+      </dl>
+      <div class="tip-box">💡 Switching methods instantly updates the Volcano, Heatmap, Top DE table, and Biomarker table — no page reload required.</div>
+
+      <div class="rpt-section-title">② Venn Diagram — 3-Method Overlap</div>
+      <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px">
+        Three circles represent the significant DE circRNAs from each method. <b>Click any region</b> to view the circRNA list.
+      </p>
+      <dl class="tut-kv" style="font-size:12px">
+        <dt>Center (all 3)</dt><dd>Significant in all three methods — highest confidence; prioritize these for follow-up</dd>
+        <dt>Single-method only</dt><dd>Method-specific results; edgeR-unique often reflect FSJ ratio effects; limma-unique are often low-abundance</dd>
+        <dt>Overlap &gt; 60%</dt><dd>High cross-method agreement indicates robust DE results; small samples (n=3) typically show lower overlap</dd>
+      </dl>
+
+      <div class="rpt-section-title">③ Type I / II Classification (edgeR_ciriquant only)</div>
+      <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:4px">
+        edgeR_ciriquant's BSJ/FSJ ratio test distinguishes two regulatory modes:
+      </p>
+      <div style="font-size:12px;line-height:1.7">
+        <span class="rpt-badge rpt-type1">Type I</span>
+        <b>circRNA-specific regulation</b>: BSJ count ratio changes, FSJ (linear transcript) does not. True change in circularization efficiency — the primary target for circRNA biomarker research. Typical proportion: 85–97%.<br>
+        <span class="rpt-badge rpt-type2">Type II</span>
+        <b>Dual-layer co-regulation</b>: BSJ ratio significant AND FSJ independently significant. Both circRNA and parent gene change simultaneously.<br>
+        <span class="rpt-badge rpt-ns">Type III / NS</span>
+        FSJ significant but BSJ not, or neither meets the threshold. Not counted as significant DE.
+      </div>
+      <div class="info-box">ℹ️ High Type I proportion (&gt;80%) indicates circRNA-specific regulation was found — these candidates have higher clinical biomarker potential.</div>
+
+      <div class="rpt-section-title">④ Biomarker Candidate Table</div>
+      <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px">
+        Significant DE circRNAs are ranked by a six-dimensional composite score. Top 30 are shown.
+      </p>
+      <dl class="tut-kv" style="font-size:12px">
+        <dt>sig_norm</dt><dd>−log10(p-value); higher significance → higher score (capped at 10)</dd>
+        <dt>fc_norm</dt><dd>|log2FC|; larger effect size → higher score (capped at 5)</dd>
+        <dt>conf_norm</dt><dd>Consensus confidence: log2(BSJ+1) × coordinate agreement; higher = more reliable</dd>
+        <dt>known_bonus</dt><dd>Recorded in circBase database → +1 (known circRNA)</dd>
+        <dt>mirna_norm</dt><dd>Number of distinct miRNA sponge bindings (from CircInteractome/ENCORI)</dd>
+        <dt>rbp_norm</dt><dd>Number of distinct RBP binding sites (from CircInteractome/ENCORI)</dd>
+      </dl>
+      <div class="tip-box">💡 Click any circ_id to open a detail modal showing miRNA sponge sites, RBP binding, mini Volcano, and Heatmap.</div>
+
+      <div class="rpt-section-title">⑤ circRNA Detail Modal — Circular Structure &amp; Interaction</div>
+      <p style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px">
+        Click any circ_id to open a detail window with four tabs:
+      </p>
+      <dl class="tut-kv" style="font-size:12px">
+        <dt>⬛ Circular Structure</dt>
+        <dd>Circular diagram showing exon architecture. Outer badges = miRNA binding sites; inner = RBP sites.
+            Click a badge to expand/collapse its binding info. Download as SVG.</dd>
+        <dt>📺 miRNA Sponge</dt>
+        <dd>All miRNA binding sites with Priority Score (8mer seed +4, CLIP evidence +3, circBase known +1).
+            Binding Seq column auto-fetches sequences from UCSC hg19 API. Sortable; CSV download.</dd>
+        <dt>🧬 RBP Binding</dt>
+        <dd>RBP binding site list with Priority Score including CLIP evidence, ENCORI support, in_circ classification.</dd>
+        <dt>📈 Volcano / 🔥 Heatmap</dt>
+        <dd>Mini interactive charts showing this circRNA's position in the global context. Download as PNG.</dd>
+      </dl>
+      <div class="info-box">ℹ️ miRNA and RBP data come from CircInteractome and ENCORI (union of top-50 up/down across all 3 DE methods; ~150–250 circRNAs). Entries without interaction data show "—".</div>
+
+      <div class="rpt-section-title">⑥ Heatmap &amp; Volcano Tips</div>
+      <dl class="tut-kv" style="font-size:12px">
+        <dt>Heatmap Top-N control</dt><dd>Default: 10 up + 10 down; adjustable up to 50+50. Tumor columns on left (red), Normal on right (green)</dd>
+        <dt>Volcano label toggle</dt><dd>Top-right "Heatmap circles: ON/OFF" toggles markers for the top-N heatmap circRNAs on the Volcano</dd>
+        <dt>Chart download</dt><dd>Plotly floating toolbar (top-right of each chart) → download PNG; table "⬇ CSV" buttons export data</dd>
+        <dt>Print / Save PDF</dt><dd>"🖨 Print" button at page top; @media print layout prevents page breaks inside charts</dd>
+      </dl>`
+  };
+
+  function switchLang(lang) {
+    // 1. Short-text elements with data-en attribute
+    document.querySelectorAll('[data-en]').forEach(function(el) {
+      if (lang === 'en') {
+        if (!el.dataset.zh) el.dataset.zh = el.innerHTML;
+        el.innerHTML = el.dataset.en;
+      } else {
+        if (el.dataset.zh !== undefined) el.innerHTML = el.dataset.zh;
+      }
+    });
+
+    // 2. Long content containers
+    Object.keys(_LANG_EN_CONTAINERS).forEach(function(id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (!_LANG_ZH[id]) _LANG_ZH[id] = el.innerHTML;
+      el.innerHTML = lang === 'en' ? _LANG_EN_CONTAINERS[id] : _LANG_ZH[id];
+    });
+
+    // 3. Toggle button state
+    document.querySelectorAll('.lang-btn').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.lang === lang);
+    });
+
+    localStorage.setItem('circrna_lang', lang);
+  }
+
+  // Restore saved language on load
+  (function() {
+    var saved = localStorage.getItem('circrna_lang');
+    if (saved === 'en') switchLang('en');
   })();
 
   // Tutorial toggle
