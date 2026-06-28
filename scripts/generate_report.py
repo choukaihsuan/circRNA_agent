@@ -2406,8 +2406,9 @@ function _drawCircleRNA(circId, container) {{
       const e=miMap[name];
       const a1=posToAngle(parseInt(m[1])),a2r=posToAngle(Math.max(parseInt(m[2]),parseInt(m[1])+1));
       const minA=2*Math.PI/totalLen*3, a2=Math.max(a2r,a1+minA);
-      miArcGroups[name].push({{d:arcPath(MI_OUT,MI_IN,a1,a2),title:`${{name}} · ${{item.siteType||''}} · ${{item.circ_pos}}`,a1,a2}});
+      const _mfi=miArcSegsFlat.length;
       miArcSegsFlat.push({{name,num:e.num,color:e.color,a1,a2}});
+      miArcGroups[name].push({{d:arcPath(MI_OUT,MI_IN,a1,a2),title:`${{name}} · ${{item.siteType||''}} · ${{item.circ_pos}}`,a1,a2,fi:_mfi}});
       if(!(name in miBadgeAngs)) miBadgeAngs[name]=normA((a1+a2)/2);
     }});
     // Compute overlaps; assign site letters sorted by angle
@@ -2426,7 +2427,7 @@ function _drawCircleRNA(circId, container) {{
       svg+=`<g id="_miarc_${{e.num}}" class="_miarc">`;
       arcs.forEach(a=>{{
         svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.85"><title>${{a.title}}</title></path>`;
-        const fi=miArcSegsFlat.findIndex(s=>s.name===name&&Math.abs(s.a1-a.a1)<0.0001);
+        const fi=(a.fi!==undefined)?a.fi:-1;
         if(fi>=0&&miOvlSet.has(fi)){{
           const seg=miArcSegsFlat[fi];
           const dp=BOUND_DASH[(seg.num-1)%BOUND_DASH.length];
@@ -2495,8 +2496,9 @@ function _drawCircleRNA(circId, container) {{
           const s0=Math.max(0,s.circ_start);
           const s1=Math.min(Math.max(s.circ_end,s0+1),totalLen); // clamp to [0, totalLen]
           const a1=posToAngle(s0),a2=posToAngle(s1);
-          rbpArcGroups[name].push({{d:arcPath(RBP_OUT,RBP_IN,a1,a2),title:`${{name}} · ${{s.circ_pos}}`,a1,a2}});
+          const _rfi=rbpArcSegsFlat.length;
           rbpArcSegsFlat.push({{name,num:e.num,color:e.color,a1,a2}});
+          rbpArcGroups[name].push({{d:arcPath(RBP_OUT,RBP_IN,a1,a2),title:`${{name}} · ${{s.circ_pos}}`,a1,a2,fi:_rfi}});
           if(!(name in rbpBadgeAngs)) rbpBadgeAngs[name]=normA((a1+a2)/2);
         }});
       }} else {{
@@ -2522,7 +2524,7 @@ function _drawCircleRNA(circId, container) {{
       svg+=`<g id="_rbparc_${{e.num}}" class="_rbparc">`;
       arcs.forEach(a=>{{
         svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.9" stroke="rgba(0,0,0,0.3)" stroke-width="0.8"><title>${{a.title}}</title></path>`;
-        const fi=rbpArcSegsFlat.findIndex(s=>s.name===name&&Math.abs(s.a1-a.a1)<0.0001);
+        const fi=(a.fi!==undefined)?a.fi:-1;
         if(fi>=0&&rbpOvlSet.has(fi)){{
           const seg=rbpArcSegsFlat[fi];
           const dp=BOUND_DASH[(seg.num-1)%BOUND_DASH.length];
@@ -2531,7 +2533,7 @@ function _drawCircleRNA(circId, container) {{
             svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="${{e.color}}" stroke-width="2.5" stroke-dasharray="${{dp}}" opacity="0.95"/>`;
           }});
           if(seg.label&&Math.abs(a.a2-a.a1)*(RBP_IN+RBP_OUT)/2>8){{
-            const midA=(a.a1+a.a2)/2,midR=62;
+            const midA=(a.a1+a.a2)/2,midR=48;
             const [lx,ly]=polar(midR,midA);
             svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="6" fill="${{e.color}}" opacity="0.93" stroke="white" stroke-width="0.8"/>`;
             svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{seg.label}}</text>`;
