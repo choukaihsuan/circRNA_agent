@@ -674,7 +674,18 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - Type I circRNA 中，僅我們方法偵測到的比例
 - Top 20 DE circRNA 中 circBase 已知的比例
 
-輸出：`benchmark/de_quality_summary.tsv`、`benchmark/de_jaccard.tsv`
+輸出：`benchmark/de_quality_summary.tsv`、`benchmark/de_jaccard.tsv`、`benchmark/de_lists.json`（互動式報告用）
+
+**`de_quality_benchmark.py` CLI 參數**：
+- `--isoforms <isoform_groups.tsv>`：從 `assign_isoforms.py` 輸出 join `gene_name` 到 DE 結果（若不提供，互動 modal 的 gene_name 欄會空白）
+- `--output-lists <de_lists.json>`：輸出各方法 / Jaccard 交集的 circRNA 清單 JSON，供 `--de-lists` 傳入 `generate_comparison_report.py`
+
+**Jaccard pairwise circRNA lists 格式**（`de_lists.json` 的 `_jaccard` key）：
+```json
+[{"Method_A":"Our_edgeR_ciriquant","Method_B":"DESeq2_baseline",
+  "A_only":[{circ_id, gene_name, log2FC, p_value, circbase_id},...],
+  "B_only":[...], "Both":[...]}]
+```
 
 ### Task 3 – 計算資源成本（`compute_cost.py`）
 
@@ -706,6 +717,13 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 ### 輸出報告
 
 `benchmark/comparison_report.html`：自包含 HTML，整合三個面向（準確率、DE 品質、資源成本）的比較表與圖表。
+
+**`generate_comparison_report.py` 互動式功能**：
+- **DE Quality 表格**：`Sig_DE_circRNAs`、`Up_regulated`、`Down_regulated`、`Type_I_count`、`Type_II_count`、`Top20_in_circBase` 等欄位數字可點擊 → modal 顯示 circRNA 清單（`showDEList(method, col)`）
+- **Jaccard Overlap 表格**：`A_only`、`B_only`、`Both` 數字可點擊 → modal 顯示交集/差集 circRNA 清單（`showJaccardList(rowIdx, col)`）；需傳入 `--de-lists`
+- **互動 modal 排序**：所有 modal 清單表格欄位可點擊排序（▲/▼）；`_renderCircList()` 統一渲染，`sortCircList(th, colIdx)` 函式以 `data-val` 屬性做數值/字串排序
+- **Compute Cost 表格**：`_compute_cost_table_html(comp)` 函式；"Tool Breakdown" 欄顯示 stacked mini-bar（CIRIquant=深藍 / STAR×3=中藍 / DCC=淺藍 / CIRCexplorer2=橙 / find_circ=綠 / Other=灰）及各工具時間數值；最短 Total 以綠色粗體標示；需 `compute_cost.tsv` 含 per-tool 欄（`CIRIquant_min`, `STAR_min`, `DCC_min`, `CIRCexplorer2_min`, `find_circ_min`，已由 `compute_cost.py` 自動輸出）
+- **Stratified F1**：bar chart 已移除；表格只顯示 Our_adaptive 一行（`strat[strat["Method"]=="Our_adaptive"]`）
 
 **獨立重跑 benchmark 腳本**（繞過 Snakemake，適合 config 指向其他專案時）：
 ```bash
@@ -747,21 +765,24 @@ $PY $SCRIPTS/accuracy_benchmark.py \
 # 3. DE baseline（mock snakemake，見 /tmp/run_de_baseline.R）
 conda run -n ciriquant Rscript /tmp/run_de_baseline.R
 
-# 4. DE quality
+# 4. DE quality（--isoforms 提供 gene_name；--output-lists 輸出互動式 modal 用 JSON）
 $PY $SCRIPTS/de_quality_benchmark.py \
     --our-de $RESULTS/de/de_results.tsv \
     --nfcore-de $BENCH/de/nfcore_deseq2_results.tsv --limma-de $BENCH/de/nfcore_limma_results.tsv \
     --circbase-annot $RESULTS/circRNA/circbase_annotated.tsv \
+    --isoforms $RESULTS/circRNA/isoform_groups.tsv \
     --fdr 0.05 --lfc 1.0 \
-    --output-summary $BENCH/de_quality_summary.tsv --output-jaccard $BENCH/de_jaccard.tsv
+    --output-summary $BENCH/de_quality_summary.tsv --output-jaccard $BENCH/de_jaccard.tsv \
+    --output-lists $BENCH/de_lists.json
 
-# 5. comparison report（加 --pr-curve 可在報告中插入 SVG PR 曲線圖）
+# 5. comparison report（--de-lists 啟用互動式表格；--pr-curve 插入 SVG PR 曲線圖）
 $PY $SCRIPTS/generate_comparison_report.py \
     --accuracy $BENCH/accuracy_summary.tsv --stratified $BENCH/stratified_f1.tsv \
     --compute $BENCH/compute_cost.tsv \
     --de-quality $BENCH/de_quality_summary.tsv --de-jaccard $BENCH/de_jaccard.tsv \
     --fp-comparison $BENCH/fp_score_comparison.tsv \
     --pr-curve $BENCH/pr_curve.tsv \
+    --de-lists $BENCH/de_lists.json \
     --output $BENCH/comparison_report.html
 ```
 
@@ -850,6 +871,9 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `web_ui.py _update_paths_for_project()` 未更新 `download.sra_cache_dir` / `download.tmp_dir` | 切換到新 GSE 時，`_update_paths_for_project()` 只更新 `raw_dir`、`trimmed_dir`、`results_dir`，不更新 `config.download.sra_cache_dir` 和 `config.download.tmp_dir`；中間 SRA 快取和暫存檔案放到前一個專案的目錄 | `web_ui.py` 的 `_update_paths_for_project()` 加入：讀取 `cfg.get("download", {})`，對 `sra_cache_dir` 和 `tmp_dir` 若含舊 project_id 則做字串替換後寫回 `cfg["download"]` |
 | SSH heredoc 寫入腳本含 CRLF，變數在執行時為空 | 在 SSH double-quoted 命令中用 `<< 'SCRIPT'` heredoc 寫 shell 腳本，Windows 端 SSH client 將行尾轉為 CRLF（`\r\n`）；shell 讀取後變數賦值包含 `\r`，`echo "$VAR"` 看似有值但實際傳入命令時被截斷或輸出空值 | 改用 `printf '%s\n' 'line1' 'line2' ...` 逐行寫入，每行明確加 `\n`，完全避開 heredoc CRLF 問題 |
 | `$TMP` 系統保留變數名稱衝突 | Shell 環境中 `TMP` 是保留變數（通常指向 `/tmp`）；腳本中 `TMP=/home3/.../sra_tmp/SRR...` 看似賦值，但某些情境下 `$TMP` 展開為系統值或空字串，導致 `fasterq-dump --temp $TMP` 路徑錯誤 | 改用自訂名稱 `SRA_TMP`（避開 `TMP`、`TMPDIR`、`TEMP` 等系統保留名）；`SRA_CACHE` 同理（避開 `CACHE`）|
+| Biomarker 表格 `n_rbp` 顯示舊值（如 8）但 RBP Binding modal 顯示 50+ RBP | `predict_interactions.py` 用 `--gtf` 重跑後更新 `interactions.json`，但 `rank_biomarkers.py` 未重跑，`biomarker_candidates.tsv` 的 `n_rbp` 仍是舊值；`_bm_lookup` 從 TSV 讀取，不反映新的 `in_circ=True` 計數 | `generate_report.py` 的 `_bm_lookup` 建立後加入覆蓋步驟：`_is_in_circ_entry()` 函式（CircInteractome=True，ENCORI=`in_circ`）重新計算所有已存在 entry 的 `n_mirna`/`n_rbp`，用最新 `interactions.json` 覆蓋 TSV 的舊值；`mirna_n`/`rbp_n`（正規化值）也同步更新 |
+| Benchmark 互動式表格 `gene_name` 全部空白 | `de_quality_benchmark.py` 直接讀取 DE 結果 TSV（`de_results.tsv`、`nfcore_deseq2_results.tsv`、`nfcore_limma_results.tsv`），這些 TSV 沒有 `gene_name` 欄（來自 `isoform_groups.tsv`）；`_build_de_list` 的 `r.get("gene_name")` 取到 None → 顯示空白 | `de_quality_benchmark.py` 加入 `--isoforms <isoform_groups.tsv>` 參數；讀取後 `pd.map(iso_map)` join 到所有 DE dataframe |
+| Benchmark modal 表格無法排序 | `showDEList` 有獨立的舊版表格渲染邏輯（無 onclick），只有 `showJaccardList` 呼叫新版 `_renderCircList`（含 `sortCircList` onclick）；DE Quality modal 點擊欄位無反應 | `showDEList` 改為呼叫 `_renderCircList(data, hasType ? 'Type' : null)`，與 Jaccard modal 統一渲染；`_renderCircList` 表頭加 `onclick="sortCircList(this,N)"`；`sortCircList` 以 `data-val` 屬性做數值/字串比較排序，排序後重新編號 `#` 欄 |
 
 ---
 

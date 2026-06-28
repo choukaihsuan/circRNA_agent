@@ -241,32 +241,10 @@ function showDEList(method, col) {
   document.getElementById('de-list-count').textContent =
     '共 ' + data.length + ' 個 circRNA';
   var hasType = data.some(function(r){ return r.Type; });
+  document.getElementById('de-list-body').innerHTML = _renderCircList(data, hasType ? 'Type' : null);
+  document.getElementById('de-list-modal').style.display = 'block';
   var hdrs = ['#','circ_id','gene_name','log2FC','p-value','circbase_id'];
   if (hasType) hdrs.push('Type');
-  var TH = 'style="background:#1a5276;color:#fff;padding:6px 10px;text-align:left;white-space:nowrap"';
-  var html = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-    + '<thead><tr>' + hdrs.map(function(h){return '<th '+TH+'>'+h+'</th>';}).join('') + '</tr></thead><tbody>';
-  data.forEach(function(r,i){
-    var lfc  = (r.log2FC  != null) ? r.log2FC.toFixed(2)         : '—';
-    var pval = (r.p_value != null) ? r.p_value.toExponential(2)  : '—';
-    var lc = r.log2FC > 0 ? '#c0392b' : r.log2FC < 0 ? '#1a5276' : '';
-    var cc = (r.circbase_id && r.circbase_id !== 'novel') ? '#e67e22' : '';
-    var bg = i%2===0 ? '#f9f9f9' : '#fff';
-    var TD = 'style="padding:5px 10px;border-bottom:1px solid #eee"';
-    var cells = [
-      '<td '+TD+' style="padding:5px 10px;border-bottom:1px solid #eee;color:#888">'+(i+1)+'</td>',
-      '<td '+TD+' style="padding:5px 10px;border-bottom:1px solid #eee;font-family:monospace;font-size:11px">'+r.circ_id+'</td>',
-      '<td '+TD+'>'+(r.gene_name||'—')+'</td>',
-      '<td '+TD+' style="padding:5px 10px;border-bottom:1px solid #eee;color:'+lc+';font-weight:bold">'+lfc+'</td>',
-      '<td '+TD+'>'+pval+'</td>',
-      '<td '+TD+' style="padding:5px 10px;border-bottom:1px solid #eee;color:'+cc+'">'+(r.circbase_id||'—')+'</td>'
-    ];
-    if (hasType) cells.push('<td '+TD+'>'+(r.Type||'—')+'</td>');
-    html += '<tr style="background:'+bg+'">'+cells.join('')+'</tr>';
-  });
-  html += '</tbody></table>';
-  document.getElementById('de-list-body').innerHTML = html;
-  document.getElementById('de-list-modal').style.display = 'block';
   _DE_LIST_CUR = {data:data, method:method, col:col, hdrs:hdrs};
 }
 function closeDeList() {
@@ -495,6 +473,122 @@ def _jaccard_table_html(jac: pd.DataFrame, de_lists: "dict | None") -> str:
         f"<thead><tr>{headers}</tr></thead>"
         f"<tbody>{rows_html}</tbody></table></div>"
     )
+
+
+_TOOL_COLORS = {
+    "CIRIquant_min":    ("#1a5276", "CIRIquant"),
+    "STAR_min":         ("#2980b9", "STAR×3"),
+    "DCC_min":          ("#5dade2", "DCC"),
+    "CIRCexplorer2_min":("#e67e22", "CIRCexplorer2"),
+    "find_circ_min":    ("#27ae60", "find_circ"),
+}
+
+
+def _compute_cost_table_html(comp: pd.DataFrame) -> str:
+    """Render compute cost table with per-tool stacked bar breakdown."""
+    import math
+
+    def _fv(v) -> "float | None":
+        try:
+            f = float(v)
+            return None if math.isnan(f) else f
+        except (TypeError, ValueError):
+            return None
+
+    max_total = float(comp["Total_wall_min"].max())
+
+    legend = "".join(
+        f'<span style="display:inline-flex;align-items:center;margin-right:12px">'
+        f'<span style="width:12px;height:12px;background:{col};display:inline-block;'
+        f'margin-right:4px;border-radius:2px"></span>{lbl}</span>'
+        for col, (color, lbl) in _TOOL_COLORS.items()  # noqa: unused col
+        for col2, (color, lbl) in [(col, (color, lbl))]  # iterate once
+    )
+    # rebuild correctly
+    legend = "".join(
+        f'<span style="display:inline-flex;align-items:center;margin-right:12px">'
+        f'<span style="width:12px;height:12px;background:{color};display:inline-block;'
+        f'margin-right:4px;border-radius:2px"></span>{lbl}</span>'
+        for _, (color, lbl) in _TOOL_COLORS.items()
+    )
+    legend += (
+        '<span style="display:inline-flex;align-items:center;margin-right:12px">'
+        '<span style="width:12px;height:12px;background:#95a5a6;display:inline-block;'
+        'margin-right:4px;border-radius:2px"></span>Other/Consensus</span>'
+    )
+
+    th = 'style="background:#1a5276;color:#fff;padding:8px 10px;white-space:nowrap"'
+    th_r = 'style="background:#1a5276;color:#fff;padding:8px 10px;white-space:nowrap;text-align:right"'
+    rows_html = ""
+    min_total = float(comp["Total_wall_min"].min())
+
+    for i, (_, row) in enumerate(comp.iterrows()):
+        bg = "#f9f9f9" if i % 2 == 0 else "#fff"
+        total = _fv(row["Total_wall_min"]) or 0.0
+
+        # Build stacked bar segments
+        segs = ""
+        tool_sum = 0.0
+        breakdown_parts = []
+        for tcol, (color, lbl) in _TOOL_COLORS.items():
+            if tcol not in row.index:
+                continue
+            val = _fv(row[tcol])
+            if val and val > 0:
+                pct = val / max_total * 100
+                segs += (f'<div title="{lbl}: {val:.1f} min" '
+                         f'style="display:inline-block;width:{pct:.1f}%;height:18px;'
+                         f'background:{color};vertical-align:top"></div>')
+                tool_sum += val
+                breakdown_parts.append(
+                    f'<span style="color:{color};font-weight:bold">{lbl}</span>: {val:.1f}'
+                )
+        # Remainder (DCC shared with STAR, consensus filter, etc.)
+        remainder = total - tool_sum
+        if remainder > 0.5:
+            pct = remainder / max_total * 100
+            segs += (f'<div title="Other: {remainder:.1f} min" '
+                     f'style="display:inline-block;width:{pct:.1f}%;height:18px;'
+                     f'background:#95a5a6;vertical-align:top"></div>')
+
+        breakdown_html = " · ".join(breakdown_parts) if breakdown_parts else ""
+        total_style = "color:#27ae60;font-weight:bold" if total == min_total else ""
+
+        def _fmt(v, dec=1):
+            f = _fv(v)
+            return f"—" if f is None else f"{f:.{dec}f}"
+
+        rows_html += f"""<tr style="background:{bg}">
+  <td style="padding:8px 10px;font-weight:bold;white-space:nowrap">{row["Pipeline"]}</td>
+  <td style="padding:8px 10px;min-width:260px">
+    <div style="font-size:11px;color:#666;margin-bottom:4px">{row["Tool_combination"]}</div>
+    <div style="background:#ddd;height:18px;border-radius:3px;overflow:hidden;max-width:300px">{segs}</div>
+    <div style="font-size:11px;margin-top:3px;color:#444">{breakdown_html}</div>
+  </td>
+  <td style="padding:8px 10px;text-align:right;{total_style}">{_fmt(total)}</td>
+  <td style="padding:8px 10px;text-align:right">{_fmt(row.get("Peak_RAM_GB"))}</td>
+  <td style="padding:8px 10px;text-align:right">{_fmt(row.get("Parallel_Peak_RAM_GB"))}</td>
+  <td style="padding:8px 10px;text-align:right">{int(_fv(row.get("CPU_cores")) or 8)}</td>
+  <td style="padding:8px 10px;text-align:right">{_fmt(row.get("CPU_hours"))}</td>
+  <td style="padding:8px 10px;font-size:11px;color:#555">{row.get("Source","")}</td>
+</tr>"""
+
+    dl_btn = '<button class="dl-btn no-print" onclick="dlCSV(\'tbl_compute\',\'compute_cost.csv\')">⬇ CSV</button>'
+    return f"""<div class="tbl-header">{dl_btn}</div>
+<div style="font-size:12px;margin-bottom:8px;color:#555">{legend}</div>
+<div class="tbl-wrap"><table id="tbl_compute" style="width:100%;border-collapse:collapse">
+<thead><tr>
+  <th {th}>Pipeline</th>
+  <th {th}>Tool Breakdown</th>
+  <th {th_r}>Total (min)</th>
+  <th {th_r}>Peak RAM (GB)</th>
+  <th {th_r}>Parallel RAM (GB)</th>
+  <th {th_r}>Cores</th>
+  <th {th_r}>CPU-h</th>
+  <th {th}>Source</th>
+</tr></thead>
+<tbody>{rows_html}</tbody>
+</table></div>"""
 
 
 def _bar_chart(
@@ -1230,8 +1324,7 @@ def build_report(
   nf-core and circRNA-sponging values are from published literature (see Source column).
   All pipelines used 8 CPU cores unless noted.
 </p>
-{_df_html(comp_display, best_col="Total (min)", best_max=False,
-          table_id="tbl_compute", csv_filename="compute_cost.csv")}
+{_compute_cost_table_html(comp)}
 <p class="note">
   所有 pipeline 均以 /usr/bin/time -v 實測（SRR444655，~100 M read pairs，HPC NFS 環境，8 cores）。
   CIRIquant 與 Our pipeline 和 nf-core/circrna 共用同一 time log。
