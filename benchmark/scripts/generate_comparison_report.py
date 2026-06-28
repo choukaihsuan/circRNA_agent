@@ -655,7 +655,7 @@ def _feature_table() -> str:
          "~ partial (per-tool support)",
          "✗"),
         ("DE method",
-         "edgeR GLM + per-locus FSJ offset",
+         "edgeR GLM + FSJ offset (primary)<br><small>+ DESeq2 + limma-voom (3 methods)</small>",
          "DESeq2 / edgeR (BSJ counts)",
          "DESeq2 (BSJ counts)"),
         ("Type I / II classification",
@@ -1347,8 +1347,10 @@ def build_report(
   (BH-FDR is not used: edgeR tests BSJ/FSJ ratio with min padj ≈ 0.43; DESeq2 uses
   BSJ-count shrinkage reaching min padj ≈ 0.007 — different null distributions make
   BH-FDR comparisons misleading for n=3).<br>
-  <strong>Our method</strong>: edgeR GLM + per-locus FSJ offset; tests whether BSJ/FSJ ratio shifts.<br>
-  <strong>DESeq2 baseline</strong>: Wald test on BSJ counts only; simulated on same GSE113230 count matrix.
+  <strong>Our method (edgeR_ciriquant)</strong>: edgeR GLM + per-locus FSJ offset; tests whether BSJ/FSJ ratio shifts; classifies Type I (circRNA-specific) / Type II (gene-level co-regulation).<br>
+  <strong>Our method (DESeq2)</strong>: DESeq2 Wald test on BSJ counts with poscounts normalization; same count matrix.<br>
+  <strong>Our method (limma-voom)</strong>: limma-voom with TMM normalization; most stable for small n.<br>
+  <strong>DESeq2 baseline</strong>: Wald test on BSJ counts only; simulated on same GSE113230 count matrix, no FSJ offset.
 </p>
 
 <h3>Significant DE circRNAs &amp; Classification</h3>
