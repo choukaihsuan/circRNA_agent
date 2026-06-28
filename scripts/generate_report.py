@@ -124,12 +124,19 @@ def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
 
     # Build per-region circRNA detail rows from de_lookup
     method_labels = {"edgeR_ciriquant": "edgeR", "deseq2": "DESeq2", "limma": "limma"}
-    region_labels = {
-        "A":   f"edgeR only",        "B":   f"DESeq2 only",
-        "C":   f"limma only",        "AB":  f"edgeR ∩ DESeq2 only",
-        "AC":  f"edgeR ∩ limma only","BC":  f"DESeq2 ∩ limma only",
-        "ABC": f"三方法均顯著",
+    region_labels_zh = {
+        "A":   "edgeR only",        "B":   "DESeq2 only",
+        "C":   "limma only",        "AB":  "edgeR ∩ DESeq2 only",
+        "AC":  "edgeR ∩ limma only","BC":  "DESeq2 ∩ limma only",
+        "ABC": "三方法均顯著",
     }
+    region_labels_en = {
+        "A":   "edgeR only",        "B":   "DESeq2 only",
+        "C":   "limma only",        "AB":  "edgeR ∩ DESeq2 only",
+        "AC":  "edgeR ∩ limma only","BC":  "DESeq2 ∩ limma only",
+        "ABC": "All 3 methods",
+    }
+    region_labels = region_labels_zh
     venn_region_data: dict = {}
     if de_lookup:
         # Build circ→{gene, lfc, pval, cb, methods[]} — collect ALL significant methods
@@ -177,7 +184,8 @@ def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
                 })
             rows.sort(key=lambda r: r["pval"])
             venn_region_data[region] = {
-                "label": f"{region_labels[region]} ({counts[region]} 個)",
+                "label_zh": f"{region_labels_zh[region]} ({counts[region]} 個)",
+                "label_en": f"{region_labels_en[region]} ({counts[region]})",
                 "circs": rows,
             }
 
@@ -212,7 +220,7 @@ def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
             continue
         has_data = bool(de_lookup) and region in venn_region_data
         cursor    = "cursor:pointer" if has_data else ""
-        hover_tip = f'title="點擊查看 {v} 個 circRNA"' if has_data else ""
+        hover_tip = f'title="點擊查看 {v} 個 circRNA / Click to view {v} circRNAs"' if has_data else ""
         onclick   = f'onclick="showVennRegion(\'{region}\')"' if has_data else ""
         # larger transparent click target
         svg_parts.append(f'<rect x="{rx-16}" y="{ry-14}" width="32" height="28" '
@@ -224,9 +232,12 @@ def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
                          f'{onclick} {hover_tip}>{v}</text>')
     svg_parts.append('</svg>')
     note = (f'<p style="font-size:12px;color:#666;margin:4px 0 0">'
+            f'<span data-en="Numbers = significant circRNAs per region (|log₂FC| &gt; {lfc}); union {total_union}.'
+            f'{"&lt;b&gt;Click numbers&lt;/b&gt; to view circRNA lists." if de_lookup else ""}">'
             f'數字 = 各區域顯著 circRNA 數量（閾值：|log₂FC| &gt; {lfc}）；'
             f'三方法聯集共 {total_union} 個。'
-            f'{"<b>點擊數字</b>可查看對應 circRNA 清單。" if de_lookup else ""}</p>')
+            f'{"<b>點擊數字</b>可查看對應 circRNA 清單。" if de_lookup else ""}'
+            f'</span></p>')
 
     venn_js = _json2.dumps(venn_region_data, ensure_ascii=False)
     detail_panel = f"""
@@ -241,14 +252,14 @@ def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
       <button onclick="document.getElementById('venn-detail').style.display='none';
                        document.getElementById('venn-detail').dataset.active=''"
         style="font-size:12px;padding:3px 8px;border:1px solid #ccc;border-radius:4px;
-               background:#fff;cursor:pointer">&#x2715; 關閉</button>
+               background:#fff;cursor:pointer" data-en="&#x2715; Close">&#x2715; 關閉</button>
     </span>
   </div>
   <div id="venn-detail-body" style="max-height:420px;overflow-y:auto">
     <table id="venn-detail-tbl" class="table" style="font-size:12px;width:100%">
       <thead><tr>
         <th>#</th><th>circ_id</th><th>gene_name</th>
-        <th>log2FC</th><th>p-value</th><th>circbase_id</th><th>方法</th>
+        <th>log2FC</th><th>p-value</th><th>circbase_id</th><th data-en="Methods">方法</th>
       </tr></thead>
       <tbody id="venn-detail-tbody"></tbody>
     </table>
@@ -265,7 +276,7 @@ function showVennRegion(region) {{
   panel.dataset.active = region;
   const d = VENN_REGION_DATA[region];
   if (!d) return;
-  document.getElementById('venn-detail-title').textContent = d.label;
+  document.getElementById('venn-detail-title').textContent = d['label_'+(_LANG||'zh')] || d.label_zh;
   const tbody = document.getElementById('venn-detail-tbody');
   tbody.innerHTML = '';
   _vennCSVRows = [['#','circ_id','gene_name','log2FC','p-value','circbase_id','method']];
@@ -274,7 +285,7 @@ function showVennRegion(region) {{
     const cb = (c.cb && c.cb !== 'novel') ?
       `<span style="color:#e07b39;font-weight:bold">${{c.cb}}</span>` : 'novel';
     tr.innerHTML = `<td>${{i+1}}</td>
-      <td><a class="circ-link" onclick="showCircDetail('${{c.id}}')" title="查看詳細">${{c.id}}</a></td>
+      <td><a class="circ-link" onclick="showCircDetail('${{c.id}}')" title="View detail">${{c.id}}</a></td>
       <td>${{c.gene||'—'}}</td>
       <td style="color:${{c.lfc>0?'#d62728':'#2CA02C'}};font-weight:bold">${{c.lfc.toFixed(2)}}</td>
       <td>${{c.pval < 0.001 ? c.pval.toExponential(2) : c.pval.toFixed(4)}}</td>
@@ -616,11 +627,106 @@ _STYLE = """
     /* Two-column distribution plots: stack vertically for print */
     div[style*="display:flex"] { display: block !important; }
   }
+  .lang-btn-rpt { padding:3px 10px; border:1.5px solid #b6d0f0; border-radius:6px;
+                  font-size:11px; font-weight:700; cursor:pointer; background:#fff;
+                  color:#2c6fad; transition:all .15s; margin-left:4px; }
+  .lang-btn-rpt:hover { border-color:#2c6fad; background:#e8f0fc; }
+  .lang-btn-rpt.active { background:#2c6fad; border-color:#2c6fad; color:#fff; }
 </style>
 """
 
 _SCRIPT = """
 <script>
+// ── Language switcher ─────────────────────────────────────────────────────────
+let _LANG = localStorage.getItem('circrna_report_lang') || 'zh';
+const _LS = {{
+  zh: {{
+    hmStatus:   (n,u,d)=>`（已顯示 ${{n}} 筆；資料庫最多 ${{u}} up + ${{d}} down）`,
+    swConc:     p=>p<0.05?'✗ 非常態 / Non-normal (α=0.05)':'✓ 常態 / Normal (α=0.05)',
+    obsDist:    '觀測分布',
+    bmAll:      n=>`全部（${{n}}）`,
+    bm2:        n=>`≥ 2 方法顯著（${{n}}）`,
+    bm3:        n=>`3 方法均顯著（${{n}}）`,
+    bmNSig:     '在所選方法下不顯著',
+    toggleShow: '全顯示',
+    toggleHide: '全隱藏',
+    toggleTip:  '點擊顯示/隱藏',
+  }},
+  en: {{
+    hmStatus:   (n,u,d)=>`(showing ${{n}}; pool: ${{u}} up + ${{d}} down)`,
+    swConc:     p=>p<0.05?'✗ Non-normal (α=0.05)':'✓ Normal (α=0.05)',
+    obsDist:    'Observed distribution',
+    bmAll:      n=>`All (${{n}})`,
+    bm2:        n=>`≥ 2 methods (${{n}})`,
+    bm3:        n=>`All 3 methods (${{n}})`,
+    bmNSig:     'Not significant under selected method',
+    toggleShow: 'Show all',
+    toggleHide: 'Hide all',
+    toggleTip:  'Click to show/hide',
+  }},
+}};
+
+function switchReportLang(lang) {{
+  _LANG = lang;
+  localStorage.setItem('circrna_report_lang', lang);
+  // Short text via data-en
+  document.querySelectorAll('[data-en]').forEach(function(el) {{
+    if (lang === 'en') {{
+      if (!el.dataset.zh) el.dataset.zh = el.innerHTML;
+      el.innerHTML = el.dataset.en;
+    }} else {{
+      if (el.dataset.zh !== undefined) el.innerHTML = el.dataset.zh;
+    }}
+  }});
+  // Toggle button state
+  document.querySelectorAll('.lang-btn-rpt').forEach(function(b) {{
+    b.classList.toggle('active', b.dataset.lang === lang);
+  }});
+  // Re-render dynamic content
+  const statusEl = document.getElementById('heatmap-status');
+  if (statusEl && statusEl.dataset.n) {{
+    statusEl.textContent = _LS[_LANG].hmStatus(statusEl.dataset.n, statusEl.dataset.u, statusEl.dataset.d);
+  }}
+  // Re-render biomarker filter buttons
+  _updateBMFilterBtnLabels();
+  // Venn detail title
+  const vennPanel = document.getElementById('venn-detail');
+  if (vennPanel && vennPanel.dataset.active) {{
+    const d = VENN_REGION_DATA[vennPanel.dataset.active];
+    if (d) document.getElementById('venn-detail-title').textContent = d['label_' + _LANG] || d.label_zh;
+  }}
+  // Biomarker normality conclusion in Plotly annotation
+  _refreshBMHistLang();
+}}
+
+function _updateBMFilterBtnLabels() {{
+  const btns = document.querySelectorAll('.bm-filter-btn');
+  const tbody = document.querySelector('#tbl_biomarker tbody');
+  if (!btns.length || !tbody) return;
+  const allRows = [...tbody.querySelectorAll('tr')];
+  const n_all = allRows.length;
+  const n2 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 2).length;
+  const n3 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 3).length;
+  btns.forEach((b, i) => {{
+    if (i === 0) b.textContent = _LS[_LANG].bmAll(n_all);
+    else if (i === 1) b.textContent = _LS[_LANG].bm2(n2);
+    else if (i === 2) b.textContent = _LS[_LANG].bm3(n3);
+  }});
+}}
+
+function _refreshBMHistLang() {{
+  if (typeof Plotly === 'undefined' || !document.getElementById('bm-hist-plot')) return;
+  try {{
+    Plotly.restyle('bm-hist-plot', {{name: [_LS[_LANG].obsDist]}}, [0]);
+  }} catch(e) {{}}
+}}
+
+// Restore saved language on load
+(function() {{
+  var saved = localStorage.getItem('circrna_report_lang');
+  if (saved === 'en') switchReportLang('en');
+}})();
+
 function _parseGenCoord(s) {
   // Parse chrN:start|end → {c: chrNum, p: startPos} for genomic sort
   var m = s.match(/^chr([0-9]+|[XYMxym])[:|\s](\d+)/i);
@@ -787,7 +893,7 @@ def _sample_overview_section(
 </div>
 <details style="margin:0 0 20px">
   <summary style="cursor:pointer;color:#2c6fad;font-size:13px;user-select:none">
-    &#9654; 顯示樣本清單（{len(rows)} samples）{"&nbsp;&nbsp;<span style='color:#888;font-size:11px'>含 fastp QC 統計</span>" if has_qc else ""}
+    <span data-en='&#9654; Show sample list ({len(rows)} samples){"&nbsp;&nbsp;<span style=&apos;color:#888;font-size:11px&apos;>with fastp QC stats</span>" if has_qc else ""}'>&#9654; 顯示樣本清單（{len(rows)} samples）{"&nbsp;&nbsp;<span style='color:#888;font-size:11px'>含 fastp QC 統計</span>" if has_qc else ""}</span>
   </summary>
   <div style="overflow-x:auto;margin-top:10px">
   <table style="border-collapse:collapse;font-size:13px;width:100%;max-width:800px">
@@ -1215,23 +1321,23 @@ def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
     try:
         from scipy import stats as _stats
         if n < 3:
-            sw_text = f"樣本數不足（n={n}），無法進行常態檢定"
+            sw_text = f"樣本數不足（n={n}），無法進行常態檢定 / Insufficient samples (n={n}) for normality test"
             conclusion = ""
         elif n <= 5000:
             W, p_sw = _stats.shapiro(scores)
             sw_text = f"Shapiro-Wilk: W = {W:.4f}, p = {p_sw:.4e}"
-            conclusion = ("✗ 非常態分佈" if p_sw < 0.05 else "✓ 常態分佈") + "（α = 0.05）"
+            conclusion = ("✗ 非常態 / Non-normal" if p_sw < 0.05 else "✓ 常態 / Normal") + " (α = 0.05)"
         else:
             D, p_sw = _stats.kstest(scores, "norm", args=(mu, sd))
             sw_text = f"KS test: D = {D:.4f}, p = {p_sw:.4e}"
-            conclusion = ("✗ 非常態分佈" if p_sw < 0.05 else "✓ 常態分佈") + "（α = 0.05）"
+            conclusion = ("✗ 非常態 / Non-normal" if p_sw < 0.05 else "✓ 常態 / Normal") + " (α = 0.05)"
     except ImportError:
-        sw_text = "scipy 未安裝，無法執行常態檢定"
+        sw_text = "scipy 未安裝，無法執行常態檢定 / scipy not installed"
 
     # Histogram
     fig = go.Figure()
     fig.add_trace(go.Histogram(
-        x=scores, nbinsx=30, name="觀測分布",
+        x=scores, nbinsx=30, name="Observed distribution",
         marker_color="rgba(44,119,214,0.55)",
         marker_line=dict(color="rgba(44,119,214,0.9)", width=0.8),
         histnorm="probability density",
@@ -1265,7 +1371,7 @@ def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
         fig.add_annotation(x=xv, y=1.02, yref="paper", text=lbl, showarrow=False,
                            font=dict(size=9, color=col), xanchor="center")
 
-    sw_color = "#d62728" if "非常態" in conclusion else "#2CA02C"
+    sw_color = "#d62728" if "Non-normal" in conclusion else "#2CA02C"
     fig.update_layout(
         xaxis=dict(title="Biomarker Score"),
         yaxis=dict(title="Probability Density"),
@@ -1284,9 +1390,9 @@ def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
     chart_html = fig.to_html(include_plotlyjs=False, full_html=False, div_id="bm-hist-plot")
     caption = (
         "<p style='font-size:11px;color:#888;margin:2px 0 0;line-height:1.6'>"
-        "垂直線：<b>實線</b> = μ（{mu:.3f}）；"
-        "<b>點線</b> = μ ± σ（{lo1:.3f} – {hi1:.3f}，涵蓋約 68% 資料）；"
-        "<b>虛線</b> = μ ± 2σ（{lo2:.3f} – {hi2:.3f}，涵蓋約 95% 資料）"
+        "Vertical lines: <b>solid</b> = μ ({mu:.3f}); "
+        "<b>dotted</b> = μ ± σ ({lo1:.3f} – {hi1:.3f}, ~68% of data); "
+        "<b>dashed</b> = μ ± 2σ ({lo2:.3f} – {hi2:.3f}, ~95% of data)"
         "</p>"
     ).format(mu=mu, lo1=mu - sd, hi1=mu + sd, lo2=mu - 2*sd, hi2=mu + 2*sd)
     return chart_html + caption
@@ -1360,17 +1466,17 @@ def _biomarker_section(biomarker_file: Optional[str],
         n2 = int((bm.head(30)["n_sig_methods"] >= 2).sum())
         filter_ui = f"""
   <div id="bm-filter-bar" style="display:flex;align-items:center;gap:8px;margin:10px 0 6px;flex-wrap:wrap">
-    <span style="font-size:12px;color:#666">顯示：</span>
+    <span style="font-size:12px;color:#666" data-en="Show:">顯示：</span>
     <button class="bm-filter-btn active" onclick="filterBiomarker(0)"
       style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
-             background:#2c6fad;color:white;cursor:pointer">全部（{min(n_total,30)}）</button>
+             background:#2c6fad;color:white;cursor:pointer" data-en="All ({min(n_total,30)})" data-count="{min(n_total,30)}" data-filter="0">全部（{min(n_total,30)}）</button>
     <button class="bm-filter-btn" onclick="filterBiomarker(2)"
       style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
-             background:white;color:#555;cursor:pointer">≥ 2 方法顯著（{n2}）</button>
+             background:white;color:#555;cursor:pointer" data-en="≥ 2 methods ({n2})" data-count="{n2}" data-filter="2">≥ 2 方法顯著（{n2}）</button>
     <button class="bm-filter-btn" onclick="filterBiomarker(3)"
       style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
-             background:white;color:#555;cursor:pointer">3 方法均顯著（{n3}）</button>
-    <span style="font-size:11px;color:#999;margin-left:4px">n_sig_methods = 1/2/3 種 DE 方法中顯著</span>
+             background:white;color:#555;cursor:pointer" data-en="All 3 methods ({n3})" data-count="{n3}" data-filter="3">3 方法均顯著（{n3}）</button>
+    <span style="font-size:11px;color:#999;margin-left:4px" data-en="n_sig_methods = significant in 1/2/3 DE methods">n_sig_methods = 1/2/3 種 DE 方法中顯著</span>
   </div>
   <script>
   function filterBiomarker(minN) {{
@@ -2044,9 +2150,9 @@ def build_report(
     _msw_html = (
         '<div style="margin:10px 0 8px;padding:8px 14px;background:#f8f9fa;'
         'border:1px solid #e0e8f0;border-radius:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
-        '<span style="font-size:13px;color:#555;margin-right:6px">分析方法：</span>'
+        '<span style="font-size:13px;color:#555;margin-right:6px" data-en="DE Method:">分析方法：</span>'
         + "".join(_msw_btns)
-        + '<span style="font-size:11px;color:#999;margin-left:8px">切換後 Volcano / Heatmap / 統計即時更新</span>'
+        + '<span style="font-size:11px;color:#999;margin-left:8px" data-en="Switching updates Volcano / Heatmap / stats instantly">切換後 Volcano / Heatmap / 統計即時更新</span>'
         + '</div>'
     ) if len(_msw_btns) > 1 else ""
 
@@ -2443,12 +2549,12 @@ function _drawCircleRNA(circId, container) {{
   if(miLegend.length>0){{
     legHtml+=`<div style="margin-top:8px;font-size:10px">
       <span style="font-weight:bold">miRNA (outer ring):</span>
-      ${{toggleBtn('全顯示','_toggleAll(\\'mi\\',true,this.closest(\\'div\\'))')}}
-      ${{toggleBtn('全隱藏','_toggleAll(\\'mi\\',false,this.closest(\\'div\\'))')}}
+      ${{toggleBtn(_LS[_LANG||'zh'].toggleShow,'_toggleAll(\\'mi\\',true,this.closest(\\'div\\'))')}}
+      ${{toggleBtn(_LS[_LANG||'zh'].toggleHide,'_toggleAll(\\'mi\\',false,this.closest(\\'div\\'))')}}
       <div style="display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:4px">`;
     miLegend.forEach(e=>{{
       legHtml+=`<span id="_leg_mi_${{e.num}}" onclick="_toggleBadge('mi',${{e.num}},this)"
-        title="點擊顯示/隱藏" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;border:1px solid #eee">
+        title="${{_LS[_LANG||'zh'].toggleTip}}" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;border:1px solid #eee">
         ${{badge(e.color,e.num)}}${{e.name}}${{e.src?srcBadge(e.src):''}}</span>`;
     }});
     legHtml+='</div></div>';
@@ -2456,12 +2562,12 @@ function _drawCircleRNA(circId, container) {{
   if(rbpLegend.length>0){{
     legHtml+=`<div style="margin-top:6px;font-size:10px">
       <span style="font-weight:bold">RBP (inner ring):</span>
-      ${{toggleBtn('全顯示','_toggleAll(\\'rbp\\',true,this.closest(\\'div\\'))')}}
-      ${{toggleBtn('全隱藏','_toggleAll(\\'rbp\\',false,this.closest(\\'div\\'))')}}
+      ${{toggleBtn(_LS[_LANG||'zh'].toggleShow,'_toggleAll(\\'rbp\\',true,this.closest(\\'div\\'))')}}
+      ${{toggleBtn(_LS[_LANG||'zh'].toggleHide,'_toggleAll(\\'rbp\\',false,this.closest(\\'div\\'))')}}
       <div style="display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:4px">`;
     rbpLegend.forEach(e=>{{
       legHtml+=`<span id="_leg_rbp_${{e.num}}" onclick="_toggleBadge('rbp',${{e.num}},this)"
-        title="點擊顯示/隱藏" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;border:1px solid #eee">
+        title="${{_LS[_LANG||'zh'].toggleTip}}" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;border:1px solid #eee">
         ${{badge(e.color,e.num)}}${{e.name}} (${{e.nm>0&&e.nm<e.ns?`${{e.nm}}/${{e.ns}}`:`${{e.ns}}`}} sites)${{e.src?srcBadge(e.src):''}}</span>`;
     }});
     legHtml+='</div></div>';
@@ -2654,31 +2760,31 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
   const seedNote = tableType==='mirna' ? `
   <div style="background:#f0f6ff;border:1px solid #c5d9f0;border-radius:6px;padding:8px 12px;
               margin-bottom:10px;font-size:12px;line-height:1.6;color:#444">
-    <span style="font-weight:bold;color:#2c6fad">ℹ miRNA Seed Type 說明</span>
-    &nbsp;&mdash;&nbsp;miRNA 與靶點結合的強度由 seed 區（miRNA 2–8 nt）的配對完整度決定：
+    <span style="font-weight:bold;color:#2c6fad" data-en="ℹ miRNA Seed Type Guide">ℹ miRNA Seed Type 說明</span>
+    &nbsp;&mdash;&nbsp;<span data-en="Binding strength depends on the seed region (miRNA nt 2–8) complementarity:">miRNA 與靶點結合的強度由 seed 區（miRNA 2–8 nt）的配對完整度決定：</span>
     <table style="margin-top:5px;border-collapse:collapse;font-size:11.5px">
       <tr>
         <td style="padding:1px 8px 1px 0;font-weight:bold;color:#1a6e3c;white-space:nowrap">8mer</td>
-        <td>seed（位置 2–8）+ 位置 8 配對 + 位置 1 為 A &nbsp;→&nbsp;
-          <span style="color:#1a6e3c;font-weight:bold">最強</span>，TargetScan 最高可信度</td>
+        <td><span data-en="seed (pos 2–8) + pos 8 match + pos 1 = A →">seed（位置 2–8）+ 位置 8 配對 + 位置 1 為 A &nbsp;→&nbsp;</span>
+          <span style="color:#1a6e3c;font-weight:bold" data-en="Strongest">最強</span>，TargetScan 最高可信度</td>
       </tr>
       <tr>
         <td style="padding:1px 8px 1px 0;font-weight:bold;color:#3a7ebf;white-space:nowrap">7mer-m8</td>
-        <td>seed（位置 2–8）+ 位置 8 配對，無位置 1 限制 &nbsp;→&nbsp;
-          <span style="color:#3a7ebf;font-weight:bold">強</span></td>
+        <td><span data-en="seed (pos 2–8) + pos 8 match, no pos 1 req →">seed（位置 2–8）+ 位置 8 配對，無位置 1 限制 &nbsp;→&nbsp;</span>
+          <span style="color:#3a7ebf;font-weight:bold" data-en="Strong">強</span></td>
       </tr>
       <tr>
         <td style="padding:1px 8px 1px 0;font-weight:bold;color:#e07b39;white-space:nowrap">7mer-1A</td>
-        <td>seed（位置 2–7）+ 位置 1 為 A，無位置 8 限制 &nbsp;→&nbsp;
-          <span style="color:#e07b39;font-weight:bold">中等</span></td>
+        <td><span data-en="seed (pos 2–7) + pos 1 = A, no pos 8 req →">seed（位置 2–7）+ 位置 1 為 A，無位置 8 限制 &nbsp;→&nbsp;</span>
+          <span style="color:#e07b39;font-weight:bold" data-en="Moderate">中等</span></td>
       </tr>
       <tr>
         <td style="padding:1px 8px 1px 0;font-weight:bold;color:#888;white-space:nowrap">6mer</td>
-        <td>僅 seed（位置 2–7）配對，最短 seed &nbsp;→&nbsp;
-          <span style="color:#888;font-weight:bold">弱</span>，誤報率較高</td>
+        <td><span data-en="seed (pos 2–7) match only, shortest seed →">僅 seed（位置 2–7）配對，最短 seed &nbsp;→&nbsp;</span>
+          <span style="color:#888;font-weight:bold" data-en="Weak">弱</span>，誤報率較高</td>
       </tr>
     </table>
-    <span style="font-size:11px;color:#888">Priority score：seed 強度（8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1）+ CLIP 實驗支持（+3）+ ENCORI 收錄（+2）+ 位於 circRNA 內（+1）</span>
+    <span style="font-size:11px;color:#888" data-en="Priority score: seed strength (8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1) + CLIP evidence (+3) + ENCORI (+2) + in_circ (+1)">Priority score：seed 強度（8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1）+ CLIP 實驗支持（+3）+ ENCORI 收錄（+2）+ 位於 circRNA 內（+1）</span>
   </div>` : '';
 
   let html= seedNote + '<table class="itable"><thead><tr>';
@@ -2928,7 +3034,7 @@ function updateMainHeatmap() {{
   const maxUp=(_hmData.up_order||[]).length;
   const maxDn=(_hmData.dn_order||[]).length;
   const statusEl=document.getElementById('heatmap-status');
-  if(statusEl)statusEl.textContent=`（已顯示 ${{validIds.length}} 筆；資料庫最多 ${{maxUp}} up + ${{maxDn}} down）`;
+  if(statusEl){{statusEl.dataset.n=validIds.length;statusEl.dataset.u=maxUp;statusEl.dataset.d=maxDn;statusEl.textContent=_LS[_LANG||'zh'].hmStatus(validIds.length,maxUp,maxDn);}}
 }}
 
 // ── DE method switcher ────────────────────────────────────────────────────────
@@ -3091,9 +3197,9 @@ function _updateScoreDist(method, md) {{
   if(document.getElementById('bm-hist-plot')){{
     const swColor=(sd.sw_p&&sd.sw_p<0.05)?'#d62728':'#2CA02C';
     const swText=sd.sw_w?`Shapiro-Wilk: W = ${{sd.sw_w.toFixed(4)}}, p = ${{sd.sw_p.toExponential(2)}}`:'';
-    const swConc=sd.sw_p?(sd.sw_p<0.05?'✗ 非常態分佈':'✓ 常態分佈')+'（α = 0.05）':'';
+    const swConc=sd.sw_p?_LS[_LANG||'zh'].swConc(sd.sw_p):'';
     Plotly.react('bm-hist-plot',[
-      {{x:sd.scores,type:'histogram',nbinsx:30,name:'觀測分布',histnorm:'probability density',
+      {{x:sd.scores,type:'histogram',nbinsx:30,name:_LS[_LANG||'zh'].obsDist,histnorm:'probability density',
         marker:{{color:'rgba(44,119,214,0.55)',line:{{color:'rgba(44,119,214,0.9)',width:0.8}}}}}},
       {{x:sd.x_norm,y:sd.y_norm,mode:'lines',
         name:`Normal(μ=${{sd.mu.toFixed(3)}}, σ=${{sd.sd.toFixed(3)}})`,
@@ -3148,9 +3254,9 @@ function _renderBiomarkerTable(method, md) {{
   const n3 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 3).length;
   document.querySelectorAll('.bm-filter-btn').forEach((b, i) => {{
     b.style.background = 'white'; b.style.color = '#555';
-    if (i === 0) {{ b.textContent = `全部（${{n_all}}）`; b.style.background = '#2c6fad'; b.style.color = 'white'; }}
-    else if (i === 1) b.textContent = `≥ 2 方法顯著（${{n2}}）`;
-    else if (i === 2) b.textContent = `3 方法均顯著（${{n3}}）`;
+    if (i === 0) {{ b.textContent = _LS[_LANG||'zh'].bmAll(n_all); b.style.background = '#2c6fad'; b.style.color = 'white'; }}
+    else if (i === 1) b.textContent = _LS[_LANG||'zh'].bm2(n2);
+    else if (i === 2) b.textContent = _LS[_LANG||'zh'].bm3(n3);
   }});
   // Update section heading
   const bm_h2 = document.querySelector('#biomarker-section h2');
@@ -3169,7 +3275,7 @@ function _updateBiomarkerHighlight(sigIds) {{
     const m=link&&link.getAttribute('onclick')&&link.getAttribute('onclick').match(/'([^']+)'/);
     const cid=m?m[1]:null;
     row.style.opacity=(cid&&!sigSet.has(cid))?'0.25':'1';
-    row.title=(cid&&!sigSet.has(cid))?'在所選方法下不顯著':'';
+    row.title=(cid&&!sigSet.has(cid))?_LS[_LANG||'zh'].bmNSig:'';
   }});
 }}
 
@@ -3221,7 +3327,11 @@ _makeSortable('tbl_biomarker');
 
 <div class="print-bar no-print">
   <span>circRNA Analysis Report — {project_id}</span>
-  <button class="print-btn" onclick="window.print()">🖨 列印 / 存為 PDF</button>
+  <button class="print-btn" data-en="🖨 Print / Save PDF" onclick="window.print()">🖨 列印 / 存為 PDF</button>
+  <div style="display:flex;gap:4px;margin-left:12px">
+    <button class="lang-btn-rpt active" data-lang="zh" onclick="switchReportLang('zh')">中文</button>
+    <button class="lang-btn-rpt" data-lang="en" onclick="switchReportLang('en')">EN</button>
+  </div>
 </div>
 
   <h1>circRNA Analysis Report</h1>
@@ -3262,10 +3372,10 @@ _makeSortable('tbl_biomarker');
 
   <div id="isoform-section">
   {isoform_html}
-  <p style="font-size:11px;color:#999;margin:-4px 0 8px">&#8505; Isoform switching 依據 IUI 計算，不受 DE 方法切換影響。</p>
+  <p style="font-size:11px;color:#999;margin:-4px 0 8px" data-en="&#8505; Isoform switching is based on IUI; not affected by DE method switching.">&#8505; Isoform switching 依據 IUI 計算，不受 DE 方法切換影響。</p>
   </div>
 
-  {"<h2>三方法 DE 結果 Venn Diagram</h2><p style='font-size:13px;color:#555'>比較三種方法（edgeR FSJ offset、DESeq2、limma-voom）在相同閾值下的顯著 DE circRNA 交集。</p>" + venn_html if venn_html else ""}
+  {"<h2 data-en='3-Method DE Venn Diagram'>三方法 DE 結果 Venn Diagram</h2><p style='font-size:13px;color:#555' data-en='Compares significant DE circRNAs across three methods (edgeR FSJ offset, DESeq2, limma-voom) at the same threshold.'>比較三種方法（edgeR FSJ offset、DESeq2、limma-voom）在相同閾值下的顯著 DE circRNA 交集。</p>" + venn_html if venn_html else ""}
 
   <div id="de-tables-section">
   <h2 id="de-tables-heading">Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
@@ -3282,13 +3392,13 @@ _makeSortable('tbl_biomarker');
 
   <h2 id="heatmap-section-title">Heatmap (top {heatmap_top_n} significant up + {heatmap_top_n} significant down DE circRNAs)</h2>
   <div style="display:flex;align-items:center;gap:10px;margin:8px 0 12px;background:#f4f8ff;padding:10px 16px;border-radius:6px;border:1px solid #d0e4f7;flex-wrap:wrap">
-    <span style="font-size:13px">每方向顯示 top</span>
+    <span style="font-size:13px" data-en="Show top">每方向顯示 top</span>
     <input type="number" id="heatmap-n-input" value="{heatmap_top_n}" min="1" max="50"
            style="width:60px;padding:3px 6px;border:1px solid #bbb;border-radius:4px;font-size:13px"
            onkeydown="if(event.key==='Enter')updateMainHeatmap()">
     <span style="font-size:13px">up + down</span>
     <button onclick="updateMainHeatmap()"
-            style="background:#2c6fad;color:white;border:none;border-radius:4px;padding:5px 16px;cursor:pointer;font-size:13px">更新 Heatmap</button>
+            style="background:#2c6fad;color:white;border:none;border-radius:4px;padding:5px 16px;cursor:pointer;font-size:13px" data-en="Update Heatmap">更新 Heatmap</button>
     <span id="heatmap-status" style="font-size:12px;color:#888"></span>
   </div>
   {heatmap_html}
