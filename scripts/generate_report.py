@@ -2324,6 +2324,9 @@ function _drawCircleRNA(circId, container) {{
                       '#1d91c0','#6a3d9a'];
   const RBP_COLORS = ['#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e',
                       '#e6ab02','#a6761d','#333333','#1f78b4','#b2df8a','#fb8072','#80b1d3'];
+  // Distinct dash patterns for overlapping arc boundaries (indexed by badge num)
+  const BOUND_DASH=['5,3','2,2','7,2,2,2','4,2,1,2','1,2','9,3','3,1,1,1,1,1'];
+  const SITE_LABELS='abcdefghijklmnopqrstuvwxyz'.split('');
 
   function posToAngle(pos) {{
     if (!totalLen) return -Math.PI/2;
@@ -2385,6 +2388,7 @@ function _drawCircleRNA(circId, container) {{
   const miLegend=[];
   const miBadgeAngs={{}};
   const miArcGroups={{}};
+  const miArcSegsFlat=[];
   if(totalLen>0){{
     mirnaList.forEach(item=>{{
       const name=item.miRNAName||'';
@@ -2402,14 +2406,42 @@ function _drawCircleRNA(circId, container) {{
       const e=miMap[name];
       const a1=posToAngle(parseInt(m[1])),a2r=posToAngle(Math.max(parseInt(m[2]),parseInt(m[1])+1));
       const minA=2*Math.PI/totalLen*3, a2=Math.max(a2r,a1+minA);
-      miArcGroups[name].push({{d:arcPath(MI_OUT,MI_IN,a1,a2),title:`${{name}} · ${{item.siteType||''}} · ${{item.circ_pos}}`}});
+      miArcGroups[name].push({{d:arcPath(MI_OUT,MI_IN,a1,a2),title:`${{name}} · ${{item.siteType||''}} · ${{item.circ_pos}}`,a1,a2}});
+      miArcSegsFlat.push({{name,num:e.num,color:e.color,a1,a2}});
       if(!(name in miBadgeAngs)) miBadgeAngs[name]=normA((a1+a2)/2);
     }});
+    // Compute overlaps; assign site letters sorted by angle
+    const miOvlSet=new Set();
+    for(let i=0;i<miArcSegsFlat.length;i++){{
+      for(let j=i+1;j<miArcSegsFlat.length;j++){{
+        const s=miArcSegsFlat[i],t=miArcSegsFlat[j];
+        if(s.a1<t.a2&&s.a2>t.a1){{miOvlSet.add(i);miOvlSet.add(j);}}
+      }}
+    }}
+    const miOvlSorted=[...miOvlSet].sort((a,b)=>miArcSegsFlat[a].a1-miArcSegsFlat[b].a1);
+    miOvlSorted.forEach((fi,li)=>{{miArcSegsFlat[fi].label=SITE_LABELS[li%26];}});
     // Draw arc groups (each name wrapped in <g> for show/hide)
     Object.entries(miArcGroups).forEach(([name,arcs])=>{{
       const e=miMap[name];
       svg+=`<g id="_miarc_${{e.num}}" class="_miarc">`;
-      arcs.forEach(a=>svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.85"><title>${{a.title}}</title></path>`);
+      arcs.forEach(a=>{{
+        svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.85"><title>${{a.title}}</title></path>`;
+        const fi=miArcSegsFlat.findIndex(s=>s.name===name&&Math.abs(s.a1-a.a1)<0.0001);
+        if(fi>=0&&miOvlSet.has(fi)){{
+          const seg=miArcSegsFlat[fi];
+          const dp=BOUND_DASH[(seg.num-1)%BOUND_DASH.length];
+          [a.a1,a.a2].forEach(ang=>{{
+            const [lx1,ly1]=polar(MI_IN-1,ang),[lx2,ly2]=polar(MI_OUT+1,ang);
+            svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="${{e.color}}" stroke-width="1.5" stroke-dasharray="${{dp}}" opacity="0.9"/>`;
+          }});
+          if(seg.label&&Math.abs(a.a2-a.a1)*(MI_IN+MI_OUT)/2>10){{
+            const midA=(a.a1+a.a2)/2,midR=(MI_IN+MI_OUT)/2;
+            const [lx,ly]=polar(midR,midA);
+            svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="5" fill="${{e.color}}" opacity="0.92"/>`;
+            svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="7" fill="white" font-weight="bold">${{seg.label}}</text>`;
+          }}
+        }}
+      }});
       svg+=`</g>`;
     }});
     // place badges immediately outside arc; radially stagger only when angularly too close
@@ -2443,6 +2475,7 @@ function _drawCircleRNA(circId, container) {{
   const rbpLegend=[];
   const rbpBadgeAngs={{}};
   const rbpArcGroups={{}};
+  const rbpArcSegsFlat=[];
   if(totalLen>0){{
     rbpList.forEach(item=>{{
       if(item.location!=='internal')return;
@@ -2462,7 +2495,8 @@ function _drawCircleRNA(circId, container) {{
           const s0=Math.max(0,s.circ_start);
           const s1=Math.min(Math.max(s.circ_end,s0+1),totalLen); // clamp to [0, totalLen]
           const a1=posToAngle(s0),a2=posToAngle(s1);
-          rbpArcGroups[name].push({{d:arcPath(RBP_OUT,RBP_IN,a1,a2),title:`${{name}} · ${{s.circ_pos}}`}});
+          rbpArcGroups[name].push({{d:arcPath(RBP_OUT,RBP_IN,a1,a2),title:`${{name}} · ${{s.circ_pos}}`,a1,a2}});
+          rbpArcSegsFlat.push({{name,num:e.num,color:e.color,a1,a2}});
           if(!(name in rbpBadgeAngs)) rbpBadgeAngs[name]=normA((a1+a2)/2);
         }});
       }} else {{
@@ -2472,11 +2506,38 @@ function _drawCircleRNA(circId, container) {{
         }}
       }}
     }});
+    // Compute overlaps; assign site letters sorted by angle
+    const rbpOvlSet=new Set();
+    for(let i=0;i<rbpArcSegsFlat.length;i++){{
+      for(let j=i+1;j<rbpArcSegsFlat.length;j++){{
+        const s=rbpArcSegsFlat[i],t=rbpArcSegsFlat[j];
+        if(s.a1<t.a2&&s.a2>t.a1){{rbpOvlSet.add(i);rbpOvlSet.add(j);}}
+      }}
+    }}
+    const rbpOvlSorted=[...rbpOvlSet].sort((a,b)=>rbpArcSegsFlat[a].a1-rbpArcSegsFlat[b].a1);
+    rbpOvlSorted.forEach((fi,li)=>{{rbpArcSegsFlat[fi].label=SITE_LABELS[li%26];}});
     // Draw RBP arc groups
     Object.entries(rbpArcGroups).forEach(([name,arcs])=>{{
       const e=rbpMap[name];
       svg+=`<g id="_rbparc_${{e.num}}" class="_rbparc">`;
-      arcs.forEach(a=>svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.9" stroke="rgba(0,0,0,0.3)" stroke-width="0.8"><title>${{a.title}}</title></path>`);
+      arcs.forEach(a=>{{
+        svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.9" stroke="rgba(0,0,0,0.3)" stroke-width="0.8"><title>${{a.title}}</title></path>`;
+        const fi=rbpArcSegsFlat.findIndex(s=>s.name===name&&Math.abs(s.a1-a.a1)<0.0001);
+        if(fi>=0&&rbpOvlSet.has(fi)){{
+          const seg=rbpArcSegsFlat[fi];
+          const dp=BOUND_DASH[(seg.num-1)%BOUND_DASH.length];
+          [a.a1,a.a2].forEach(ang=>{{
+            const [lx1,ly1]=polar(RBP_IN-1,ang),[lx2,ly2]=polar(RBP_OUT+1,ang);
+            svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="${{e.color}}" stroke-width="1.5" stroke-dasharray="${{dp}}" opacity="0.9"/>`;
+          }});
+          if(seg.label&&Math.abs(a.a2-a.a1)*(RBP_IN+RBP_OUT)/2>10){{
+            const midA=(a.a1+a.a2)/2,midR=(RBP_IN+RBP_OUT)/2;
+            const [lx,ly]=polar(midR,midA);
+            svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="5" fill="${{e.color}}" opacity="0.92"/>`;
+            svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="7" fill="white" font-weight="bold">${{seg.label}}</text>`;
+          }}
+        }}
+      }});
       svg+=`</g>`;
     }});
     // build + de-overlap badge list, place inside RBP ring (in center-hole)
