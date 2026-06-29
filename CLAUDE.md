@@ -1470,7 +1470,7 @@ conda run -n ciriquant snakemake \
 
 ### GSE221107（攝護腺癌，配對 tumor/normal）
 
-**✅ 完成（重跑版：4 pairs，2026-06-29）。** 報告位置：`~/GSE221107_results/report.html`（server）
+**✅ 完成（重跑版：4 pairs，2026-06-29 22:36）。** 報告位置：`~/GSE221107_results/report.html`（server）；本機備份：`/mnt/c/Users/User/Desktop/circRNA agent report/GSE221107_report.html`
 
 攝護腺癌手術切除組織，cancer tissue vs. adjacent normal，20 對配對，從中選深度最高的 6 對（Pair 8/11/14/16/18/20）偵測完畢。分析時發現 **Pair 8（SRR22757442）和 Pair 11（SRR22757419）** 的 RNA 降解（fastp insert size peak 40–44 bp vs. 正常 268–269 bp，adapter dimer 特徵）→ 排除，最終使用 **4 pairs（Pair 14/16/18/20，8 samples）** 重跑 DE / isoform switching / predict_interactions / report。
 
@@ -1486,16 +1486,16 @@ conda run -n ciriquant snakemake \
 | consensus_filter / merge_counts | ✅ 完成（22,577 circRNAs；子集 8 樣本）|
 | DE analysis（4 pairs）| ✅ 完成（edgeR 57 / DESeq2 58 / limma 627 significant）|
 | isoform_switching（4 pairs）| ✅ 完成（37 events，within-gene FDR < 0.1）|
-| predict_interactions | 🔄 執行中（union mode，~200 circRNAs）|
-| rank_biomarkers | ⏳ 待執行（等 interactions.json）|
-| report | ⏳ 待執行（等 rank_biomarkers）|
+| predict_interactions | ✅ 完成（union mode，interactions.json 9.2MB，2026-06-29 20:42）|
+| rank_biomarkers | ✅ 完成（57 candidates，biomarker_candidates.tsv 15KB）|
+| report | ✅ 完成（report.html 9.1MB，2026-06-29 22:36）|
 
 **主要數值結果（4 pairs 重跑）**：
 - 偵測：22,577 consensus circRNAs；count_matrix.tsv 子集為 8 samples（SRR22757410/412/414/416/430/432/434/436）
 - DE（edgeR_ciriquant）：**57 significant**（nominal p < 0.05，|log2FC| > 1）；全為 Type_I（配對設計 `~patient+condition`）
 - DE（DESeq2）：**58 significant**；DE（limma-voom）：**627 significant**
 - Isoform switching：37 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
-- Biomarker candidates：待 predict_interactions 完成後確定
+- Biomarker candidates：**57 個**（edgeR 顯著 circRNA 全部進入）；Top 1：chr2:40655613|40657444（log2FC=−6.79，pvalue=0.024，Type_I）
 
 **排除原因詳細說明**：
 - Pair 8（PC8=SRR22757442：6 BSJ）+ Pair 11（PN11=SRR22757419：28 BSJ）：fastp insert_size_peak ≈ 40–44 bp（正常 ≈ 268–269 bp）→ library prep 前 RNA 已降解，adapter dimer 佔主體，無法產生有效的 BSJ spanning reads
