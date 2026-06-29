@@ -2448,12 +2448,7 @@ function _drawCircleRNA(circId, container) {{
             const [lx1,ly1]=polar(MI_IN-1,ang),[lx2,ly2]=polar(MI_OUT+1,ang);
             svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="${{e.color}}" stroke-width="2.5" stroke-dasharray="${{dp}}" opacity="0.95"/>`;
           }});
-          if(seg.label&&Math.abs(a.a2-a.a1)*(MI_IN+MI_OUT)/2>8){{
-            const midA=(a.a1+a.a2)/2,midR=(MI_IN+MI_OUT)/2;
-            const [lx,ly]=polar(midR,midA);
-            svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="6" fill="${{e.color}}" opacity="0.93" stroke="white" stroke-width="0.8"/>`;
-            svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{seg.label}}</text>`;
-          }}
+          // overlap letter badge removed — per-arc site labels (_arc_lbl) used instead
           if(seg.label)svg+=`</g>`;
         }}
         // hidden per-arc letter badge — only made visible when this molecule is the sole visible one
@@ -2568,12 +2563,7 @@ function _drawCircleRNA(circId, container) {{
             const [lx1,ly1]=polar(RBP_IN-1,ang),[lx2,ly2]=polar(RBP_OUT+1,ang);
             svg+=`<line x1="${{lx1.toFixed(1)}}" y1="${{ly1.toFixed(1)}}" x2="${{lx2.toFixed(1)}}" y2="${{ly2.toFixed(1)}}" stroke="${{e.color}}" stroke-width="2.5" stroke-dasharray="${{dp}}" opacity="0.95"/>`;
           }});
-          if(seg.label&&Math.abs(a.a2-a.a1)*(RBP_IN+RBP_OUT)/2>8){{
-            const midA=(a.a1+a.a2)/2,midR=48;
-            const [lx,ly]=polar(midR,midA);
-            svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="6" fill="${{e.color}}" opacity="0.93" stroke="white" stroke-width="0.8"/>`;
-            svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{seg.label}}</text>`;
-          }}
+          // overlap letter badge removed — per-arc site labels (_arc_lbl) used instead
           if(seg.label)svg+=`</g>`;
         }}
         // hidden per-arc letter badge for RBP (inside center hole)
