@@ -2384,8 +2384,7 @@ function _drawCircleRNA(circId, container) {{
   }}
 
   // ── miRNA arcs (outer ring) — group arcs per name, then de-overlapped badges ──
-  let miAnnMap={{}};  // declared here so annLegHtml can always reference it
-  let rbpAnnMap={{}};
+  window._circ_miData={{}};window._circ_rbpData={{}};  // reset on each modal open
   const miMap={{}};let miIdx=0;
   const miLegend=[];
   const miBadgeAngs={{}};
@@ -2423,25 +2422,22 @@ function _drawCircleRNA(circId, container) {{
     }}
     const miOvlSorted=[...miOvlSet].sort((a,b)=>miArcSegsFlat[a].a1-miArcSegsFlat[b].a1);
     miOvlSorted.forEach((fi,li)=>{{miArcSegsFlat[fi].label=SITE_LABELS[li%26];}});
-    // Right panel: label molecules with exactly ONE arc that does NOT overlap any other molecule's arc
-    miAnnMap={{}};let _miSI=0;
-    Object.entries(miArcGroups).forEach(([_mn,_ma])=>{{
-      if(_ma.length===1){{
-        const _mfi=(_ma[0].fi!==undefined)?_ma[0].fi:-1;
-        if(_mfi<0||!miOvlSet.has(_mfi)){{
-          const _ml=SITE_LABELS[_miSI%26];_miSI++;
-          _ma[0].singleLetter=_ml;
-          const _me=miMap[_mn];
-          if(_me)miAnnMap[_ml]={{name:_mn,color:_me.color}};
-        }}
-      }}
+    // Build per-molecule arc data for dynamic right-panel site toggle
+    const _miArcData={{}};
+    Object.entries(miArcGroups).forEach(([name,arcs])=>{{
+      const e=miMap[name];if(!e)return;
+      _miArcData[e.num]={{name,color:e.color,arcs:arcs.map((a,ai)=>
+        ({{letter:SITE_LABELS[ai%26],id:`_mi_site_${{e.num}}_${{ai}}`,pos:a.title||''}}))
+      }};
     }});
-    // Draw arc groups (each name wrapped in <g> for show/hide)
+    // Draw arc groups (each name wrapped in <g id="_miarc_N"> for L1 show/hide;
+    //   each arc wrapped in <g id="_mi_site_N_i"> for L2 per-site toggle)
     Object.entries(miArcGroups).forEach(([name,arcs])=>{{
       const e=miMap[name];
       svg+=`<g id="_miarc_${{e.num}}" class="_miarc">`;
-      arcs.forEach(a=>{{
-        if(a.singleLetter)svg+=`<g id="_ann_mi_${{a.singleLetter}}" class="_miann">`;
+      arcs.forEach((a,ai)=>{{
+        const arcLetter=SITE_LABELS[ai%26];
+        svg+=`<g id="_mi_site_${{e.num}}_${{ai}}" class="_mi_site">`;
         svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.85"><title>${{a.title}}</title></path>`;
         const fi=(a.fi!==undefined)?a.fi:-1;
         if(fi>=0&&miOvlSet.has(fi)){{
@@ -2460,13 +2456,16 @@ function _drawCircleRNA(circId, container) {{
           }}
           if(seg.label)svg+=`</g>`;
         }}
-        if(a.singleLetter&&Math.abs(a.a2-a.a1)*(MI_IN+MI_OUT)/2>8){{
+        // hidden per-arc letter badge — only made visible when this molecule is the sole visible one
+        if(Math.abs(a.a2-a.a1)*(MI_IN+MI_OUT)/2>8){{
           const midA=(a.a1+a.a2)/2,midR=(MI_IN+MI_OUT)/2;
           const [lx,ly]=polar(midR,midA);
+          svg+=`<g class="_arc_lbl" data-arc-type="mi" data-arc-num="${{e.num}}" style="visibility:hidden">`;
           svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="6" fill="${{e.color}}" opacity="0.93" stroke="white" stroke-width="1.2"/>`;
-          svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{a.singleLetter}}</text>`;
+          svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{arcLetter}}</text>`;
+          svg+=`</g>`;
         }}
-        if(a.singleLetter)svg+=`</g>`;
+        svg+=`</g>`; // end _mi_site
       }});
       svg+=`</g>`;
     }});
@@ -2543,25 +2542,21 @@ function _drawCircleRNA(circId, container) {{
     }}
     const rbpOvlSorted=[...rbpOvlSet].sort((a,b)=>rbpArcSegsFlat[a].a1-rbpArcSegsFlat[b].a1);
     rbpOvlSorted.forEach((fi,li)=>{{rbpArcSegsFlat[fi].label=SITE_LABELS[li%26];}});
-    // Right panel: label RBPs with exactly ONE arc that does NOT overlap any other molecule's arc
-    rbpAnnMap={{}};let _rbpSI=0;
-    Object.entries(rbpArcGroups).forEach(([_rn,_ra])=>{{
-      if(_ra.length===1){{
-        const _rfi=(_ra[0].fi!==undefined)?_ra[0].fi:-1;
-        if(_rfi<0||!rbpOvlSet.has(_rfi)){{
-          const _rl=SITE_LABELS[_rbpSI%26];_rbpSI++;
-          _ra[0].singleLetter=_rl;
-          const _re=rbpMap[_rn];
-          if(_re)rbpAnnMap[_rl]={{name:_rn,color:_re.color}};
-        }}
-      }}
+    // Build per-molecule arc data for dynamic right-panel site toggle (RBP)
+    const _rbpArcData={{}};
+    Object.entries(rbpArcGroups).forEach(([name,arcs])=>{{
+      const e=rbpMap[name];if(!e)return;
+      _rbpArcData[e.num]={{name,color:e.color,arcs:arcs.map((a,ai)=>
+        ({{letter:SITE_LABELS[ai%26],id:`_rbp_site_${{e.num}}_${{ai}}`,pos:a.title||''}}))
+      }};
     }});
-    // Draw RBP arc groups
+    // Draw RBP arc groups (L1: _rbparc_N; L2: _rbp_site_N_i per arc)
     Object.entries(rbpArcGroups).forEach(([name,arcs])=>{{
       const e=rbpMap[name];
       svg+=`<g id="_rbparc_${{e.num}}" class="_rbparc">`;
-      arcs.forEach(a=>{{
-        if(a.singleLetter)svg+=`<g id="_ann_rbp_${{a.singleLetter}}" class="_rbpann">`;
+      arcs.forEach((a,ai)=>{{
+        const arcLetter=SITE_LABELS[ai%26];
+        svg+=`<g id="_rbp_site_${{e.num}}_${{ai}}" class="_rbp_site">`;
         svg+=`<path d="${{a.d}}" fill="${{e.color}}" opacity="0.9" stroke="rgba(0,0,0,0.3)" stroke-width="0.8"><title>${{a.title}}</title></path>`;
         const fi=(a.fi!==undefined)?a.fi:-1;
         if(fi>=0&&rbpOvlSet.has(fi)){{
@@ -2580,13 +2575,16 @@ function _drawCircleRNA(circId, container) {{
           }}
           if(seg.label)svg+=`</g>`;
         }}
-        if(a.singleLetter&&Math.abs(a.a2-a.a1)*(RBP_IN+RBP_OUT)/2>8){{
+        // hidden per-arc letter badge for RBP (inside center hole)
+        if(Math.abs(a.a2-a.a1)*(RBP_IN+RBP_OUT)/2>8){{
           const midA=(a.a1+a.a2)/2,midR=(RBP_IN+RBP_OUT)/2;
           const [lx,ly]=polar(midR,midA);
+          svg+=`<g class="_arc_lbl" data-arc-type="rbp" data-arc-num="${{e.num}}" style="visibility:hidden">`;
           svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="6" fill="${{e.color}}" opacity="0.93" stroke="white" stroke-width="1.2"/>`;
-          svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{a.singleLetter}}</text>`;
+          svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{arcLetter}}</text>`;
+          svg+=`</g>`;
         }}
-        if(a.singleLetter)svg+=`</g>`;
+        svg+=`</g>`; // end _rbp_site
       }});
       svg+=`</g>`;
     }});
@@ -2614,6 +2612,9 @@ function _drawCircleRNA(circId, container) {{
       svg+=`<text x="${{nx.toFixed(1)}}" y="${{ny.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="7.5" fill="white" font-weight="bold">${{b.e.num}}</text>`;
       svg+=`</g>`;
     }});
+    // Store arc data for dynamic right-panel site toggle
+    window._circ_miData=_miArcData;
+    window._circ_rbpData=_rbpArcData;
   }}
 
   // ── Exon labels drawn last (on top of all arc layers) ──
@@ -2676,40 +2677,9 @@ function _drawCircleRNA(circId, container) {{
     }});
     legHtml+='</div></div>';
   }}
-  // Build letter annotation legend (Level 2 toggle panel)
-  let annLegHtml='';
-  const miAnns=Object.entries(miAnnMap).sort((a,b)=>a[0].localeCompare(b[0]));
-  const rbpAnns=Object.entries(rbpAnnMap).sort((a,b)=>a[0].localeCompare(b[0]));
-  if(miAnns.length+rbpAnns.length>0){{
-    annLegHtml='<div style="font-size:10px;padding:6px 0 0 10px;border-left:2px solid #d8e8f4;min-width:150px;max-width:210px;align-self:flex-start;margin-top:8px">';
-    annLegHtml+='<div style="font-weight:600;margin-bottom:5px;color:#446;font-size:10px">🔍 單一位點 / Binding sites</div>';
-    annLegHtml+='<div style="font-size:9px;color:#888;margin-bottom:4px">點擊字母切換顯示 / Click to toggle</div>';
-    annLegHtml+='<div style="max-height:340px;overflow-y:auto">';
-    if(miAnns.length>0){{
-      annLegHtml+='<div style="font-size:9px;font-weight:600;color:#888;margin:5px 0 3px">miRNA</div>';
-      miAnns.forEach(([letter,info])=>{{
-        annLegHtml+=`<div class="_annrow" data-type="mi" data-letter="${{letter}}" onclick="_toggleAnn('mi','${{letter}}',this)"
-          style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 4px;border-radius:4px;margin-bottom:2px;transition:opacity .15s">
-          <span style="background:${{info.color}};color:white;border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:bold;flex-shrink:0">${{letter}}</span>
-          <span style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:9px" title="${{info.name}}">${{info.name}}</span>
-          <span class="_eye" style="font-size:10px">👁</span>
-        </div>`;
-      }});
-    }}
-    if(rbpAnns.length>0){{
-      annLegHtml+='<div style="font-size:9px;font-weight:600;color:#888;margin:5px 0 3px">RBP</div>';
-      rbpAnns.forEach(([letter,info])=>{{
-        annLegHtml+=`<div class="_annrow" data-type="rbp" data-letter="${{letter}}" onclick="_toggleAnn('rbp','${{letter}}',this)"
-          style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 4px;border-radius:4px;margin-bottom:2px;transition:opacity .15s">
-          <span style="background:${{info.color}};color:white;border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:bold;flex-shrink:0">${{letter}}</span>
-          <span style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:9px" title="${{info.name}}">${{info.name}}</span>
-          <span class="_eye" style="font-size:10px">👁</span>
-        </div>`;
-      }});
-    }}
-    annLegHtml+='</div></div>'; // close scrollable + outer panel
-  }}
-  container.innerHTML=`<div style="display:flex;justify-content:center;align-items:flex-start;gap:6px"><div style="text-align:center">${{svg}}</div>${{annLegHtml}}</div>`+legHtml;
+  // Dynamic right panel (populated by _showSitePanel when exactly one molecule is visible)
+  const sitePanelDiv=`<div id="circ-site-panel" style="display:none;font-size:10px;padding:6px 0 0 10px;border-left:2px solid #d8e8f4;min-width:150px;max-width:210px;align-self:flex-start;margin-top:8px"></div>`;
+  container.innerHTML=`<div style="display:flex;justify-content:center;align-items:flex-start;gap:6px"><div style="text-align:center">${{svg}}</div>${{sitePanelDiv}}</div>`+legHtml;
 }}
 
 // ── Mini heatmap ──────────────────────────────────────────────────────────────
@@ -3084,8 +3054,55 @@ function _spotlight(type, num, chip) {{
   }}
 }}
 
+// ── Level 2: site-panel (appears when exactly 1 molecule visible) ────────────
+function _updateSitePanel(wrap) {{
+  const visMi=[...wrap.querySelectorAll('._miarc')].filter(g=>g.style.display!=='none');
+  const visRbp=[...wrap.querySelectorAll('._rbparc')].filter(g=>g.style.display!=='none');
+  const total=visMi.length+visRbp.length;
+  if(total===1){{
+    const g=visMi.length===1?visMi[0]:visRbp[0];
+    const type=visMi.length===1?'mi':'rbp';
+    const num=parseInt(g.id.replace(/^.*_(\d+)$/,'$1'));
+    _showSitePanel(wrap,type,num);
+  }}else{{
+    _hideSitePanel(wrap);
+  }}
+}}
+function _showSitePanel(wrap,type,num){{
+  const data=type==='mi'?(window._circ_miData||{{}})[num]:(window._circ_rbpData||{{}})[num];
+  const panel=document.getElementById('circ-site-panel');
+  if(!panel||!data){{_hideSitePanel(wrap);return;}}
+  wrap.querySelectorAll('._arc_lbl').forEach(g=>g.style.visibility='hidden');
+  wrap.querySelectorAll(`._arc_lbl[data-arc-type="${{type}}"][data-arc-num="${{num}}"]`).forEach(g=>g.style.visibility='');
+  let h=`<div style="font-weight:600;margin-bottom:4px;color:#446;font-size:10px;word-break:break-all">${{data.name}}</div>`;
+  h+='<div style="font-size:9px;color:#888;margin-bottom:5px">點擊字母切換顯示 / Click to toggle</div>';
+  h+='<div style="max-height:320px;overflow-y:auto">';
+  data.arcs.forEach(arc=>{{
+    h+=`<div onclick="_toggleSite('${{arc.id}}',this)" style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 4px;border-radius:4px;margin-bottom:3px;transition:opacity .15s">
+      <span style="background:${{data.color}};color:white;border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:bold;flex-shrink:0">${{arc.letter}}</span>
+      <span style="flex:1;font-size:9px;color:#333">site ${{arc.letter}}</span>
+      <span class="_eye" style="font-size:11px">👁</span>
+    </div>`;
+  }});
+  h+='</div>';
+  panel.innerHTML=h;panel.style.display='';
+}}
+function _hideSitePanel(wrap){{
+  const panel=document.getElementById('circ-site-panel');
+  if(panel){{panel.style.display='none';panel.innerHTML='';}}
+  if(wrap)wrap.querySelectorAll('._arc_lbl').forEach(g=>g.style.visibility='hidden');
+}}
+function _toggleSite(arcId,row){{
+  const g=document.getElementById(arcId);if(!g)return;
+  const nowHidden=g.style.display==='none';
+  g.style.display=nowHidden?'':'none';
+  const eye=row?row.querySelector('._eye'):null;
+  if(eye)eye.textContent=nowHidden?'👁':'🙈';
+  if(row)row.style.opacity=nowHidden?'1':'0.4';
+}}
+
 function _toggleAnn(type, letter, row) {{
-  // Level 2: toggle specific binding site (arc + its label) on/off
+  // Toggle overlap-annotation arc group (boundary lines + letter badge)
   const wrap = document.getElementById('cm-circle-wrap');
   if (!wrap) return;
   const g = wrap.querySelector(`#_ann_${{type}}_${{letter}}`);
@@ -3109,6 +3126,7 @@ function _toggleBadge(type, num, chip) {{
     chip.style.opacity        = nowHidden ? '1' : '0.3';
     chip.style.textDecoration = nowHidden ? '' : 'line-through';
   }}
+  _updateSitePanel(wrap);
 }}
 
 function _toggleAll(type, show, container) {{
@@ -3133,6 +3151,7 @@ function _toggleAll(type, show, container) {{
       chip.style.textDecoration = show ? '' : 'line-through';
     }});
   }}
+  _updateSitePanel(wrap);
 }}
 
 // ── Main heatmap dynamic update ───────────────────────────────────────────────
