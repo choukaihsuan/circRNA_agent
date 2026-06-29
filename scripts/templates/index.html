@@ -285,7 +285,7 @@
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:8px;">
       {% if session.email %}
       <span style="font-size:11px;color:#64748b;">{{ session.email }}</span>
-      <a href="/logout" style="font-size:11px;color:#94a3b8;text-decoration:none;">登出</a>
+      <a href="/logout" style="font-size:11px;color:#94a3b8;text-decoration:none;" data-en="Sign out">登出</a>
       {% endif %}
     </div>
   </div>
@@ -428,6 +428,15 @@
 
       <!-- ══ Panel 1: 操作流程 ══ -->
       <div class="tut-panel active" id="tut-workflow">
+
+        <!-- Pipeline diagram -->
+        <div style="text-align:center;margin:4px 0 20px;">
+          <img src="/static/pipeline_diagram.png?v=5" alt="circRNA Analysis Pipeline"
+               style="max-width:100%;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.08);cursor:zoom-in;"
+               onclick="document.getElementById('diagram-lightbox').style.display='flex';"
+               title="點擊放大 / Click to zoom">
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;" data-en="Click diagram to zoom">點擊圖片可放大</div>
+        </div>
 
         <!-- Step 1 -->
         <div class="step-card">
@@ -653,7 +662,8 @@
             🚀 加入佇列
           </button>
           <a href="/queue" class="btn" style="background:#f1f5f9;color:#1e293b;font-size:13px;
-             text-decoration:none;padding:10px 16px;border-radius:8px;white-space:nowrap;">
+             text-decoration:none;padding:10px 16px;border-radius:8px;white-space:nowrap;"
+             data-en="📋 View Queue">
             📋 查看佇列
           </a>
         </div>
@@ -662,7 +672,7 @@
 
     <!-- Panel B: Manual SRR -->
     <div class="launch-panel" id="panel-manual">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+      <p id="panel-manual-desc" style="font-size:13px;color:var(--muted);margin-bottom:14px;">
         手動輸入 SRR ID 並指定 condition，或上傳現有的 <code>library_info.csv</code>。
         適合從大型資料集中選取特定樣本進行分析。
       </p>
@@ -672,7 +682,7 @@
         <!-- Meta: project ID, condition labels, cores -->
         <div class="manual-meta">
           <label>Project ID
-            <input type="text" name="project_id" placeholder="例：GSE133998" value="" style="width:140px;" required>
+            <input type="text" name="project_id" placeholder="例：GSE133998" data-ph-en="e.g. GSE133998" value="" style="width:140px;" required>
           </label>
           <label>Case label
             <input type="text" name="tumor_label"
@@ -686,15 +696,16 @@
                    id="normal-label-input" style="width:120px;"
                    title="對照組 label（由 GEO metadata 自動偵測，可手動修改）">
           </label>
-          <label style="flex:1 1 100%;">資料集描述 <span style="font-size:11px;color:#999">（GEO 自動填入，可編輯）</span>
+          <label style="flex:1 1 100%;"><span data-en="Dataset description">資料集描述</span> <span style="font-size:11px;color:#999" data-en="(auto-filled from GEO, editable)">（GEO 自動填入，可編輯）</span>
             <input type="text" name="study_title"
                    value="{{ config.get('study_title', '') }}"
                    id="study-title-input"
-                   placeholder="例：ESCC tumor vs. normal, 6 pairs"
+                   placeholder="例：ESCC tumor vs. normal, 6 pairs" data-ph-en="e.g. ESCC tumor vs. normal, 6 pairs"
                    style="width:100%;max-width:600px;margin-top:4px;"
                    title="顯示於報告 Samples 區塊頂部">
           </label>
-          <span id="label-detect-badge" style="font-size:11px;color:#16a34a;display:none;align-items:center;gap:4px;">
+          <span id="label-detect-badge" style="font-size:11px;color:#16a34a;display:none;align-items:center;gap:4px;"
+                data-en="✓ Auto-detected">
             ✓ 自動偵測
           </span>
           <label>CPU cores
@@ -704,17 +715,17 @@
         <!-- Notification email -->
         <div style="margin-bottom:14px;">
           <label style="font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span style="font-weight:600;min-width:100px;">通知 Email</span>
+            <span style="font-weight:600;min-width:100px;" data-en="Notify Email">通知 Email</span>
             <input type="email" name="notify_email"
-                   placeholder="（選填）分析完成後寄送通知"
+                   placeholder="（選填）分析完成後寄送通知" data-ph-en="(Optional) Notify when analysis completes"
                    value="{{ config.get('notify', {}).get('email_to', '') }}"
                    style="flex:1;min-width:220px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
-            <span style="font-size:12px;color:var(--success);">✓ Gmail 已設定</span>
+            <span style="font-size:12px;color:var(--success);" data-en="✓ Gmail configured">✓ Gmail 已設定</span>
           </label>
         </div>
 
         <!-- Option 1: manual table -->
-        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">方式一：逐筆輸入 SRR</div>
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;" data-en="Option 1: Enter SRR IDs manually">方式一：逐筆輸入 SRR</div>
         <table class="srr-table" id="srr-table">
           <thead>
             <tr><th>#</th><th>SRR ID</th><th>Condition</th><th></th></tr>
@@ -731,26 +742,28 @@
             </tr>
           </tbody>
         </table>
-        <button type="button" class="btn-add-row" onclick="addRow()">+ 新增樣本</button>
+        <button type="button" class="btn-add-row" onclick="addRow()" data-en="+ Add sample">+ 新增樣本</button>
 
-        <div class="or-divider">或</div>
+        <div class="or-divider" data-en="or">或</div>
 
         <!-- Option 2: CSV upload -->
-        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;"
+             data-en="Option 2: Upload CSV (columns: srr_id, condition)">
           方式二：上傳 CSV（欄位：srr_id, condition）
         </div>
         <div class="upload-area" onclick="document.getElementById('csv-upload').click()"
              ondragover="this.classList.add('dragover');event.preventDefault()"
              ondragleave="this.classList.remove('dragover')"
              ondrop="handleDrop(event,this)">
-          <div id="upload-label">📂 點擊或拖拽上傳 CSV 檔案</div>
+          <div id="upload-label" data-en="📂 Click or drag to upload CSV file">📂 點擊或拖拽上傳 CSV 檔案</div>
           <input type="file" id="csv-upload" name="csv_file" accept=".csv,.tsv,.txt"
                  onchange="showFileName(this)">
         </div>
-        <div class="upload-label">CSV 格式範例：<code>srr_id,condition</code>（第一行為 header）</div>
+        <div class="upload-label" data-en="CSV format: &lt;code&gt;srr_id,condition&lt;/code&gt; (first row is header)">CSV 格式範例：<code>srr_id,condition</code>（第一行為 header）</div>
 
         <!-- GSE113230 example table -->
-        <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+        <div style="margin-top:10px;font-size:11px;color:var(--muted);"
+             data-en="Example (GSE113230, TNBC 3 tumor / 3 normal):">
           範例（GSE113230，三陰性乳癌 3 tumor / 3 normal）：
         </div>
         <table style="margin-top:4px;font-size:11px;border-collapse:collapse;width:100%;max-width:340px;">
@@ -771,11 +784,12 @@
         </table>
 
         <div style="margin-top:16px;display:flex;gap:8px;align-items:center;">
-          <button type="submit" class="btn btn-geo">
+          <button type="submit" class="btn btn-geo" data-en="🚀 Queue Analysis">
             🚀 加入佇列
           </button>
           <a href="/queue" class="btn" style="background:#f1f5f9;color:#1e293b;font-size:13px;
-             text-decoration:none;padding:10px 16px;border-radius:8px;white-space:nowrap;">
+             text-decoration:none;padding:10px 16px;border-radius:8px;white-space:nowrap;"
+             data-en="📋 View Queue">
             📋 查看佇列
           </a>
         </div>
@@ -785,7 +799,7 @@
 
     <!-- Panel C: Local FASTQ -->
     <div class="launch-panel" id="panel-local">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+      <p id="panel-local-desc" style="font-size:13px;color:var(--muted);margin-bottom:14px;">
         指定 Server 上已存放 FASTQ 的目錄，系統自動偵測配對檔案並建立 symlink 後執行 pipeline。
         支援格式：<code>*_1.fastq.gz / *_2.fastq.gz</code>、<code>*_R1.fastq.gz / *_R2.fastq.gz</code> 等。
       </p>
@@ -813,21 +827,22 @@
                style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:monospace;">
         <button type="button" id="scan-btn" onclick="scanFastq()"
                 style="padding:9px 18px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">
-          🔍 掃描
+          <span id="scan-btn-label" data-en="🔍 Scan">🔍 掃描</span>
         </button>
       </div>
       <div id="scan-status" style="font-size:12px;color:var(--muted);margin-bottom:10px;"></div>
 
       <!-- Detected samples table -->
       <div id="local-samples-section" style="display:none;">
-        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">偵測到的樣本（可修改 Sample ID 與 Condition）</div>
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;"
+             data-en="Detected samples (you may edit Sample ID and Condition)">偵測到的樣本（可修改 Sample ID 與 Condition）</div>
         <table class="srr-table">
           <thead>
             <tr>
               <th>#</th>
               <th>Sample ID</th>
-              <th>R1 檔案</th>
-              <th>R2 檔案</th>
+              <th data-en="R1 File">R1 檔案</th>
+              <th data-en="R2 File">R2 檔案</th>
               <th>Condition</th>
             </tr>
           </thead>
@@ -837,9 +852,9 @@
         <!-- Notification email -->
         <div style="margin:14px 0 0;">
           <label style="font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span style="font-weight:600;min-width:100px;">通知 Email</span>
+            <span style="font-weight:600;min-width:100px;" data-en="Notify Email">通知 Email</span>
             <input type="email" id="local-notify-email"
-                   placeholder="（選填）分析完成後寄送通知"
+                   placeholder="（選填）分析完成後寄送通知" data-ph-en="(Optional) Notify when analysis completes"
                    style="flex:1;min-width:220px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
           </label>
         </div>
@@ -851,7 +866,7 @@
           <input type="hidden" id="lf-normal-label" name="normal_label">
           <input type="hidden" id="lf-cores"        name="cores">
           <input type="hidden" id="lf-notify-email" name="notify_email">
-          <button type="button" onclick="submitLocal()" class="btn btn-geo">
+          <button type="button" onclick="submitLocal()" class="btn btn-geo" data-en="🚀 Queue Analysis">
             🚀 加入佇列
           </button>
         </form>
@@ -912,7 +927,8 @@
         <label for="min_tools" data-en="Minimum tools required:">最少需要幾個工具支持：</label>
         <input type="number" name="min_tools" id="min_tools"
                value="{{ config.get('consensus', {}).get('min_tools', 2) }}" min="1" max="2">
-        <span style="font-size:12px; color:var(--muted)">（2 = 兩工具都支持才算，1 = 任一工具即可）</span>
+        <span style="font-size:12px; color:var(--muted)"
+              data-en="(2 = both tools required, 1 = either tool suffices)">（2 = 兩工具都支持才算，1 = 任一工具即可）</span>
       </div>
     </div>
 
@@ -1129,24 +1145,32 @@
   let _localSamples = [];
 
   async function scanFastq() {
+    const isEn = localStorage.getItem('circrna_lang') === 'en';
     const path = document.getElementById('local-path').value.trim();
-    if (!path) { alert('請輸入目錄路徑'); return; }
+    if (!path) { alert(isEn ? 'Please enter a directory path' : '請輸入目錄路徑'); return; }
     const btn = document.getElementById('scan-btn');
     const status = document.getElementById('scan-status');
-    btn.textContent = '掃描中…'; btn.disabled = true;
+    btn.innerHTML = isEn ? '⏳ Scanning…' : '⏳ 掃描中…'; btn.disabled = true;
     status.textContent = '';
     try {
       const resp = await fetch('/api/scan_fastq?path=' + encodeURIComponent(path));
       const data = await resp.json();
       if (data.error) { status.textContent = '❌ ' + data.error; return; }
-      if (data.count === 0) { status.textContent = '⚠️ 未找到配對的 FASTQ 檔案，請確認檔名格式（_1/_2 或 _R1/_R2）'; return; }
-      status.textContent = `✅ 找到 ${data.count} 個樣本`;
+      if (data.count === 0) {
+        status.textContent = isEn
+          ? '⚠️ No paired FASTQ files found. Check filename format (_1/_2 or _R1/_R2).'
+          : '⚠️ 未找到配對的 FASTQ 檔案，請確認檔名格式（_1/_2 或 _R1/_R2）';
+        return;
+      }
+      status.textContent = isEn ? `✅ Found ${data.count} sample(s)` : `✅ 找到 ${data.count} 個樣本`;
       _localSamples = data.samples;
       renderLocalSamples(data.samples);
     } catch (e) {
-      status.textContent = '❌ 掃描失敗：' + e.message;
+      status.textContent = (isEn ? '❌ Scan failed: ' : '❌ 掃描失敗：') + e.message;
     } finally {
-      btn.textContent = '🔍 掃描'; btn.disabled = false;
+      const lbl = document.getElementById('scan-btn-label');
+      if (lbl) { lbl.innerHTML = isEn ? '🔍 Scan' : '🔍 掃描'; }
+      btn.disabled = false;
     }
   }
 
@@ -1267,6 +1291,8 @@
   // ── Language switcher ─────────────────────────────────────────────────────
   const _LANG_ZH = {};
   const _LANG_EN_CONTAINERS = {
+    'panel-manual-desc': `Enter SRR IDs and specify conditions, or upload an existing <code>library_info.csv</code>. Suitable for selecting specific samples from large datasets.`,
+    'panel-local-desc': `Specify a FASTQ directory on the server. The system auto-detects paired files, creates symlinks, and runs the pipeline. Supported formats: <code>*_1.fastq.gz / *_2.fastq.gz</code>, <code>*_R1.fastq.gz / *_R2.fastq.gz</code>, etc.`,
     'guide-body': `
       <p style="font-size:13px;color:var(--muted);margin:12px 0 14px">
         Verify these conditions before searching for a new dataset on GEO to maximize circRNA detection quality and DE significance.
@@ -1293,6 +1319,13 @@
       </table>`,
 
     'tut-workflow': `
+      <div style="text-align:center;margin:4px 0 20px;">
+        <img src="/static/pipeline_diagram.png?v=5" alt="circRNA Analysis Pipeline"
+             style="max-width:100%;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.08);cursor:zoom-in;"
+             onclick="document.getElementById('diagram-lightbox').style.display='flex';"
+             title="Click to zoom">
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px;">Click diagram to zoom</div>
+      </div>
       <div class="step-card">
         <div class="step-num">1</div>
         <div class="step-content">
@@ -1480,7 +1513,17 @@
       el.innerHTML = lang === 'en' ? _LANG_EN_CONTAINERS[id] : _LANG_ZH[id];
     });
 
-    // 3. Toggle button state
+    // 3. Placeholder translations (data-ph-en attribute)
+    document.querySelectorAll('[data-ph-en]').forEach(function(el) {
+      if (lang === 'en') {
+        if (!el.dataset.phZh) el.dataset.phZh = el.placeholder;
+        el.placeholder = el.dataset.phEn;
+      } else {
+        if (el.dataset.phZh) el.placeholder = el.dataset.phZh;
+      }
+    });
+
+    // 4. Toggle button state
     document.querySelectorAll('.lang-btn').forEach(function(b) {
       b.classList.toggle('active', b.dataset.lang === lang);
     });
@@ -1488,10 +1531,19 @@
     localStorage.setItem('circrna_lang', lang);
   }
 
-  // Restore saved language on load
+  // Restore language: URL param (?lang=en from magic link) takes priority over localStorage
   (function() {
-    var saved = localStorage.getItem('circrna_lang');
-    if (saved === 'en') switchLang('en');
+    var params = new URLSearchParams(window.location.search);
+    var urlLang = params.get('lang');
+    if (urlLang === 'en') {
+      switchLang('en');
+      params.delete('lang');
+      var qs = params.toString();
+      history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+    } else {
+      var saved = localStorage.getItem('circrna_lang');
+      if (saved === 'en') switchLang('en');
+    }
   })();
 
   // Tutorial toggle
@@ -1510,5 +1562,15 @@
     document.getElementById(panelId).classList.add('active');
   }
 </script>
+
+<!-- Pipeline diagram lightbox -->
+<div id="diagram-lightbox"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;
+            align-items:center;justify-content:center;cursor:zoom-out;"
+     onclick="this.style.display='none'">
+  <img src="/static/pipeline_diagram.png?v=5"
+       style="max-width:94vw;max-height:94vh;border-radius:10px;
+              box-shadow:0 12px 60px rgba(0,0,0,.6);pointer-events:none;">
+</div>
 </body>
 </html>

@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，⏳ 待執行）；GSE221107（攝護腺癌 tumor vs. normal，6 pairs，🔄 執行中）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，6 pairs，✅ 完成）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，🔄 執行中）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -445,6 +445,19 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 - `GET /download/<job_id>` — 強制下載 `{results_dir}/report.html`（`as_attachment=True`，檔名 `{GSE_ID}_report.html`）
 - `GET /report/<job_id>` — 在新分頁開啟報告（inline）
 - `GET /qc/<job_id>` — 在新分頁開啟 MultiQC 報告
+- `GET /login` — 登入頁（Email magic link）
+- `POST /login` — 送出 Email → 寄一次性連結；支援 `lang` 欄位（`zh`/`en`）→ 信件與錯誤訊息切換對應語言
+- `GET /auth/<token>` — 驗證 magic link token → 建立 session → 導向首頁
+- `GET /logout` — 清除 session → 導向登入頁
+- `GET /queue` — 工作佇列頁面（排隊中 / 執行中 / 已完成 / 失敗統計）
+
+**登入系統（Email Magic Link）**：
+- Token 有效期：30 分鐘（`TOKEN_MINUTES=30`），儲存在 `jobs/auth_tokens.db`
+- Session 有效期：7 天（`SESSION_DAYS=7`），存在 Flask session cookie
+- 允許登入的 Email 白名單：`ALLOWED_EMAILS`（環境變數 `PIPELINE_ALLOWED_EMAILS`，逗號分隔）
+- 支援 **Resend API**（`RESEND_API_KEY` 環境變數）→ fallback SMTP → fallback console 印出連結
+- `send_magic_link(email, link, lang="zh")` 根據 `lang` 切換中英文信件內容
+- 登入頁 lang switcher（右上角 中文 / EN）同步切換 UI 與信件語言；錯誤訊息透過 `data-en` 屬性雙語顯示
 
 **GEO 資料集選擇指引**（`templates/index.html` 獨立折疊區塊）：
 Web UI 主頁新增常駐卡片，使用者點標題行即可展開；內容包含：
@@ -874,6 +887,10 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | Biomarker 表格 `n_rbp` 顯示舊值（如 8）但 RBP Binding modal 顯示 50+ RBP | `predict_interactions.py` 用 `--gtf` 重跑後更新 `interactions.json`，但 `rank_biomarkers.py` 未重跑，`biomarker_candidates.tsv` 的 `n_rbp` 仍是舊值；`_bm_lookup` 從 TSV 讀取，不反映新的 `in_circ=True` 計數 | `generate_report.py` 的 `_bm_lookup` 建立後加入覆蓋步驟：`_is_in_circ_entry()` 函式（CircInteractome=True，ENCORI=`in_circ`）重新計算所有已存在 entry 的 `n_mirna`/`n_rbp`，用最新 `interactions.json` 覆蓋 TSV 的舊值；`mirna_n`/`rbp_n`（正規化值）也同步更新 |
 | Benchmark 互動式表格 `gene_name` 全部空白 | `de_quality_benchmark.py` 直接讀取 DE 結果 TSV（`de_results.tsv`、`nfcore_deseq2_results.tsv`、`nfcore_limma_results.tsv`），這些 TSV 沒有 `gene_name` 欄（來自 `isoform_groups.tsv`）；`_build_de_list` 的 `r.get("gene_name")` 取到 None → 顯示空白 | `de_quality_benchmark.py` 加入 `--isoforms <isoform_groups.tsv>` 參數；讀取後 `pd.map(iso_map)` join 到所有 DE dataframe |
 | Benchmark modal 表格無法排序 | `showDEList` 有獨立的舊版表格渲染邏輯（無 onclick），只有 `showJaccardList` 呼叫新版 `_renderCircList`（含 `sortCircList` onclick）；DE Quality modal 點擊欄位無反應 | `showDEList` 改為呼叫 `_renderCircList(data, hasType ? 'Type' : null)`，與 Jaccard modal 統一渲染；`_renderCircList` 表頭加 `onclick="sortCircList(this,N)"`；`sortCircList` 以 `data-val` 屬性做數值/字串比較排序，排序後重新編號 `#` 欄 |
+| Queue Worker `_run_queued_job` status 永遠卡在 `running` | `register_job()` 和 `log_path.parent.mkdir()` 在 `try` 區塊**外**；這兩行若拋出例外，外層 `_queue_worker` 的 `except` 只 `print()`，DB status 永遠不更新為 `failed`，卡在 `running` | 將 `register_job` 和 `mkdir` 移入 `try` 區塊內（已修正，2026-06-29） |
+| Queue Worker 遇殘留 lock 直接失敗 | `kill -9` Snakemake 後 `.snakemake/locks/` 殘留；Queue Worker 下次啟動同一專案時碰到 `LockException`，`proc.wait()` 返回 rc=1 → 設 `failed`，不會自動重試 | `_run_queued_job` 在啟動 Snakemake 前先執行 `snakemake --unlock` 預清殘留 lock（已修正，2026-06-29） |
+| `config/projects/{GSE}.yaml` 的 `sra_cache_dir` / `tmp_dir` 繼承舊專案路徑 | `web_ui.py _update_paths_for_project()` 只更新 `raw_dir`/`trimmed_dir`/`results_dir`；PRJNA553289.yaml 的 `sra_cache_dir` 指向 `GSE77509/sra_cache`，`tmp_dir` 指向 `GSE323364/sra_tmp` | 手動 `sed -i` 修正目標路徑；長期解法：`_update_paths_for_project()` 加入 `download.sra_cache_dir` / `download.tmp_dir` 替換（參見現有 known issue 的修正說明） |
+| 登入頁錯誤訊息只有中文 | `login.html` 的 `{% if error %}` 只顯示中文錯誤；切換 EN 語言後錯誤仍顯示中文 | `login()` route 新增 `error_en` 欄位；`login.html` 加 `data-en="{{ error_en }}"` → lang switcher 自動替換為英文版錯誤訊息（2026-06-28） |
 
 ---
 
@@ -1025,7 +1042,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-20 完成 GSE248612）
+## 目前執行進度（2026-06-29 完成 GSE221107，PRJNA553289 執行中）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1436,58 +1453,73 @@ conda run -n ciriquant snakemake \
 
 ---
 
-## 目前執行中：GSE221107（攝護腺癌，2026-06-27）
+### GSE221107（攝護腺癌，配對 tumor/normal）
 
-**進行中（2026-06-28 11:35，78/118 steps 66%）。** 報告位置：`~/GSE221107_results/report.html`（待完成）
+**✅ 完成（2026-06-29 04:14）。** 報告位置：`~/GSE221107_results/report.html`（server，13 MB）
 
-攝護腺癌手術切除組織，cancer tissue vs. adjacent normal，20 對配對，從中選深度最高的 **6 對**（Pair 8/11/14/16/18/20）。
+攝護腺癌手術切除組織，cancer tissue vs. adjacent normal，20 對配對，從中選深度最高的 **6 對**（Pair 8/11/14/16/18/20）。118/118 steps 完成，Email 通知已寄出。
 
 | 步驟 | 狀態 |
 |------|------|
-| 下載 SRA | ✅ 12/12 完成（4 個 HTTPS prefetch + 8 個 aria2c S3） |
+| 下載 SRA | ✅ 12/12 完成 |
 | fastp QC/trim | ✅ 12/12 完成 |
-| CIRIquant | 🔄 7/12 完成（SRR22757439 09:27 / SRR22757430 13:32 / SRR22757434 19:10 / SRR22757416 23:58 Jun27；SRR22757436 03:08 / SRR22757422 05:14 / SRR22757410 09:02 Jun28）；SRR22757414 BWA執行中（~12:58 完成）|
-| STAR paired+mate1+mate2 | 🔄 25/36 完成 |
-| DCC | 🔄 部分完成（SRR22757416/419/434/442 已完成）|
-| consensus_filter | 🔄 4/12 完成 |
-| merge_counts / DE / report | ⏳ 待執行 |
-
-**預估完成**：12 個 CIRIquant 全部完成 **~Jun 29 00:30**；DE + report **~Jun 29 03:00**
-
-**各 CIRIquant 實測耗時**（--cores 12，NFS）：
-- 平均 ~2.75–3.5h/sample（HISAT2 ~32 min + BWA ~80 min + CIRI2 ~30 min + de novo ~30 min + 量化 ~15 min）
-- 夜間 I/O 較快：SRR22757422 僅 2h 4min（03:56–05:14）
-- 白天較慢：SRR22757410 2h 49min（06:13–09:02）
+| CIRIquant | ✅ 12/12 完成（平均 ~2.75–3.5h/sample） |
+| STAR paired+mate1+mate2 | ✅ 36/36 完成 |
+| DCC | ✅ 12/12 完成 |
+| consensus_filter / merge_counts | ✅ 完成 |
+| DE analysis / report | ✅ 完成（report.html 13 MB，Jun 29 04:14） |
 
 **設定**：
 - case/control label：`tumor` / `normal`
-- SRR 清單（6T + 6N，選 Pair 8/11/14/16/18/20）：
-  - Pair 14: PC14=SRR22757436(tumor) + PN14=SRR22757416(normal)
-  - Pair 8: PC8=SRR22757442(tumor) + PN8=SRR22757422(normal)
-  - Pair 18: PC18=SRR22757432(tumor) + PN18=SRR22757412(normal)
-  - Pair 20: PC20=SRR22757430(tumor) + PN20=SRR22757410(normal)
-  - Pair 11: PC11=SRR22757439(tumor) + PN11=SRR22757419(normal)
-  - Pair 16: PC16=SRR22757434(tumor) + PN16=SRR22757414(normal)
-- genome：hg19（原論文用 GRCh38，raw FASTQ 可重新比對到 hg19）
-- Condition CSV：`/mnt/c/Users/User/Desktop/GSE221107_condition.csv`（含 `patient_id` 欄，啟用配對設計）
+- SRR 清單（6T + 6N，選 Pair 8/11/14/16/18/20）：PC14/PN14/PC8/PN8/PC18/PN18/PC20/PN20/PC11/PN11/PC16/PN16（SRR22757436/416/442/422/432/412/430/410/439/419/434/414）
+- genome：hg19；配對設計（含 `patient_id` 欄）
 - GEO：GSE221107（SubSeries of GSE221109）/ SRA：PRJNA912767
-- 論文：Signal Transduction and Targeted Therapy 2025（enhancer RNA + ferroptosis, Tongji Hospital）
 - Library：Ribo-off rRNA Depletion Kit + KC Stranded Library（stranded PE150）
-- 平台：Illumina NovaSeq 6000，~50–60M spots/sample
 
 **Server config**（`config/projects/GSE221107.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE221107/raw`
 - `results_dir: /home3/choukaihsuan/GSE221107_results`
 
-**Snakemake 執行指令**（cores 12，log）：
+---
+
+## 目前執行中：PRJNA553289（SCLC 小細胞肺癌，2026-06-29）
+
+**執行中（2026-06-29 12:34 手動啟動）。** 報告位置：`~/PRJNA553289_results/report.html`（待完成）
+
+SCLC 小細胞肺癌，tumor vs. adjacent normal，6 pairs（12 samples，SRR9675242–SRR9675253）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | 🔄 4/12 下載中（S3 aria2c，~1.9 MB/s total，ETA ~3.5h/批） |
+| fastp QC/trim | ⏳ 待執行 |
+| CIRIquant / STAR / DCC | ⏳ 待執行 |
+| consensus_filter / DE / report | ⏳ 待執行 |
+
+**特殊情況：Queue Worker 繞過問題**
+- Queue Job（PRJNA553289-WIZA）送出於 2026-06-28 17:14；本應由 Queue 自動啟動
+- 04:15 Queue Worker 成功啟動 Snakemake，但遭遇殘留 lock → LockException → 立即退出
+- `_run_queued_job` Bug（`register_job` 在 `try` 外）→ 例外未被捕捉 → DB status 卡在 `running`
+- 2026-06-29 12:34 手動以 nohup 繞過 Queue 啟動
+- Queue DB 狀態手動更新為 `running`；完成後需手動更新為 `completed`
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（6T + 6N）：SRR9675248–9675253（Tumor）；SRR9675242–9675247（Normal）
+- genome：hg19；配對設計（含 `patient_id` 欄）
+- Condition CSV：`/mnt/c/Users/User/Desktop/PRJNA553289_condition.csv`
+
+**Server config**（`config/projects/PRJNA553289.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/PRJNA553289/raw`
+- `sra_cache_dir: /home3/choukaihsuan/PRJNA553289/sra_cache`（修正前錯指 GSE77509）
+- `results_dir: /home3/choukaihsuan/PRJNA553289_results`
+
+**手動啟動指令**：
 ```bash
-conda run -n ciriquant snakemake \
-    --snakefile workflow/Snakefile \
-    --configfile config/projects/GSE221107.yaml \
-    --cores 12 \
-    --keep-going \
-    --rerun-incomplete \
-    >> logs/pipeline_GSE221107-9R6M.log 2>&1
+cd ~/circRNA_agent && nohup /home/choukaihsuan/miniconda3/envs/ciriquant/bin/snakemake \
+  --snakefile workflow/Snakefile \
+  --configfile config/projects/PRJNA553289.yaml \
+  --cores 12 --keep-going --rerun-incomplete \
+  > logs/pipeline_PRJNA553289_s3.log 2>&1 &
 ```
 
 ---

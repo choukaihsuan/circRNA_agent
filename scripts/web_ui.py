@@ -244,10 +244,19 @@ def auth_log(email: str, action: str, ip: str = "") -> None:
         )
 
 
-def send_magic_link(to_email: str, link: str) -> bool:
+def send_magic_link(to_email: str, link: str, lang: str = "zh") -> bool:
     """Send magic link. Try Resend → SMTP → console (dev fallback)."""
-    subject = "circRNA Pipeline 登入連結"
-    html_body = f"""
+    if lang == "en":
+        subject = "circRNA Pipeline – Login Link"
+        html_body = f"""
+<p>Hello,</p>
+<p>Click the link below to sign in to circRNA Pipeline (valid for {TOKEN_MINUTES} minutes):</p>
+<p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
+<p style="color:#666;font-size:12px;">If you did not request this, please ignore this email.</p>
+"""
+    else:
+        subject = "circRNA Pipeline 登入連結"
+        html_body = f"""
 <p>您好，</p>
 <p>請點擊以下連結登入 circRNA Pipeline UI（連結 {TOKEN_MINUTES} 分鐘內有效）：</p>
 <p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
@@ -353,35 +362,46 @@ def login():
     sent = request.args.get("sent")
     error = ""
     sent_email = ""
+    lang = "zh"
+    error_en = ""
     if request.method == "POST":
+        lang = request.form.get("lang", "zh")
         email = request.form.get("email", "").strip().lower()
         if not email or "@" not in email:
-            error = "請輸入有效的 Email 地址。"
+            error    = "請輸入有效的 Email 地址。"
+            error_en = "Please enter a valid email address."
         else:
             token = auth_create_token(email)
             base = request.url_root.rstrip("/")
-            link = f"{base}/auth/{token}"
-            send_magic_link(email, link)
+            link = f"{base}/auth/{token}" + ("?lang=en" if lang == "en" else "")
+            send_magic_link(email, link, lang=lang)
             auth_log(email, "request_magic_link", request.remote_addr)
             sent_email = email
             sent = "1"
-    return render_template("login.html", sent=sent, sent_email=sent_email, error=error,
-                           TOKEN_MINUTES=TOKEN_MINUTES)
+    return render_template("login.html", sent=sent, sent_email=sent_email,
+                           error=error, error_en=error_en,
+                           TOKEN_MINUTES=TOKEN_MINUTES, lang=lang)
 
 
 @app.route("/auth/<token>")
 def auth_magic_link(token: str):
+    lang = request.args.get("lang", "zh")
     email = auth_validate_token(token)
     if not email:
         return render_template("login.html", sent=None, sent_email="",
                                error="連結已失效或已使用，請重新登入。",
-                               TOKEN_MINUTES=TOKEN_MINUTES)
+                               error_en="Link has expired or already been used. Please request a new one.",
+                               TOKEN_MINUTES=TOKEN_MINUTES, lang=lang)
     session["email"] = email
     session["session_expires"] = (
         datetime.now() + timedelta(days=SESSION_DAYS)
     ).strftime("%Y-%m-%d %H:%M:%S")
     auth_log(email, "login_success", request.remote_addr)
-    return redirect(request.args.get("next") or url_for("index"))
+    next_url = request.args.get("next") or url_for("index")
+    if lang == "en":
+        sep = "&" if "?" in next_url else "?"
+        next_url = f"{next_url}{sep}lang=en"
+    return redirect(next_url)
 
 
 @app.route("/logout")
@@ -419,9 +439,16 @@ def _run_queued_job(job: dict) -> None:
         return
 
     queue_set_status(job_id, "running")
-    register_job(job_id, gse_id, log_path, cores)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        register_job(job_id, gse_id, log_path, cores)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # 預清殘留 lock（kill -9 後可能遺留）
+        unlock_cmd = cmd[:1] + ["--snakefile", "workflow/Snakefile",
+                                 "--configfile", next((cmd[i+1] for i, x in enumerate(cmd)
+                                                       if x == "--configfile"), "config.yaml"),
+                                 "--unlock"]
+        subprocess.run(unlock_cmd, cwd=str(BASE_DIR), env=_snake_env(),
+                       capture_output=True)
         with open(log_path, "w") as lf:
             proc = subprocess.Popen(
                 cmd,

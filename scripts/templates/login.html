@@ -14,7 +14,7 @@
     .card {
       background:white; border:1px solid var(--border);
       border-radius:var(--radius); padding:40px 36px; width:100%; max-width:400px;
-      box-shadow:0 4px 24px rgba(0,0,0,.07);
+      box-shadow:0 4px 24px rgba(0,0,0,.07); position:relative;
     }
     .logo { font-size:28px; margin-bottom:6px; text-align:center; }
     h1 { font-size:18px; font-weight:700; text-align:center; margin-bottom:4px; }
@@ -50,41 +50,93 @@
     /* Error */
     .err { background:#fee2e2; border:1px solid #fca5a5; border-radius:8px;
            padding:10px 14px; font-size:13px; color:#991b1b; margin-bottom:14px; }
+
+    /* Lang switcher */
+    .lang-switcher {
+      position:absolute; top:14px; right:16px;
+      display:flex; gap:4px;
+    }
+    .lang-btn {
+      padding:3px 10px; border-radius:6px; font-size:12px; font-weight:600;
+      border:1px solid var(--border); background:white; cursor:pointer; color:#64748b;
+    }
+    .lang-btn.active { background:var(--primary); color:white; border-color:var(--primary); }
   </style>
 </head>
 <body>
 <div class="card">
+
+  <!-- Language switcher -->
+  <div class="lang-switcher">
+    <button class="lang-btn active" data-lang="zh" onclick="switchLang('zh')">中文</button>
+    <button class="lang-btn"        data-lang="en" onclick="switchLang('en')">EN</button>
+  </div>
+
   <div class="logo">🧬</div>
   <h1>circRNA Pipeline</h1>
-  <div class="sub">輸入 Email，我們將寄送一次性登入連結給您</div>
+  <div class="sub"
+       data-en="Enter your email — we'll send you a one-time login link">
+    輸入 Email，我們將寄送一次性登入連結給您
+  </div>
 
   {% if sent %}
   <!-- Sent state -->
   <div class="sent-box">
     <div class="sent-icon">📬</div>
-    <div class="sent-title">連結已寄出！</div>
+    <div class="sent-title" data-en="Link Sent!">連結已寄出！</div>
     <div class="sent-email">{{ sent_email }}</div>
-    <div class="sent-note">
+    <div class="sent-note" data-en="Please check your inbox and click the login link (valid for {{ TOKEN_MINUTES }} minutes). If not received, check your spam folder or try again.">
       請至您的信箱點擊登入連結（{{ TOKEN_MINUTES }} 分鐘內有效）。<br>
       若未收到，請確認垃圾信件夾，或重新嘗試。
     </div>
   </div>
-  <a class="retry-link" href="/login">← 重新輸入 Email</a>
+  <a class="retry-link" href="/login"
+     data-en="← Try a different email">← 重新輸入 Email</a>
 
   {% else %}
   <!-- Login form -->
   {% if error %}
-  <div class="err">{{ error }}</div>
+  <div class="err" data-en="{{ error_en or error }}">{{ error }}</div>
   {% endif %}
 
   <form method="POST" action="/login">
-    <label for="email">電子郵件</label>
+    <input type="hidden" name="lang" id="lang-field" value="zh">
+    <label for="email" data-en="Email address">電子郵件</label>
     <input type="email" id="email" name="email"
            placeholder="you@example.com" required autofocus
            value="{{ request.form.get('email', '') }}">
-    <button class="btn" type="submit">✉️ 寄送登入連結</button>
+    <button class="btn" type="submit"
+            data-en="✉️ Send Login Link">✉️ 寄送登入連結</button>
   </form>
   {% endif %}
 </div>
+
+<script>
+  function switchLang(lang) {
+    document.querySelectorAll('[data-en]').forEach(function(el) {
+      if (lang === 'en') {
+        if (!el.dataset.zh) el.dataset.zh = el.innerHTML;
+        el.innerHTML = el.dataset.en;
+      } else {
+        if (el.dataset.zh !== undefined) el.innerHTML = el.dataset.zh;
+      }
+    });
+    document.querySelectorAll('.lang-btn').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.lang === lang);
+    });
+    // Sync hidden form field so server knows which language to use for email
+    var lf = document.getElementById('lang-field');
+    if (lf) lf.value = lang;
+    localStorage.setItem('circrna_lang', lang);
+  }
+
+  // Restore language: server echo takes priority (ensures sent-state matches form submission language)
+  (function() {
+    var serverLang = "{{ lang }}";
+    var savedLang  = localStorage.getItem('circrna_lang');
+    var lang = (serverLang === 'en' || savedLang === 'en') ? 'en' : 'zh';
+    if (lang === 'en') switchLang('en');
+  })();
+</script>
 </body>
 </html>
