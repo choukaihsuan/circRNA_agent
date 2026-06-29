@@ -2566,14 +2566,11 @@ function _drawCircleRNA(circId, container) {{
           // overlap letter badge removed — per-arc site labels (_arc_lbl) used instead
           if(seg.label)svg+=`</g>`;
         }}
-        // hidden per-arc letter badge — placed in center hole at r=65, with dashed line to arc
+        // hidden per-arc letter badge — placed on exon ring (midR between RIN and ROUT)
         if(Math.abs(a.a2-a.a1)*(RBP_IN+RBP_OUT)/2>8){{
-          const midA=(a.a1+a.a2)/2;
-          const bdgR=65; // badge in center hole (clear of molecule badges at 70-82)
-          const [lx,ly]=polar(bdgR,midA);
-          const [ax,ay]=polar((RBP_IN+RBP_OUT)/2,midA); // arc midpoint for connector
+          const midA=(a.a1+a.a2)/2,midR=(RIN+ROUT)/2;
+          const [lx,ly]=polar(midR,midA);
           svg+=`<g class="_arc_lbl" data-arc-type="rbp" data-arc-num="${{e.num}}" style="visibility:hidden">`;
-          svg+=`<line x1="${{lx.toFixed(1)}}" y1="${{ly.toFixed(1)}}" x2="${{ax.toFixed(1)}}" y2="${{ay.toFixed(1)}}" stroke="${{e.color}}" stroke-width="1" stroke-dasharray="2,2" opacity="0.7"/>`;
           svg+=`<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="6" fill="${{e.color}}" opacity="0.93" stroke="white" stroke-width="1.2"/>`;
           svg+=`<text x="${{lx.toFixed(1)}}" y="${{ly.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="white" font-weight="bold">${{arcLetter}}</text>`;
           svg+=`</g>`;
