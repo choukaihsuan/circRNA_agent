@@ -891,6 +891,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | Queue Worker 遇殘留 lock 直接失敗 | `kill -9` Snakemake 後 `.snakemake/locks/` 殘留；Queue Worker 下次啟動同一專案時碰到 `LockException`，`proc.wait()` 返回 rc=1 → 設 `failed`，不會自動重試 | `_run_queued_job` 在啟動 Snakemake 前先執行 `snakemake --unlock` 預清殘留 lock（已修正，2026-06-29） |
 | `config/projects/{GSE}.yaml` 的 `sra_cache_dir` / `tmp_dir` 繼承舊專案路徑 | `web_ui.py _update_paths_for_project()` 只更新 `raw_dir`/`trimmed_dir`/`results_dir`；PRJNA553289.yaml 的 `sra_cache_dir` 指向 `GSE77509/sra_cache`，`tmp_dir` 指向 `GSE323364/sra_tmp` | 手動 `sed -i` 修正目標路徑；長期解法：`_update_paths_for_project()` 加入 `download.sra_cache_dir` / `download.tmp_dir` 替換（參見現有 known issue 的修正說明） |
 | 登入頁錯誤訊息只有中文 | `login.html` 的 `{% if error %}` 只顯示中文錯誤；切換 EN 語言後錯誤仍顯示中文 | `login()` route 新增 `error_en` 欄位；`login.html` 加 `data-en="{{ error_en }}"` → lang switcher 自動替換為英文版錯誤訊息（2026-06-28） |
+| Circular Structure overlap annotation 字母重疊 | Solo mode（單分子可見）時 SVG 中出現兩組字母：per-arc site label（a/b/c）＋ overlap annotation letter（i/v，位於 midR=48 center hole 或 midR=164.5 miRNA ring）；使用者混淆 | 移除兩組 overlap annotation 的 `<circle>` + `<text>` badge（保留 boundary dash line）；只保留 `_arc_lbl` per-arc site labels（`generate_report.py`，2026-06-29） |
+| RBP site badge 不在 arc 上 | RBP arc（radius 90–113）在 exon ring 內部視覺上細不明顯；badge 放在 `(RBP_IN+RBP_OUT)/2=101.5` 看起來浮空 | Badge 改放在 exon ring 中心（`midR=(RIN+ROUT)/2=131.5`），直接覆蓋在 exon arc 上，角度指示 binding site 位置；進入 solo mode 時 arc 加 white stroke 1.5px 高亮（`generate_report.py`，2026-06-29） |
 
 ---
 
@@ -1031,6 +1033,17 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 - **不做 angular de-overlap**：badge 角度永遠等於弧段中心角，只在徑向上交錯
 - 虛線 connector（`stroke-dasharray="2,2"`）放在 `<g id="_mib_N">` 內，toggle 時隨 badge 一起隱藏
 - 虛線只在 badge 在外圈（`MI_R1`）時才畫，距離弧段緊貼時不畫
+
+**Solo mode（單分子可見）— Per-arc site labels**：
+
+當 miRNA 或 RBP 中**只有一個分子可見**時，右側面板自動出現（`_updateSitePanel`），列出該分子各 binding site（字母 a/b/c...）可個別切換顯示/隱藏（`_toggleSite`）：
+
+- **`_arc_lbl` badge 放置邏輯**：
+  - miRNA site badge：`midR=(MI_IN+MI_OUT)/2=164.5`（放在 miRNA ring 中心，直接在 arc 上）
+  - RBP site badge：`midR=(RIN+ROUT)/2=131.5`（放在 exon ring 中心，覆蓋在 exon arc 上，角度指示 binding site 位置）
+- **Arc highlight**：`_showSitePanel` 呼叫時，對選中分子的所有 arc path 加 `stroke=white, strokeWidth=1.5px, opacity=1`，使 arc 輪廓清晰（`_hideSitePanel` 呼叫時移除）
+- **Overlap annotation badge 移除**：`arc(MI_IN,MI_OUT,...)` 和 `arc(RBP_IN,RBP_OUT,...)` 的重疊字母 badge（`<circle>+<text>` at midR=48 / midR=164.5）已移除，只保留 boundary dash line；唯一字母來源是 `_arc_lbl` per-arc site labels
+- **`window._circ_miData` / `window._circ_rbpData`**：每次 `_drawCircleRNA` 重置，在各自 `if(totalLen>0)` block 結尾填入 `{name, color, arcs:[{letter, id, pos}]}`；`const` block-scope 限制需確保 `window._circ_miData=_miArcData` 在第一個 if block 結尾（不在第二個 RBP block 內）
 
 **DE table 資料來源合併**：
 - `de_results.tsv`（主表）
@@ -1466,8 +1479,20 @@ conda run -n ciriquant snakemake \
 | CIRIquant | ✅ 12/12 完成（平均 ~2.75–3.5h/sample） |
 | STAR paired+mate1+mate2 | ✅ 36/36 完成 |
 | DCC | ✅ 12/12 完成 |
-| consensus_filter / merge_counts | ✅ 完成 |
-| DE analysis / report | ✅ 完成（report.html 13 MB，Jun 29 04:14） |
+| consensus_filter / merge_counts | ✅ 完成（22,577 circRNAs） |
+| DE analysis | ✅ 完成（edgeR 0†/ DESeq2 16 / limma 1 significant） |
+| predict_interactions | ✅ 完成（interactions.json 7.6MB） |
+| isoform_switching | ✅ 完成（31 events，within-gene FDR < 0.1） |
+| rank_biomarkers | ✅ 完成（16 candidates） |
+| report | ✅ 完成（13 MB，Jun 29 04:14） |
+
+**主要數值結果**：
+- 偵測：22,577 consensus circRNAs
+- DE（edgeR_ciriquant）：**0 significant**†；DE（DESeq2）：**16 significant**（9 up / 7 down）；DE（limma-voom）：**1 significant**
+- Isoform switching：31 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
+- Biomarker candidates：16 個
+
+†`de_results_edgeR_ciriquant.tsv` 只含 header（0 rows）；`de_results.tsv` 為 DESeq2 格式（analysis.R fallback）。可能原因：FSJ count matrix 全零導致 edgeR GLM 無法收斂。報告主方法顯示 DESeq2 結果。
 
 **設定**：
 - case/control label：`tumor` / `normal`
