@@ -2493,6 +2493,7 @@ function _drawCircleRNA(circId, container) {{
       svg+=`<text x="${{nx.toFixed(1)}}" y="${{ny.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="7.5" fill="white" font-weight="bold">${{b.e.num}}</text>`;
       svg+=`</g>`;
     }});
+    window._circ_miData=_miArcData;  // store before block closes
   }}
 
   // ── RBP arcs (inner ring) — draw arcs first, then de-overlapped badges ──
@@ -2612,9 +2613,7 @@ function _drawCircleRNA(circId, container) {{
       svg+=`<text x="${{nx.toFixed(1)}}" y="${{ny.toFixed(1)}}" text-anchor="middle" dominant-baseline="central" font-size="7.5" fill="white" font-weight="bold">${{b.e.num}}</text>`;
       svg+=`</g>`;
     }});
-    // Store arc data for dynamic right-panel site toggle
-    window._circ_miData=_miArcData;
-    window._circ_rbpData=_rbpArcData;
+    window._circ_rbpData=_rbpArcData;  // store before block closes
   }}
 
   // ── Exon labels drawn last (on top of all arc layers) ──
