@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，6 pairs，✅ 完成）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，🔄 執行中）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，🔄 執行中）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -893,6 +893,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | 登入頁錯誤訊息只有中文 | `login.html` 的 `{% if error %}` 只顯示中文錯誤；切換 EN 語言後錯誤仍顯示中文 | `login()` route 新增 `error_en` 欄位；`login.html` 加 `data-en="{{ error_en }}"` → lang switcher 自動替換為英文版錯誤訊息（2026-06-28） |
 | Circular Structure overlap annotation 字母重疊 | Solo mode（單分子可見）時 SVG 中出現兩組字母：per-arc site label（a/b/c）＋ overlap annotation letter（i/v，位於 midR=48 center hole 或 midR=164.5 miRNA ring）；使用者混淆 | 移除兩組 overlap annotation 的 `<circle>` + `<text>` badge（保留 boundary dash line）；只保留 `_arc_lbl` per-arc site labels（`generate_report.py`，2026-06-29） |
 | RBP site badge 不在 arc 上 | RBP arc（radius 90–113）在 exon ring 內部視覺上細不明顯；badge 放在 `(RBP_IN+RBP_OUT)/2=101.5` 看起來浮空 | Badge 改放在 exon ring 中心（`midR=(RIN+ROUT)/2=131.5`），直接覆蓋在 exon arc 上，角度指示 binding site 位置；進入 solo mode 時 arc 加 white stroke 1.5px 高亮（`generate_report.py`，2026-06-29） |
+| isoform_switching mock 腳本的 params key 錯誤（`isoform_fdr_cutoff` vs `fdr`）| `isoform_switching.R` 讀取 `snakemake@params[["fdr"]]`（Snakemake rule 傳的 key），但手動 mock 腳本傳 `isoform_fdr_cutoff = 0.1`；`snakemake@params[["fdr"]]` 回傳 NULL → `as.numeric(NULL)` = `numeric(0)` → `res$padj_within_gene < numeric(0)` = `logical(0)` → `res$is_switching <- logical(0)` 失敗（replacement has 0 rows, data has N rows）| mock 腳本 params 改為 `fdr = 0.1`；實際 Snakemake rule 不受影響（key 正確）|
+| GSE221107 RNA 降解樣本（Pair 8/11）導致 edgeR 失敗 | Pair 8（SRR22757442：6 BSJ）和 Pair 11（SRR22757419：28 BSJ）insert size peak ≈ 40–44 bp（正常 268–269 bp）→ adapter dimer，RNA 在 library prep 前已降解；加入 TMM normalization 導致 NaN/Inf，edgeR GLM missing value 失敗 | 排除 Pair 8 和 Pair 11，保留 Pair 14/16/18/20（4 pairs，8 samples）；Python 子集 count_matrix.tsv 和 fsj_count_matrix.tsv，更新 sample_groups.csv，重跑 DE/isoform_switching/predict_interactions/rank_biomarkers/report |
 
 ---
 
@@ -1468,9 +1470,11 @@ conda run -n ciriquant snakemake \
 
 ### GSE221107（攝護腺癌，配對 tumor/normal）
 
-**✅ 完成（2026-06-29 04:14）。** 報告位置：`~/GSE221107_results/report.html`（server，13 MB）
+**✅ 完成（重跑版：4 pairs，2026-06-29）。** 報告位置：`~/GSE221107_results/report.html`（server）
 
-攝護腺癌手術切除組織，cancer tissue vs. adjacent normal，20 對配對，從中選深度最高的 **6 對**（Pair 8/11/14/16/18/20）。118/118 steps 完成，Email 通知已寄出。
+攝護腺癌手術切除組織，cancer tissue vs. adjacent normal，20 對配對，從中選深度最高的 6 對（Pair 8/11/14/16/18/20）偵測完畢。分析時發現 **Pair 8（SRR22757442）和 Pair 11（SRR22757419）** 的 RNA 降解（fastp insert size peak 40–44 bp vs. 正常 268–269 bp，adapter dimer 特徵）→ 排除，最終使用 **4 pairs（Pair 14/16/18/20，8 samples）** 重跑 DE / isoform switching / predict_interactions / report。
+
+**降解樣本辨識標誌**：fastp JSON 中 `insert_size_histogram` 在 ~40–44bp 有高峰（adapter dimer），正常樣本高峰在 268–269bp；此樣本 BSJ counts 極少（SRR22757419：28 BSJ，SRR22757442：6 BSJ），參與 edgeR TMM normalization 時導致 NaN/Inf 使 GLM 失敗。
 
 | 步驟 | 狀態 |
 |------|------|
@@ -1479,25 +1483,45 @@ conda run -n ciriquant snakemake \
 | CIRIquant | ✅ 12/12 完成（平均 ~2.75–3.5h/sample） |
 | STAR paired+mate1+mate2 | ✅ 36/36 完成 |
 | DCC | ✅ 12/12 完成 |
-| consensus_filter / merge_counts | ✅ 完成（22,577 circRNAs） |
-| DE analysis | ✅ 完成（edgeR 0†/ DESeq2 16 / limma 1 significant） |
-| predict_interactions | ✅ 完成（interactions.json 7.6MB） |
-| isoform_switching | ✅ 完成（31 events，within-gene FDR < 0.1） |
-| rank_biomarkers | ✅ 完成（16 candidates） |
-| report | ✅ 完成（13 MB，Jun 29 04:14） |
+| consensus_filter / merge_counts | ✅ 完成（22,577 circRNAs；子集 8 樣本）|
+| DE analysis（4 pairs）| ✅ 完成（edgeR 57 / DESeq2 58 / limma 627 significant）|
+| isoform_switching（4 pairs）| ✅ 完成（37 events，within-gene FDR < 0.1）|
+| predict_interactions | 🔄 執行中（union mode，~200 circRNAs）|
+| rank_biomarkers | ⏳ 待執行（等 interactions.json）|
+| report | ⏳ 待執行（等 rank_biomarkers）|
 
-**主要數值結果**：
-- 偵測：22,577 consensus circRNAs
-- DE（edgeR_ciriquant）：**0 significant**†；DE（DESeq2）：**16 significant**（9 up / 7 down）；DE（limma-voom）：**1 significant**
-- Isoform switching：31 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
-- Biomarker candidates：16 個
+**主要數值結果（4 pairs 重跑）**：
+- 偵測：22,577 consensus circRNAs；count_matrix.tsv 子集為 8 samples（SRR22757410/412/414/416/430/432/434/436）
+- DE（edgeR_ciriquant）：**57 significant**（nominal p < 0.05，|log2FC| > 1）；全為 Type_I（配對設計 `~patient+condition`）
+- DE（DESeq2）：**58 significant**；DE（limma-voom）：**627 significant**
+- Isoform switching：37 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
+- Biomarker candidates：待 predict_interactions 完成後確定
 
-†`de_results_edgeR_ciriquant.tsv` 只含 header（0 rows）；`de_results.tsv` 為 DESeq2 格式（analysis.R fallback）。可能原因：FSJ count matrix 全零導致 edgeR GLM 無法收斂。報告主方法顯示 DESeq2 結果。
+**排除原因詳細說明**：
+- Pair 8（PC8=SRR22757442：6 BSJ）+ Pair 11（PN11=SRR22757419：28 BSJ）：fastp insert_size_peak ≈ 40–44 bp（正常 ≈ 268–269 bp）→ library prep 前 RNA 已降解，adapter dimer 佔主體，無法產生有效的 BSJ spanning reads
+- Pair 8 的 normal（PN8=SRR22757422）在原始 11 樣本 count_matrix 中就已缺失（共識過濾後 0 circRNAs，merge_counts 時自動排除）
+- Pair 11 tumor（PC11=SRR22757439）雖 BSJ 數量尚可，但 Pair 11 normal（SRR22757419）降解 → 整個 Pair 11 無法配對分析
+
+**count_matrix 子集方式**（繞過重跑 CIRIquant）：
+```bash
+# 備份原始 11 樣本矩陣
+cp count_matrix.tsv count_matrix.tsv.11samples
+cp fsj_count_matrix.tsv fsj_count_matrix.tsv.11samples
+# Python 切欄（保留 P14/16/18/20 的 8 samples）
+python3 -c "
+import pandas as pd
+good=['SRR22757410','SRR22757412','SRR22757414','SRR22757416',
+      'SRR22757430','SRR22757432','SRR22757434','SRR22757436']
+for fn in ['count_matrix.tsv','fsj_count_matrix.tsv']:
+    df=pd.read_csv(fn,sep='\t',index_col=0)
+    df[good].to_csv(fn,sep='\t')
+"
+```
 
 **設定**：
 - case/control label：`tumor` / `normal`
-- SRR 清單（6T + 6N，選 Pair 8/11/14/16/18/20）：PC14/PN14/PC8/PN8/PC18/PN18/PC20/PN20/PC11/PN11/PC16/PN16（SRR22757436/416/442/422/432/412/430/410/439/419/434/414）
-- genome：hg19；配對設計（含 `patient_id` 欄）
+- SRR 清單（4T + 4N，Pair 14/16/18/20）：PC14=SRR22757436（T），PN14=SRR22757416（N），PC16=SRR22757434（T），PN16=SRR22757414（N），PC18=SRR22757432（T），PN18=SRR22757412（N），PC20=SRR22757430（T），PN20=SRR22757410（N）
+- genome：hg19；配對設計（`patient_id` 欄：P14/P16/P18/P20）
 - GEO：GSE221107（SubSeries of GSE221109）/ SRA：PRJNA912767
 - Library：Ribo-off rRNA Depletion Kit + KC Stranded Library（stranded PE150）
 
