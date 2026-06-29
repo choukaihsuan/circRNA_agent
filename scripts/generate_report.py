@@ -3075,11 +3075,21 @@ function _showSitePanel(wrap,type,num){{
   }});
   h+='</div>';
   panel.innerHTML=h;panel.style.display='';
+  // Highlight arcs so the letter badge is clearly on the arc
+  const aGrp=wrap.querySelector(`#_${{type}}arc_${{num}}`);
+  if(aGrp)aGrp.querySelectorAll('path').forEach(p=>{{
+    p.style.stroke=data.color;p.style.strokeWidth='2.5';p.style.strokeLinejoin='round';p.style.opacity='1';
+  }});
 }}
 function _hideSitePanel(wrap){{
   const panel=document.getElementById('circ-site-panel');
   if(panel){{panel.style.display='none';panel.innerHTML='';}}
-  if(wrap)wrap.querySelectorAll('._arc_lbl').forEach(g=>g.style.visibility='hidden');
+  if(wrap){{
+    wrap.querySelectorAll('._arc_lbl').forEach(g=>g.style.visibility='hidden');
+    wrap.querySelectorAll('._miarc path,._rbparc path').forEach(p=>{{
+      p.style.stroke='';p.style.strokeWidth='';p.style.opacity='';
+    }});
+  }}
 }}
 function _toggleSite(arcId,row){{
   const g=document.getElementById(arcId);if(!g)return;
