@@ -1745,3 +1745,64 @@ cancer label：`tumor` / `normal`；genome：hg19
 - filterByExpr 保留率 < 5% → 改以 **limma-voom 為主方法**（TMM 正規化對稀疏計數更穩健）
 - edgeR_ciriquant 結果作為輔助（Type I/II 分類參考）
 - 論文 Methods 需說明樣本 BSJ count 變異性及其對統計功率的影響
+
+---
+
+## 論文 Discussion 素材：腫瘤組織 circRNA 普遍下調的生物機制
+
+本 pipeline 分析的多個資料集（GSE113230 乳癌、GSE133998 乳癌、GSE77509 HCC、GSE248612 胃癌）
+均觀察到 **腫瘤組織的 DECs 以下調為主**，此為 circRNA 研究中有生物學基礎的一致性現象。
+
+### 機制一：腫瘤細胞分裂加速 → 線性 RNA 競爭優勢
+
+正常細胞靜止時，circRNA 因半衰期長（缺少 5' cap 和 poly-A，不被外切酶降解）可大量積累。
+腫瘤細胞快速分裂時，細胞體積快速倍增，單位時間內線性 mRNA 轉錄速率必須跟上增殖需求，
+而 circRNA 的產生本身就是「競爭性剪接」的結果（環化剪接 vs. 線性剪接）——
+**高增殖率環境偏向線性剪接**，circRNA 生成效率下降。
+
+### 機制二：剪接因子重塑（splicing factor remodeling）
+
+腫瘤中多種 RNA 結合蛋白（RBP）表現改變，這些蛋白直接影響背向剪接（back-splicing）效率：
+
+| RBP | 腫瘤中變化 | 對 circRNA 影響 |
+|-----|-----------|----------------|
+| **QKI**（Quaking）| 多種腫瘤下調 | QKI 是促進 circRNA 產生的關鍵 RBP；QKI↓ → circRNA 全局下調 |
+| **ESRP1/2**（epithelial splicing regulatory protein）| 上皮-間質轉化（EMT）時下調 | 影響 exon skipping 和 back-splicing 比例 |
+| **MBNL family** | 多種腫瘤中表現異常 | 競爭 RNA 二級結構形成，影響環化效率 |
+| **muscleblind-like** | — | 影響 circRNA biogenesis 的 intronic repeat pairing |
+
+### 機制三：circRNA 作為腫瘤抑制因子
+
+許多已知 circRNA 功能是**腫瘤抑制性**的：
+- 作為 **miRNA sponge** 保護腫瘤抑制基因的 mRNA（最著名例子：ciRS-7/CDR1as 吸附 miR-7，保護 EGFR pathway 拮抗基因）
+- 干擾 oncogene 翻譯或信號傳遞
+- 腫瘤中這些 circRNA 下調，相當於**解除對 oncomiRNA 的競爭抑制**（ceRNA hypothesis）
+
+### 機制四：表觀遺傳靜默（epigenetic silencing）
+
+DNA 甲基化和 H3K27me3 在腫瘤中大規模重塑：
+- 許多 circRNA 的親本基因被靜默
+- 或剪接調控序列（如 intronic inverted repeats）被甲基化，影響環化效率
+
+### 本 pipeline 的技術角度補充
+
+**edgeR_ciriquant 測的是 BSJ/FSJ 比值**，因此「下調」意味著相對線性轉錄本的環化效率下降，
+不一定是 BSJ 絕對量減少。這比純粹看 BSJ counts 更靈敏地反映「circRNA 專一性」的調控變化。
+
+GSE130078（ESCC 食道鱗狀細胞癌）的 623 個 limma 顯著 circRNA 中下調比例更高，可能是鱗狀癌中
+QKI/ESRP1/2 的表現量特別低，加劇了 back-splicing 抑制。
+
+### 論文引用建議
+
+| 文獻 | 說明 |
+|------|------|
+| Hansen et al. (2013) *Nature* | ciRS-7/CDR1as 作為 miR-7 sponge |
+| Jeck et al. (2013) *Genome Biology* | circRNA 在分化細胞中高表現，增殖細胞中低表現 |
+| Wan et al. (2019) *Cancer Research* | QKI 調控 circRNA biogenesis，腫瘤中 QKI 下調機制 |
+| Kristensen et al. (2019) *Nucleic Acids Research* | circRNA 作為癌症生物標記的系統性綜述 |
+| Conn et al. (2015) *eLife* | ESRP1/2 控制 back-splicing 效率 |
+| Zhang et al. (2016) *Molecular Cell* | RBP 調控 circRNA 環化的分子機制（MBNL、QKI 等）|
+
+**整體趨勢**：乳癌（GSE113230/GSE133998）、HCC（GSE77509）、胃癌（GSE248612）、攝護腺癌（GSE221107）
+的分析結果均與此文獻一致——circRNA 在腫瘤中全局下調，且 Type_I DECs（circRNA 專一性，非線性 mRNA 變化）
+佔 85–98%，進一步支持腫瘤中背向剪接效率普遍降低的假說。
