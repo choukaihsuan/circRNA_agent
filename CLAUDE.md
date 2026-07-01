@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，🔄 執行中）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -1531,45 +1531,46 @@ for fn in ['count_matrix.tsv','fsj_count_matrix.tsv']:
 
 ---
 
-## 目前執行中：PRJNA553289（SCLC 小細胞肺癌，2026-06-29）
+## PRJNA553289（SCLC 小細胞肺癌，配對 tumor/normal）
 
-**執行中（2026-06-29 12:34 手動啟動）。** 報告位置：`~/PRJNA553289_results/report.html`（待完成）
+**✅ 完成（2026-07-01 00:53）。** 報告位置：`~/PRJNA553289_results/report.html`（server）；本機備份：`/mnt/c/Users/User/Desktop/circRNA agent report/PRJNA553289_report.html`
 
-SCLC 小細胞肺癌，tumor vs. adjacent normal，6 pairs（12 samples，SRR9675242–SRR9675253）。
+SCLC 小細胞肺癌手術切除組織，tumor vs. adjacent normal，6 pairs（12 samples，SRR9675242–SRR9675253）。南京胸科醫院（Nanjing Chest Hospital），Illumina HiSeq X Ten，PE150，Total RNA。
 
 | 步驟 | 狀態 |
 |------|------|
-| 下載 SRA | 🔄 4/12 下載中（S3 aria2c，~1.9 MB/s total，ETA ~3.5h/批） |
-| fastp QC/trim | ⏳ 待執行 |
-| CIRIquant / STAR / DCC | ⏳ 待執行 |
-| consensus_filter / DE / report | ⏳ 待執行 |
+| 下載 SRA | ✅ 12/12 完成（S3 aria2c） |
+| fastp QC/trim | ✅ 12/12 完成 |
+| CIRIquant | ✅ 12/12 完成 |
+| STAR paired+mate1+mate2 | ✅ 36/36 完成 |
+| DCC | ✅ 12/12 完成 |
+| consensus_filter / merge_counts | ✅ 完成（20,164 circRNAs） |
+| assign_isoforms / annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 117 / DESeq2 2,116 / limma 1,713 significant）|
+| predict_interactions（union mode）| ✅ 完成（228 circRNAs，interactions.json 8.4MB）|
+| isoform_switching | ✅ 完成（174 events，within-gene FDR < 0.1）|
+| rank_biomarkers | ✅ 完成（117 candidates）|
+| report | ✅ 完成（report.html 8.5MB，study_title 已設定）|
 
-**特殊情況：Queue Worker 繞過問題**
-- Queue Job（PRJNA553289-WIZA）送出於 2026-06-28 17:14；本應由 Queue 自動啟動
-- 04:15 Queue Worker 成功啟動 Snakemake，但遭遇殘留 lock → LockException → 立即退出
-- `_run_queued_job` Bug（`register_job` 在 `try` 外）→ 例外未被捕捉 → DB status 卡在 `running`
-- 2026-06-29 12:34 手動以 nohup 繞過 Queue 啟動
-- Queue DB 狀態手動更新為 `running`；完成後需手動更新為 `completed`
+**主要數值結果**：
+- 偵測：20,164 consensus circRNAs；filterByExpr 後測試數量見 DE 方法
+- DE（edgeR_ciriquant）：**117 significant**（nominal p < 0.05，|log2FC| > 1）；上調 23 / 下調 94；**110 Type_I (94%) / 7 Type_II (6%)**
+- DE（DESeq2）：2,116 significant；DE（limma-voom）：1,713 significant
+- Isoform switching：174 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
+- Biomarker candidates：117 個；Top 1：chr14:32559708|32586493（log2FC=+5.76，p=0.0037，Type_I）
 
 **設定**：
 - case/control label：`tumor` / `normal`
 - SRR 清單（6T + 6N）：SRR9675248–9675253（Tumor）；SRR9675242–9675247（Normal）
 - genome：hg19；配對設計（含 `patient_id` 欄）
-- Condition CSV：`/mnt/c/Users/User/Desktop/PRJNA553289_condition.csv`
+- study_title：`RNA-seq profiling of small cell lung cancer tumor and adjacent normal lung tissues (Nanjing Chest Hospital)`
 
 **Server config**（`config/projects/PRJNA553289.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/PRJNA553289/raw`
-- `sra_cache_dir: /home3/choukaihsuan/PRJNA553289/sra_cache`（修正前錯指 GSE77509）
+- `sra_cache_dir: /home3/choukaihsuan/PRJNA553289/sra_cache`
 - `results_dir: /home3/choukaihsuan/PRJNA553289_results`
 
-**手動啟動指令**：
-```bash
-cd ~/circRNA_agent && nohup /home/choukaihsuan/miniconda3/envs/ciriquant/bin/snakemake \
-  --snakefile workflow/Snakefile \
-  --configfile config/projects/PRJNA553289.yaml \
-  --cores 12 --keep-going --rerun-incomplete \
-  > logs/pipeline_PRJNA553289_s3.log 2>&1 &
-```
+**啟動歷史**：Queue Worker bug（`register_job` 在 `try` 外 → LockException 未捕捉）導致首次啟動失敗；2026-06-29 12:34 改用 nohup 手動繞過 Queue 啟動，2026-07-01 00:53 完成。
 
 ---
 
