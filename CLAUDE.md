@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，🔜 待執行）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -895,6 +895,9 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | RBP site badge 不在 arc 上 | RBP arc（radius 90–113）在 exon ring 內部視覺上細不明顯；badge 放在 `(RBP_IN+RBP_OUT)/2=101.5` 看起來浮空 | Badge 改放在 exon ring 中心（`midR=(RIN+ROUT)/2=131.5`），直接覆蓋在 exon arc 上，角度指示 binding site 位置；進入 solo mode 時 arc 加 white stroke 1.5px 高亮（`generate_report.py`，2026-06-29） |
 | isoform_switching mock 腳本的 params key 錯誤（`isoform_fdr_cutoff` vs `fdr`）| `isoform_switching.R` 讀取 `snakemake@params[["fdr"]]`（Snakemake rule 傳的 key），但手動 mock 腳本傳 `isoform_fdr_cutoff = 0.1`；`snakemake@params[["fdr"]]` 回傳 NULL → `as.numeric(NULL)` = `numeric(0)` → `res$padj_within_gene < numeric(0)` = `logical(0)` → `res$is_switching <- logical(0)` 失敗（replacement has 0 rows, data has N rows）| mock 腳本 params 改為 `fdr = 0.1`；實際 Snakemake rule 不受影響（key 正確）|
 | GSE221107 RNA 降解樣本（Pair 8/11）導致 edgeR 失敗 | Pair 8（SRR22757442：6 BSJ）和 Pair 11（SRR22757419：28 BSJ）insert size peak ≈ 40–44 bp（正常 268–269 bp）→ adapter dimer，RNA 在 library prep 前已降解；加入 TMM normalization 導致 NaN/Inf，edgeR GLM missing value 失敗 | 排除 Pair 8 和 Pair 11，保留 Pair 14/16/18/20（4 pairs，8 samples）；Python 子集 count_matrix.tsv 和 fsj_count_matrix.tsv，更新 sample_groups.csv，重跑 DE/isoform_switching/predict_interactions/rank_biomarkers/report |
+| Web UI 頁面被瀏覽器自動翻譯為韓文或日文 | Chrome/Edge 偵測到 `<html lang="zh-TW">` 的中文頁面後，若瀏覽器語言偏好含韓文/日文或使用者曾接受翻譯提示，會自動將整頁翻譯 | 三個模板（`index.html`/`status.html`/`login.html`）均加入 `translate="no"` 屬性至 `<html>` 標籤，並在 `<head>` 新增 `<meta name="google" content="notranslate">` 和 `<meta http-equiv="Content-Language" content="zh-TW">`（2026-07-01）|
+| web_ui 啟動後 log 停止更新（stdout pipe 斷裂）| `nohup conda run -n ciriquant python scripts/web_ui.py >> logs/web_ui.log` 中，`conda run` 建立的子進程 stdout/stderr 走 pipe 回傳給 conda 進程，conda 進程在 nohup shell session 關閉後 pipe 斷裂，log 不再更新；但 python 進程本身仍存活 | 改用直接指定 conda env python 路徑：`nohup /home/choukaihsuan/miniconda3/envs/ciriquant/bin/python scripts/web_ui.py --host 0.0.0.0 --port 5000 >> logs/web_ui.log 2>&1 &`；stdout 直接重導向 log 檔，不過 conda run 的 pipe 層 |
+| `run_manual` 提交後 `sample_groups.csv` 遺失 `patient_id` 欄 | `run_manual` 路由固定只寫 `srr_id`/`condition` 兩欄到 `sample_groups.csv`，CSV 上傳中的 `patient_id`/`description` 欄直接被丟棄 | 手動在 server 補充 `patient_id` 欄（見 GSE229705 段落的補充指令）；長期解法：`run_manual` 讀取 CSV 時若有 `patient_id` 欄則一起寫入 `sample_groups.csv` |
 
 ---
 
@@ -1057,7 +1060,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-06-29 完成 GSE221107，PRJNA553289 執行中）
+## 目前執行進度（2026-07-01 完成 PRJNA553289，GSE229705 待執行）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1571,6 +1574,52 @@ SCLC 小細胞肺癌手術切除組織，tumor vs. adjacent normal，6 pairs（1
 - `results_dir: /home3/choukaihsuan/PRJNA553289_results`
 
 **啟動歷史**：Queue Worker bug（`register_job` 在 `try` 外 → LockException 未捕捉）導致首次啟動失敗；2026-06-29 12:34 改用 nohup 手動繞過 Queue 啟動，2026-07-01 00:53 完成。
+
+**磁碟清理（建議）**：`PRJNA553289/raw/`（66G）＋`trimmed/`（43G）＋`sra_cache/`（24G）＋`sra_tmp/`（38G）≈ 171G 中間檔可刪除（分析完成後）。
+
+---
+
+## GSE229705（LUAD 肺腺癌，配對 tumor/normal，🔜 待執行）
+
+NYU LUAD 肺腺癌手術切除組織，tumor vs. adjacent normal，123 對配對，Illumina NovaSeq 6000，100bp PE，Total RNA（Trio RNA-Seq, Tecan Genomics, rRNA Deplete）。選 6 對（T/N 深度最平衡且總深度最高）。
+
+**SRA Project**：PRJNA955664（SRP432629）；GEO：GSE229705（NYU Langone Health）。
+
+**選定的 6 對（balance ≥ 0.88，min depth ≥ 40M reads/sample）**：
+
+| Patient | Balance | T reads | N reads | T SRR | N SRR |
+|---------|---------|---------|---------|-------|-------|
+| NYU784 | 0.880 | 59.9M | 52.7M | SRR24166158 | SRR24166159 |
+| NYU539 | 0.933 | 52.5M | 56.3M | SRR24166104 | SRR24166105 |
+| NYU704 | 0.883 | 48.4M | 42.7M | SRR24166288 | SRR24166289 |
+| NYU713 | 0.895 | 45.5M | 40.8M | SRR24166284 | SRR24166285 |
+| NYU779 | 0.880 | 40.1M | 45.5M | SRR24166280 | SRR24166281 |
+| NYU822 | 0.905 | 39.8M | 44.0M | SRR24166156 | SRR24166157 |
+
+**Condition CSV**：`/mnt/c/Users/User/Desktop/GSE229705_condition.csv`（含 `patient_id` 欄，配對設計）
+
+**送出方式**：Web UI → 方式二（上傳 CSV） → Project ID：`GSE229705`，Case：`tumor`，Control：`normal`
+
+**注意**：`run_manual` 路由的 `sample_groups.csv` 只寫 `srr_id`/`condition` 兩欄，**不保存 `patient_id`**。送出後需手動在 server 補充：
+```bash
+# server 上手動更新 sample_groups.csv 加入 patient_id 欄
+python3 -c "
+import pandas as pd
+df = pd.read_csv('metadata/GSE229705/sample_groups.csv')
+pid_map = {
+  'SRR24166158':'NYU784','SRR24166159':'NYU784',
+  'SRR24166104':'NYU539','SRR24166105':'NYU539',
+  'SRR24166288':'NYU704','SRR24166289':'NYU704',
+  'SRR24166284':'NYU713','SRR24166285':'NYU713',
+  'SRR24166280':'NYU779','SRR24166281':'NYU779',
+  'SRR24166156':'NYU822','SRR24166157':'NYU822',
+}
+df['patient_id'] = df['srr_id'].map(pid_map)
+df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
+"
+```
+
+**論文參考**：Sakata et al. 2024 *Nature Genetics*，PMC10632519；LUAD tumor-adjacent inflammation cohort，123 pairs。
 
 ---
 
