@@ -6,7 +6,9 @@ and includes top DE results as a table.
 """
 
 import base64
+import html as _html_mod
 import math
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -632,6 +634,8 @@ _STYLE = """
                   color:#2c6fad; transition:all .15s; margin-left:4px; }
   .lang-btn-rpt:hover { border-color:#2c6fad; background:#e8f0fc; }
   .lang-btn-rpt.active { background:#2c6fad; border-color:#2c6fad; color:#fff; }
+  #qc-section > summary span:first-child { transition:transform .2s; display:inline-block; }
+  #qc-section[open] > summary span:first-child { transform:rotate(90deg); }
 </style>
 """
 
@@ -3482,6 +3486,25 @@ _makeSortable('tbl_biomarker');
   </div>
 </div>"""
 
+    # Build embedded MultiQC section (srcdoc so report is self-contained)
+    if multiqc_file and os.path.exists(multiqc_file):
+        with open(multiqc_file, encoding="utf-8", errors="replace") as _mf:
+            _mqc_raw = _mf.read()
+        _mqc_srcdoc = _html_mod.escape(_mqc_raw, quote=True)
+        multiqc_section = f"""<details id="qc-section" style="margin:16px 0 24px 0">
+  <summary style="cursor:pointer;padding:10px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:15px;font-weight:600;color:#0369a1;list-style:none;display:flex;align-items:center;gap:8px">
+    <span>▶</span> 📊 QC Report (MultiQC)
+    <span style="font-size:12px;font-weight:400;color:#64748b;margin-left:4px">（點擊展開）</span>
+  </summary>
+  <div style="margin-top:8px">
+    <iframe srcdoc="{_mqc_srcdoc}"
+      style="width:100%;height:850px;border:1px solid #e2e8f0;border-radius:6px"
+      title="MultiQC Report" loading="lazy"></iframe>
+  </div>
+</details>"""
+    else:
+        multiqc_section = ""
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3506,7 +3529,6 @@ _makeSortable('tbl_biomarker');
   <p><strong>Project:</strong> {project_id} &nbsp;&nbsp;
      <strong>Method:</strong> <span class="method-tag">{de_method}</span> &nbsp;&nbsp;
      <strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}
-     {"&nbsp;&nbsp;<a href='multiqc_report.html' target='_blank' style='background:#2c6fad;color:white;padding:3px 10px;border-radius:4px;text-decoration:none;font-size:13px'>&#128202; QC Report (MultiQC)</a>" if multiqc_file and __import__('os').path.exists(multiqc_file) else ""}
   </p>
   {"<p style='font-size:12px;color:#888'>Interaction data pre-fetched for "
    + str(n_ixn) + " circRNAs (" + str(n_ixn_mirna) + " with miRNA data, from CircInteractome). "
@@ -3521,6 +3543,8 @@ _makeSortable('tbl_biomarker');
   </p>
 
   {sample_html}
+
+  {multiqc_section}
 
   <h2>Summary</h2>
   {_msw_html}
