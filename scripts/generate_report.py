@@ -3532,11 +3532,30 @@ _makeSortable('tbl_biomarker');
 </div>"""
 
     # Build self-contained MultiQC section (srcdoc).
-    # Highcharts initialises before <details> is opened (container width=0) → charts show
-    # "loading...". Fix: on toggle-open, reflow all Highcharts instances inside the iframe.
+    # Fix 1: inject nav-guard so empty/relative hrefs (MultiQC logo, etc.) cannot navigate
+    #         the iframe to the parent report URL.
+    # Fix 2: on toggle-open, reflow Highcharts at 200/700/1500ms to catch all charts that
+    #         initialised with 0-width containers while <details> was collapsed.
     if multiqc_file and os.path.exists(multiqc_file):
         with open(multiqc_file, encoding="utf-8", errors="replace") as _mf:
             _mqc_raw = _mf.read()
+        _nav_guard = (
+            '<script>'
+            '(function(){'
+            'document.addEventListener("click",function(e){'
+            'var a=e.target.closest("a[href]");'
+            'if(!a)return;'
+            'var h=a.getAttribute("href")||"";'
+            'if(h.startsWith("#"))return;'
+            'e.preventDefault();'
+            '},true);'
+            '})();'
+            '</script>'
+        )
+        if '</body>' in _mqc_raw:
+            _mqc_raw = _mqc_raw.replace('</body>', _nav_guard + '</body>', 1)
+        else:
+            _mqc_raw += _nav_guard
         _mqc_srcdoc = _html_mod.escape(_mqc_raw, quote=True)
         multiqc_section = (
             '<details id="qc-section" style="margin:16px 0 24px 0">\n'
@@ -3560,14 +3579,15 @@ _makeSortable('tbl_biomarker');
             '  det.addEventListener("toggle",function(){\n'
             '    if(!this.open) return;\n'
             '    var fr=document.getElementById("qc-iframe");\n'
-            '    // Highcharts renders with 0-width container while <details> is closed;\n'
-            '    // trigger reflow after the element becomes visible.\n'
-            '    setTimeout(function(){\n'
+            '    function _reflow(){\n'
             '      try{\n'
             '        var hc=fr.contentWindow.Highcharts;\n'
             '        if(hc&&hc.charts) hc.charts.forEach(function(c){if(c)c.reflow();});\n'
             '      }catch(e){}\n'
-            '    },150);\n'
+            '    }\n'
+            '    setTimeout(_reflow,200);\n'
+            '    setTimeout(_reflow,700);\n'
+            '    setTimeout(_reflow,1500);\n'
             '  });\n'
             '})();\n'
             '</script>'
