@@ -1146,7 +1146,7 @@ score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) /
 - Read length 50bp → STAR chimeric junction 偵測極差（DCC 僅 3–17 circRNA/sample）
 - CIRIquant vs DCC 比例 ≈ 0.002，遠低於 adaptive_ratio=0.1 閾值
 - `--adaptive` flag 先前未傳入 circrna.smk（bug 已修正）；修正後 adaptive fallback 觸發，min_tools 從 2 降為 1（CIRIquant-only 模式）
-- 最終共識：1,607 circRNAs；filterByExpr 後測試數量較小，DESeq2 vst() 失敗已以 varianceStabilizingTransformation() fallback 修正
+- 最終共識：1,607 circRNAs；filterByExpr 後 **45** tested circRNAs；DESeq2 vst() 失敗已以 varianceStabilizingTransformation() fallback 修正
 
 | 步驟 | 狀態 |
 |------|------|
@@ -1159,7 +1159,7 @@ score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) /
 | DE analysis | ✅ 完成（edgeR 15 / DESeq2 122 / limma 508 significant）|
 | report | ✅ 完成 |
 
-**注意**：edgeR_ciriquant 顯著數極少（15）是因為 50bp reads → circRNA 偵測數量有限 + 樣本間差異較大；**13 Type_I (86.7%) / 2 Type_II (13.3%)**；limma-voom 在小樣本較穩定（508 significant）。
+**注意**：edgeR_ciriquant 顯著數極少（15）是因為 50bp reads → circRNA 偵測數量有限 + 樣本間差異較大；**13 Type_I (86.7%) / 2 Type_II (13.3%)**；limma-voom 在小樣本較穩定（508 significant）；Isoform switching：**11 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 851 rows）。
 
 **Server config**（`config/projects/GSE58135.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE58135/raw`
@@ -1192,7 +1192,9 @@ MDA-MB-436 TNBC cell line，EZH2 抑制劑 EPZ-6438 vs. DMSO，150bp PE，total 
 - genome：hg19（同 GSE113230）
 
 **主要數值結果**：
+- 偵測：filterByExpr 後 **61** tested circRNAs
 - edgeR_ciriquant：2 significant circRNAs（nominal p < 0.05）；**2 Type_I (100%) / 0 Type_II**；EZH2 抑制劑對 circRNA 影響極有限（細胞株 + 藥物處理）
+- Isoform switching：**0 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 212 rows；細胞株 circRNA 量少，無顯著 switching）
 - Biomarker candidates：2 個（p < 0.05 篩選極嚴）→ `_biomarker_normality_plot` 需 n ≥ 3 的 Shapiro-Wilk 保護已加入
 
 **中間檔案已清理**（raw FASTQ + trimmed + sra_cache + 中間 BAM 已刪除，釋放 77GB）；
@@ -1324,7 +1326,7 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 | merge_counts / assign_isoforms | ✅ 完成 |
 | DE analysis | ✅ 完成（edgeR 152 / DESeq2 14,697 / limma 14,697 circRNAs tested）|
 | predict_interactions | ✅ 完成（**union mode**：247 circRNAs，三方法 top-50 聯集）|
-| isoform_switching | ✅ 完成 |
+| isoform_switching | ✅ 完成（**308 events**，within-gene FDR < 0.1，共 12,227 rows）|
 | rank_biomarkers | ✅ 完成（152 candidates）|
 | report | ✅ 完成（8.2 MB，Jun 14 更新；union interactions；**Biomarker 表格隨 DE 方法切換重建**）|
 
@@ -1332,6 +1334,7 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 - 偵測：14,697 consensus circRNAs；filterByExpr 後 1,397 tested（edgeR）
 - DE（edgeR_ciriquant）：**152 significant**（nominal p < 0.05，|log2FC| > 1）；上調 19 / 下調 133；**144 Type_I (95%) / 8 Type_II (5%)**
 - DE（DESeq2）：全 14,697 tested（poscounts normalization）；DE（limma-voom）：全 14,697 tested
+- Isoform switching：**308 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 12,227 rows）
 - Biomarker candidates：152 個（predict_interactions 覆蓋 247 circRNAs，三方法均有 miRNA/RBP 資料）
 
 **設定**：
@@ -1399,6 +1402,49 @@ Yang et al. 2017 *Nature Communications*（PMID 28194035）。HCC 肝細胞癌�
 
 **GSE55872（Benchmark ground truth）磁碟清理（2026-06-19）**：
 - `GSE55872_results/circRNA/*/mate1/` + `*/mate2/` + `GSE55872/raw/` → 已刪除（釋放 ~80 GB）
+
+---
+
+### GSE130078（ESCC 食道鱗狀細胞癌，配對 tumor/normal）
+
+**✅ 完成（2026-06 期間）。** 報告位置：`~/GSE130078_results/report.html`（5.9 MB，2026-06-29 13:17 最新版）
+
+食道鱗狀細胞癌（esophageal squamous cell carcinoma，ESCC）手術切除組織，tumor vs. adjacent normal，150bp PE，Total RNA（rRNA-depleted），Illumina，6 對配對 T/N，12 samples。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 12/12 完成 |
+| fastp QC/trim | ✅ 12/12 完成 |
+| CIRIquant | ✅ 12/12 完成 |
+| STAR paired+mate1+mate2 | ✅ 36/36 完成 |
+| DCC | ✅ 12/12 完成 |
+| consensus_filter / merge_counts | ✅ 完成（8,925 circRNAs；231 after filterByExpr = **2.6%**）|
+| assign_isoforms / annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 12 / DESeq2 1,501 / limma 623 significant）|
+| predict_interactions（union mode）| ✅ 完成 |
+| isoform_switching | ✅ 完成（**133 events**，within-gene FDR < 0.1，共 6,835 rows）|
+| rank_biomarkers | ✅ 完成（12 candidates）|
+| report | ✅ 完成（5.9 MB）|
+
+**主要數值結果**：
+- 偵測：8,925 consensus circRNAs；filterByExpr 後 **231 tested（2.6%）**
+- DE（edgeR_ciriquant）：**12 significant**（nominal p < 0.05；全部 |log2FC| > 1）；鱗狀癌 circRNA 全局下調
+- DE（DESeq2）：1,501 significant；DE（limma-voom）：623 significant（p < 0.05）
+- Isoform switching：**133 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 6,835 rows）
+- Biomarker candidates：12 個
+
+**注意**：filterByExpr 通過率極低（2.6%）是本資料集最大特徵。BSJ counts 樣本間差異達 5.5 倍（5,775–31,656），即使定序深度 79–101M reads/sample 也無法改善。鱗狀癌（squamous cell carcinoma）circRNA 全局表現量本就低於腺癌。**建議以 limma-voom 為主方法**（對稀疏計數更穩健），edgeR 僅作輔助參考。
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- genome：hg19；配對設計（6 pairs）
+- Library：Total RNA（rRNA-depleted），150bp PE，Illumina
+
+**Server config**（`config/projects/GSE130078.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE130078/raw`（已清理）
+- `results_dir: /home3/choukaihsuan/GSE130078_results`
+
+**磁碟清理**：raw/trimmed/BAM/mate1/mate2 於 2026-06-27 清理（釋放 ~162 GB；見 GSE248612 磁碟清理紀錄）。
 
 ---
 
@@ -1494,7 +1540,7 @@ conda run -n ciriquant snakemake \
 | report | ✅ 完成（report.html 9.1MB，2026-06-29 22:36）|
 
 **主要數值結果（4 pairs 重跑）**：
-- 偵測：22,577 consensus circRNAs；count_matrix.tsv 子集為 8 samples（SRR22757410/412/414/416/430/432/434/436）
+- 偵測：22,577 consensus circRNAs；count_matrix.tsv 子集為 8 samples（SRR22757410/412/414/416/430/432/434/436）；filterByExpr 後 **928 tested**
 - DE（edgeR_ciriquant）：**57 significant**（nominal p < 0.05，|log2FC| > 1）；全為 Type_I（配對設計 `~patient+condition`）
 - DE（DESeq2）：**58 significant**；DE（limma-voom）：**627 significant**
 - Isoform switching：37 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
@@ -1556,7 +1602,7 @@ SCLC 小細胞肺癌手術切除組織，tumor vs. adjacent normal，6 pairs（1
 | report | ✅ 完成（report.html 8.5MB，study_title 已設定）|
 
 **主要數值結果**：
-- 偵測：20,164 consensus circRNAs；filterByExpr 後測試數量見 DE 方法
+- 偵測：20,164 consensus circRNAs；filterByExpr 後 **476 tested**（edgeR）
 - DE（edgeR_ciriquant）：**117 significant**（nominal p < 0.05，|log2FC| > 1）；上調 23 / 下調 94；**110 Type_I (94%) / 7 Type_II (6%)**
 - DE（DESeq2）：2,116 significant；DE（limma-voom）：1,713 significant
 - Isoform switching：174 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
