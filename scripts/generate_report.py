@@ -3494,7 +3494,7 @@ _makeSortable('tbl_biomarker');
     <span style="font-size:12px;font-weight:400;color:#64748b;margin-left:4px">（點擊展開）</span>
   </summary>
   <div style="margin-top:8px">
-    <iframe id="qc-iframe" src="" data-qc-src="__MULTIQC_URL__"
+    <iframe id="qc-iframe" src="about:blank" data-qc-src="__MULTIQC_URL__"
       style="width:100%;height:850px;border:1px solid #e2e8f0;border-radius:6px"
       title="MultiQC Report"></iframe>
   </div>
@@ -3502,13 +3502,20 @@ _makeSortable('tbl_biomarker');
 <script>
 (function(){
   var det=document.getElementById('qc-section');
-  if(det) det.addEventListener('toggle',function(){
-    if(this.open){
-      var fr=document.getElementById('qc-iframe');
-      if(!fr.src||fr.src===window.location.href){
-        fr.src=fr.dataset.qcSrc;
-      }
+  if(!det) return;
+  det.addEventListener('toggle',function(){
+    if(!this.open) return;
+    var fr=document.getElementById('qc-iframe');
+    if(fr._qcLoaded) return;
+    var url=fr.dataset.qcSrc;
+    if(!url||url==='__MULTIQC_URL__'){
+      fr.srcdoc='<html><body style="font-family:sans-serif;padding:32px;color:#64748b">'
+        +'<p>⚠️ QC 報告需透過 web server 開啟才能顯示。<br>'
+        +'請至 <b>http://172.16.0.178:5000</b> 開啟分析報告。</p></body></html>';
+    } else {
+      fr.src=url;
     }
+    fr._qcLoaded=true;
   });
 })();
 </script>"""
