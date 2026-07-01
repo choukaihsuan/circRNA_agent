@@ -3486,22 +3486,32 @@ _makeSortable('tbl_biomarker');
   </div>
 </div>"""
 
-    # Build embedded MultiQC section (srcdoc so report is self-contained)
+    # Build MultiQC section — uses data-qc-src placeholder; web_ui rewrites to /qc/<job_id>
     if multiqc_file and os.path.exists(multiqc_file):
-        with open(multiqc_file, encoding="utf-8", errors="replace") as _mf:
-            _mqc_raw = _mf.read()
-        _mqc_srcdoc = _html_mod.escape(_mqc_raw, quote=True)
-        multiqc_section = f"""<details id="qc-section" style="margin:16px 0 24px 0">
+        multiqc_section = """<details id="qc-section" style="margin:16px 0 24px 0">
   <summary style="cursor:pointer;padding:10px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:15px;font-weight:600;color:#0369a1;list-style:none;display:flex;align-items:center;gap:8px">
     <span>▶</span> 📊 QC Report (MultiQC)
     <span style="font-size:12px;font-weight:400;color:#64748b;margin-left:4px">（點擊展開）</span>
   </summary>
   <div style="margin-top:8px">
-    <iframe srcdoc="{_mqc_srcdoc}"
+    <iframe id="qc-iframe" src="" data-qc-src="__MULTIQC_URL__"
       style="width:100%;height:850px;border:1px solid #e2e8f0;border-radius:6px"
-      title="MultiQC Report" loading="lazy"></iframe>
+      title="MultiQC Report"></iframe>
   </div>
-</details>"""
+</details>
+<script>
+(function(){
+  var det=document.getElementById('qc-section');
+  if(det) det.addEventListener('toggle',function(){
+    if(this.open){
+      var fr=document.getElementById('qc-iframe');
+      if(!fr.src||fr.src===window.location.href){
+        fr.src=fr.dataset.qcSrc;
+      }
+    }
+  });
+})();
+</script>"""
     else:
         multiqc_section = ""
 
