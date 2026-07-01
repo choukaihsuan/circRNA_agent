@@ -43,12 +43,17 @@
     /* Status badges */
     .badge { display:inline-flex; align-items:center; gap:5px;
              padding:3px 10px; border-radius:20px; font-size:12px; font-weight:600; }
-    .badge-pending  { background:#fef3c7; color:#92400e; }
-    .badge-running  { background:#dbeafe; color:var(--primary);
-                      animation:pulse 1.2s ease-in-out infinite; }
-    .badge-completed{ background:#dcfce7; color:#15803d; }
-    .badge-failed   { background:#fee2e2; color:var(--error); }
+    .badge-pending   { background:#fef3c7; color:#92400e; }
+    .badge-running   { background:#dbeafe; color:var(--primary);
+                       animation:pulse 1.2s ease-in-out infinite; }
+    .badge-external  { background:#ede9fe; color:#6d28d9;
+                       animation:pulse 1.2s ease-in-out infinite; }
+    .badge-completed { background:#dcfce7; color:#15803d; }
+    .badge-failed    { background:#fee2e2; color:var(--error); }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+    .ext-banner { background:#ede9fe; border:1px solid #c4b5fd;
+                  border-radius:8px; padding:10px 16px; margin-bottom:12px;
+                  font-size:13px; color:#5b21b6; }
 
     .pos-chip { display:inline-block; background:#fef3c7; color:#92400e;
                 border-radius:20px; padding:2px 8px; font-size:11px;
@@ -97,6 +102,13 @@
     </div>
   </div>
 
+  <!-- External pipeline banner -->
+  {% if ext_gse %}
+  <div class="ext-banner">
+    🔄 <strong>{{ ext_gse }}</strong> 目前正在手動執行中（非透過佇列啟動）。佇列中的下一個任務將在此 pipeline 完成後自動開始。
+  </div>
+  {% endif %}
+
   <!-- Queue table -->
   <div class="card">
     {% if jobs %}
@@ -123,7 +135,9 @@
           <td style="color:#64748b;">{{ job.user_email or '—' }}</td>
           <td style="font-size:12px;color:#64748b;">{{ job.submitted_at }}</td>
           <td>
-            {% if job.status == 'pending' %}
+            {% if job.running_externally %}
+              <span class="badge badge-external">🔄 手動執行中</span>
+            {% elif job.status == 'pending' %}
               <span class="badge badge-pending">
                 ⏳ 排隊中
                 {% if job.position %}

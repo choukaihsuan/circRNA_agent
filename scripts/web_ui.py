@@ -554,11 +554,11 @@ def save_config(cfg: dict) -> None:
 
 
 def _project_config_path(gse_id: str) -> Path:
-    return BASE_DIR / "config" / "projects" / f"{gse_id}.yaml"
+    return BASE_DIR / "config" / "projects" / f"{gse_id.strip().upper()}.yaml"
 
 
 def _project_meta_dir(gse_id: str) -> Path:
-    return BASE_DIR / "metadata" / gse_id
+    return BASE_DIR / "metadata" / gse_id.strip().upper()
 
 
 def _configfile_for(gse_id: str) -> str:
@@ -572,8 +572,9 @@ def _configfile_for(gse_id: str) -> str:
 def save_project_snapshot(cfg: dict) -> None:
     """Write config.yaml AND a per-project snapshot in config/projects/{id}.yaml."""
     save_config(cfg)
-    gse_id = cfg.get("project_id", "")
+    gse_id = cfg.get("project_id", "").strip().upper()
     if gse_id:
+        cfg["project_id"] = gse_id
         proj_path = _project_config_path(gse_id)
         proj_path.parent.mkdir(parents=True, exist_ok=True)
         with open(proj_path, "w") as f:
@@ -972,6 +973,30 @@ def tail_log(n: int = 80, path: Optional[Path] = None) -> str:
     return "\n".join(lines[-n:])
 
 
+def _running_gse_id() -> Optional[str]:
+    """Return the gse_id of the currently running snakemake pipeline, or None.
+    Parses --configfile from the main snakemake process command line.
+    """
+    try:
+        result = subprocess.run(
+            ["pgrep", "-fa", "snakemake.*workflow/Snakefile"],
+            capture_output=True, text=True,
+        )
+        for line in result.stdout.splitlines():
+            # Only look at the master snakemake process (--configfile singular,
+            # not worker subprocesses that use --configfiles)
+            if "--configfile " not in line or "--mode 1" in line:
+                continue
+            parts = line.split()
+            for i, p in enumerate(parts):
+                if p == "--configfile" and i + 1 < len(parts):
+                    cf = parts[i + 1]
+                    return Path(cf).stem  # e.g. "GSE229705"
+    except Exception:
+        pass
+    return None
+
+
 def pipeline_is_running() -> bool:
     """Check if snakemake is actually running the pipeline (not monitoring scripts)."""
     try:
@@ -1051,7 +1076,7 @@ def update():
 
     if request.form.get("action") == "run":
         cores = cfg["threads"] * 4
-        gse_id = cfg.get("project_id", "pipeline")
+        gse_id = cfg.get("project_id", "pipeline").strip().upper()
         job_id = generate_job_id(gse_id)
         log_path = job_log_path(job_id)
         user_email = (request.form.get("notify_email", "").strip()
@@ -1074,7 +1099,7 @@ def update():
 
 @app.route("/run_gse", methods=["POST"])
 def run_gse():
-    gse_id = request.form.get("gse_id", "").strip()
+    gse_id = request.form.get("gse_id", "").strip().upper()
     cores  = int(request.form.get("cores", 8))
     if not gse_id:
         return redirect(url_for("index"))
@@ -1116,7 +1141,7 @@ def run_gse():
 def run_manual():
     """Start pipeline from manual SRR list or uploaded CSV."""
     cores      = int(request.form.get("cores", 8))
-    project_id = request.form.get("project_id", "CUSTOM").strip() or "CUSTOM"
+    project_id = (request.form.get("project_id", "").strip().upper() or "CUSTOM")
     tumor_label  = request.form.get("tumor_label",  "tumor").strip()  or "tumor"
     normal_label = request.form.get("normal_label", "normal").strip() or "normal"
 
@@ -1255,7 +1280,7 @@ def api_scan_fastq():
 @app.route("/run_local", methods=["POST"])
 def run_local():
     """Start pipeline with local FASTQ files (server-side paths via symlinks)."""
-    project_id   = request.form.get("project_id",   "LOCAL").strip() or "LOCAL"
+    project_id   = (request.form.get("project_id", "").strip().upper() or "LOCAL")
     tumor_label  = request.form.get("tumor_label",  "tumor").strip() or "tumor"
     normal_label = request.form.get("normal_label", "normal").strip() or "normal"
     cores        = int(request.form.get("cores", 8))
@@ -1357,13 +1382,20 @@ def status():
 def queue_page():
     jobs = queue_list()
     pending_pos = 0
+    ext_gse = _running_gse_id()  # gse_id of externally-started pipeline (or None)
     for j in jobs:
         if j["status"] == "pending":
             pending_pos += 1
             j["position"] = pending_pos
         else:
             j["position"] = None
-    return render_template("queue.html", jobs=jobs)
+        # Mark jobs whose pipeline is running outside the queue system
+        j["running_externally"] = (
+            j["status"] == "failed"
+            and ext_gse is not None
+            and j["gse_id"].upper() == ext_gse.upper()
+        )
+    return render_template("queue.html", jobs=jobs, ext_gse=ext_gse)
 
 
 @app.route("/api/queue")
@@ -1496,7 +1528,7 @@ def _fetch_geo_title(gse_id: str) -> str:
 @app.route("/api/detect_labels")
 def api_detect_labels():
     """Detect case/control labels and GEO title for a given GSE."""
-    gse_id = request.args.get("gse", "").strip()
+    gse_id = request.args.get("gse", "").strip().upper()
     if not gse_id:
         return jsonify({"error": "missing gse"}), 400
 
@@ -1527,8 +1559,8 @@ def api_detect_labels():
 
 @app.route("/report/<job_id>")
 def serve_report(job_id: str):
-    """Serve the HTML report for a finished job."""
-    from flask import send_file, abort
+    """Serve the HTML report, rewriting the MultiQC placeholder to the /qc/ URL."""
+    from flask import abort, Response
     registry = load_registry()
     job = registry.get(job_id)
     if not job:
@@ -1539,8 +1571,9 @@ def serve_report(job_id: str):
     report_path = Path(results_dir) / "report.html"
     if not report_path.exists():
         abort(404)
-    return send_file(str(report_path), mimetype="text/html",
-                     as_attachment=False, download_name=f"{gse_id}_report.html")
+    html = report_path.read_text(encoding="utf-8", errors="replace")
+    html = html.replace("__MULTIQC_URL__", f"/qc/{job_id}", 1)
+    return Response(html, mimetype="text/html")
 
 
 @app.route("/download/<job_id>")
