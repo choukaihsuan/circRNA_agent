@@ -3486,39 +3486,47 @@ _makeSortable('tbl_biomarker');
   </div>
 </div>"""
 
-    # Build MultiQC section — uses data-qc-src placeholder; web_ui rewrites to /qc/<job_id>
+    # Build self-contained MultiQC section (srcdoc).
+    # Highcharts initialises before <details> is opened (container width=0) → charts show
+    # "loading...". Fix: on toggle-open, reflow all Highcharts instances inside the iframe.
     if multiqc_file and os.path.exists(multiqc_file):
-        multiqc_section = """<details id="qc-section" style="margin:16px 0 24px 0">
-  <summary style="cursor:pointer;padding:10px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:15px;font-weight:600;color:#0369a1;list-style:none;display:flex;align-items:center;gap:8px">
-    <span>▶</span> 📊 QC Report (MultiQC)
-    <span style="font-size:12px;font-weight:400;color:#64748b;margin-left:4px">（點擊展開）</span>
-  </summary>
-  <div style="margin-top:8px">
-    <iframe id="qc-iframe" src="about:blank" data-qc-src="__MULTIQC_URL__"
-      style="width:100%;height:850px;border:1px solid #e2e8f0;border-radius:6px"
-      title="MultiQC Report"></iframe>
-  </div>
-</details>
-<script>
-(function(){
-  var det=document.getElementById('qc-section');
-  if(!det) return;
-  det.addEventListener('toggle',function(){
-    if(!this.open) return;
-    var fr=document.getElementById('qc-iframe');
-    if(fr._qcLoaded) return;
-    var url=fr.dataset.qcSrc;
-    if(!url||url==='__MULTIQC_URL__'){
-      fr.srcdoc='<html><body style="font-family:sans-serif;padding:32px;color:#64748b">'
-        +'<p>⚠️ QC 報告需透過 web server 開啟才能顯示。<br>'
-        +'請至 <b>http://172.16.0.178:5000</b> 開啟分析報告。</p></body></html>';
-    } else {
-      fr.src=url;
-    }
-    fr._qcLoaded=true;
-  });
-})();
-</script>"""
+        with open(multiqc_file, encoding="utf-8", errors="replace") as _mf:
+            _mqc_raw = _mf.read()
+        _mqc_srcdoc = _html_mod.escape(_mqc_raw, quote=True)
+        multiqc_section = (
+            '<details id="qc-section" style="margin:16px 0 24px 0">\n'
+            '  <summary style="cursor:pointer;padding:10px 16px;background:#f0f9ff;'
+            'border:1px solid #bae6fd;border-radius:8px;font-size:15px;font-weight:600;'
+            'color:#0369a1;list-style:none;display:flex;align-items:center;gap:8px">\n'
+            '    <span>▶</span> \U0001f4ca QC Report (MultiQC)\n'
+            '    <span style="font-size:12px;font-weight:400;color:#64748b;margin-left:4px">'
+            '（點擊展開）</span>\n'
+            '  </summary>\n'
+            '  <div style="margin-top:8px">\n'
+            '    <iframe id="qc-iframe" srcdoc="' + _mqc_srcdoc + '"\n'
+            '      style="width:100%;height:850px;border:1px solid #e2e8f0;border-radius:6px"\n'
+            '      title="MultiQC Report"></iframe>\n'
+            '  </div>\n'
+            '</details>\n'
+            '<script>\n'
+            '(function(){\n'
+            '  var det=document.getElementById("qc-section");\n'
+            '  if(!det) return;\n'
+            '  det.addEventListener("toggle",function(){\n'
+            '    if(!this.open) return;\n'
+            '    var fr=document.getElementById("qc-iframe");\n'
+            '    // Highcharts renders with 0-width container while <details> is closed;\n'
+            '    // trigger reflow after the element becomes visible.\n'
+            '    setTimeout(function(){\n'
+            '      try{\n'
+            '        var hc=fr.contentWindow.Highcharts;\n'
+            '        if(hc&&hc.charts) hc.charts.forEach(function(c){if(c)c.reflow();});\n'
+            '      }catch(e){}\n'
+            '    },150);\n'
+            '  });\n'
+            '})();\n'
+            '</script>'
+        )
     else:
         multiqc_section = ""
 
