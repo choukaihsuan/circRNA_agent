@@ -77,11 +77,12 @@
     <a class="back-link" href="/">← 返回主頁</a>
   </div>
 
-  <!-- Stats -->
+  <!-- Stats: running_externally jobs count as running, not failed -->
   {% set n_pending   = jobs | selectattr('status','eq','pending')   | list | length %}
-  {% set n_running   = jobs | selectattr('status','eq','running')   | list | length %}
+  {% set n_external  = jobs | selectattr('running_externally','equalto',true) | list | length %}
+  {% set n_running   = (jobs | selectattr('status','eq','running')  | list | length) + n_external %}
   {% set n_completed = jobs | selectattr('status','eq','completed') | list | length %}
-  {% set n_failed    = jobs | selectattr('status','eq','failed')    | list | length %}
+  {% set n_failed    = (jobs | selectattr('status','eq','failed')   | list | length) - n_external %}
 
   <div class="stats">
     <div class="stat-box pending">

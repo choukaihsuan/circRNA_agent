@@ -846,11 +846,11 @@ def _infer_stages_from_files(results_dir_str: str, stages: list,
 
     def mark_done(*ids):
         for sid in ids:
-            if sid in stage_map and stage_map[sid]["status"] == "pending":
+            if sid in stage_map and stage_map[sid]["status"] in ("pending", "failed"):
                 stage_map[sid].update({"status": "done", "started": 1, "done": 1})
 
     def mark_partial(sid: str, n_done: int, n_total: int):
-        """Update a stage's N/M counts from filesystem; upgrade pending→running/done."""
+        """Update a stage's N/M counts from filesystem; upgrade pending/failed→running/done."""
         if sid not in stage_map or n_done == 0:
             return
         s = stage_map[sid]
@@ -858,7 +858,7 @@ def _infer_stages_from_files(results_dir_str: str, stages: list,
         s["done"]    = n_done
         if n_done >= n_total:
             s["status"] = "done"
-        elif s["status"] == "pending":
+        elif s["status"] in ("pending", "failed"):
             s["status"] = "running"
 
     # ── Per-sample counting (requires sample list from config metadata) ──────
@@ -887,11 +887,11 @@ def _infer_stages_from_files(results_dir_str: str, stages: list,
                      sum(1 for s in sample_ids
                          if (raw_dir / f"{s}_1.fastq.gz").exists()), n)
 
-        # FastQC (raw) — check for any fastqc zip in per-sample subdir or flat dir
-        fqc_dir = results_dir / "qc" / "fastqc"
+        # FastQC (raw) — output goes to results_dir/qc/raw/ (one zip per read file)
+        fqc_dir = results_dir / "qc" / "raw"
         mark_partial("fastqc_raw",
                      sum(1 for s in sample_ids
-                         if list(fqc_dir.glob(f"{s}*_fastqc.html")) if fqc_dir.exists()), n)
+                         if (fqc_dir / f"{s}_1_fastqc.zip").exists()), n)
 
         # fastp
         mark_partial("fastp_trim",

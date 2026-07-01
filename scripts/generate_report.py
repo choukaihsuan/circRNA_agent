@@ -697,6 +697,19 @@ function switchReportLang(lang) {
   _refreshBMHistLang();
 }
 
+function _applyLangToContainer(el) {
+  /* Re-apply current report language to dynamically injected HTML (e.g., modal tabs). */
+  if (!el || typeof _LANG === 'undefined') return;
+  el.querySelectorAll('[data-en]').forEach(function(node) {
+    if (_LANG === 'en') {
+      if (!node.dataset.zh) node.dataset.zh = node.innerHTML;
+      node.innerHTML = node.dataset.en;
+    } else {
+      if (node.dataset.zh !== undefined) node.innerHTML = node.dataset.zh;
+    }
+  });
+}
+
 function _updateBMFilterBtnLabels() {
   const btns = document.querySelectorAll('.bm-filter-btn');
   const tbody = document.querySelector('#tbl_biomarker tbody');
@@ -2205,12 +2218,16 @@ function showCircDetail(circId) {{
     const circEl = document.getElementById('cm-circle-wrap');
     circEl.innerHTML = '';
     _drawCircleRNA(circId, circEl);
-    document.getElementById('cm-mirna').innerHTML = _buildInteractionTable(
+    const _mirnaEl = document.getElementById('cm-mirna');
+    _mirnaEl.innerHTML = _buildInteractionTable(
       d.mirna||[], ['_priority','miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source','in_circ'],
       ['Priority','miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'mirna');
-    document.getElementById('cm-rbp').innerHTML = _buildInteractionTable(
+    _applyLangToContainer(_mirnaEl);
+    const _rbpEl = document.getElementById('cm-rbp');
+    _rbpEl.innerHTML = _buildInteractionTable(
       d.rbp||[], ['_priority','RBPName','bindingSites','_mapped','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
       ['Priority','RBP','Sites','Mapped','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
+    _applyLangToContainer(_rbpEl);
     _fetchSeqsInTable('cm-mirna');
     _fetchSeqsInTable('cm-rbp');
     const vEl = document.getElementById('cm-volcano');
@@ -2856,38 +2873,66 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
       ?'8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1\\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1'
       :'bindingSites log2×2 (max+3), internal=+2\\nCLIP exp>0=+3, ENCORI=+2, in_circ=+1');
 
-  // miRNA seed type info banner
-  const seedNote = tableType==='mirna' ? `
-  <div style="background:#f0f6ff;border:1px solid #c5d9f0;border-radius:6px;padding:8px 12px;
-              margin-bottom:10px;font-size:12px;line-height:1.6;color:#444">
+  // info banner: miRNA seed types OR RBP scoring guide
+  const _infoDiv='background:#f0f6ff;border:1px solid #c5d9f0;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;line-height:1.6;color:#444';
+  const _th='padding:1px 8px 1px 0;font-weight:bold;white-space:nowrap;vertical-align:top';
+  const infoNote = tableType==='mirna' ? `
+  <div style="${{_infoDiv}}">
     <span style="font-weight:bold;color:#2c6fad" data-en="ℹ miRNA Seed Type Guide">ℹ miRNA Seed Type 說明</span>
-    &nbsp;&mdash;&nbsp;<span data-en="Binding strength depends on the seed region (miRNA nt 2–8) complementarity:">miRNA 與靶點結合的強度由 seed 區（miRNA 2–8 nt）的配對完整度決定：</span>
+    &nbsp;&mdash;&nbsp;<span data-en="Binding strength is determined by the seed region (miRNA nt 2–8) complementarity:">miRNA 與靶點結合的強度由 seed 區（miRNA 2–8 nt）的配對完整度決定：</span>
     <table style="margin-top:5px;border-collapse:collapse;font-size:11.5px">
       <tr>
-        <td style="padding:1px 8px 1px 0;font-weight:bold;color:#1a6e3c;white-space:nowrap">8mer</td>
-        <td><span data-en="seed (pos 2–8) + pos 8 match + pos 1 = A →">seed（位置 2–8）+ 位置 8 配對 + 位置 1 為 A &nbsp;→&nbsp;</span>
-          <span style="color:#1a6e3c;font-weight:bold" data-en="Strongest">最強</span>，TargetScan 最高可信度</td>
+        <td style="${{_th}};color:#1a6e3c">8mer</td>
+        <td><span data-en="seed (pos 2–8) + pos 8 match + pos 1 = A → &lt;b style='color:#1a6e3c'&gt;Strongest&lt;/b&gt;, highest TargetScan confidence">seed（位置 2–8）+ 位置 8 配對 + 位置 1 為 A &nbsp;→&nbsp;<b style="color:#1a6e3c">最強</b>，TargetScan 最高可信度</span></td>
       </tr>
       <tr>
-        <td style="padding:1px 8px 1px 0;font-weight:bold;color:#3a7ebf;white-space:nowrap">7mer-m8</td>
-        <td><span data-en="seed (pos 2–8) + pos 8 match, no pos 1 req →">seed（位置 2–8）+ 位置 8 配對，無位置 1 限制 &nbsp;→&nbsp;</span>
-          <span style="color:#3a7ebf;font-weight:bold" data-en="Strong">強</span></td>
+        <td style="${{_th}};color:#3a7ebf">7mer-m8</td>
+        <td><span data-en="seed (pos 2–8) + pos 8 match, no pos 1 requirement → &lt;b style='color:#3a7ebf'&gt;Strong&lt;/b&gt;">seed（位置 2–8）+ 位置 8 配對，無位置 1 限制 &nbsp;→&nbsp;<b style="color:#3a7ebf">強</b></span></td>
       </tr>
       <tr>
-        <td style="padding:1px 8px 1px 0;font-weight:bold;color:#e07b39;white-space:nowrap">7mer-1A</td>
-        <td><span data-en="seed (pos 2–7) + pos 1 = A, no pos 8 req →">seed（位置 2–7）+ 位置 1 為 A，無位置 8 限制 &nbsp;→&nbsp;</span>
-          <span style="color:#e07b39;font-weight:bold" data-en="Moderate">中等</span></td>
+        <td style="${{_th}};color:#e07b39">7mer-1A</td>
+        <td><span data-en="seed (pos 2–7) + pos 1 = A, no pos 8 requirement → &lt;b style='color:#e07b39'&gt;Moderate&lt;/b&gt;">seed（位置 2–7）+ 位置 1 為 A，無位置 8 限制 &nbsp;→&nbsp;<b style="color:#e07b39">中等</b></span></td>
       </tr>
       <tr>
-        <td style="padding:1px 8px 1px 0;font-weight:bold;color:#888;white-space:nowrap">6mer</td>
-        <td><span data-en="seed (pos 2–7) match only, shortest seed →">僅 seed（位置 2–7）配對，最短 seed &nbsp;→&nbsp;</span>
-          <span style="color:#888;font-weight:bold" data-en="Weak">弱</span>，誤報率較高</td>
+        <td style="${{_th}};color:#888">6mer</td>
+        <td><span data-en="seed (pos 2–7) match only → &lt;b style='color:#888'&gt;Weak&lt;/b&gt;, higher false-positive rate">僅 seed（位置 2–7）配對，最短 seed &nbsp;→&nbsp;<b style="color:#888">弱</b>，誤報率較高</span></td>
       </tr>
     </table>
-    <span style="font-size:11px;color:#888" data-en="Priority score: seed strength (8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1) + CLIP evidence (+3) + ENCORI (+2) + in_circ (+1)">Priority score：seed 強度（8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1）+ CLIP 實驗支持（+3）+ ENCORI 收錄（+2）+ 位於 circRNA 內（+1）</span>
+    <div style="margin-top:5px;font-size:11px;color:#888">
+      <span data-en="Priority score: seed strength (8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1) + CLIP exp&gt;0 (+3) + ENCORI (+2) + in_circ (+1)">Priority score：seed 強度（8mer=+4, 7mer-m8=+3, 7mer-1A=+2, 6mer=+1）+ CLIP 實驗支持（+3）+ ENCORI 收錄（+2）+ 位於 circRNA 內（+1）</span>
+    </div>
+  </div>` : tableType==='rbp' ? `
+  <div style="${{_infoDiv}}">
+    <span style="font-weight:bold;color:#2c6fad" data-en="ℹ RBP Priority Score Guide">ℹ RBP Priority Score 說明</span>
+    &nbsp;&mdash;&nbsp;<span data-en="Score reflects the strength of RBP–circRNA binding evidence:">分數反映 RBP 與 circRNA 結合的實驗證據強度：</span>
+    <table style="margin-top:5px;border-collapse:collapse;font-size:11.5px">
+      <tr>
+        <td style="${{_th}};color:#2c6fad"><span data-en="Binding Sites">結合位點數</span></td>
+        <td><span data-en="log₂(sites+1)×2, capped at +3 (≥ 3 sites = max)">log₂(sites+1)×2，上限 +3（≥ 3 個位點即達最高分）</span></td>
+      </tr>
+      <tr>
+        <td style="${{_th}};color:#1a6e3c">internal</td>
+        <td><span data-en="Binding within exon body, not at junction boundary → +2">結合位點位於 exon 內部（非 junction 邊界）→ +2</span></td>
+      </tr>
+      <tr>
+        <td style="${{_th}};color:#e07b39"><span data-en="CLIP Exp.">CLIP 實驗</span></td>
+        <td><span data-en="CLIP experiment count &gt; 0 → +3 (binding validated in cell lines)">CLIP 實驗數量 &gt; 0 → +3（細胞株中實驗驗證的結合）</span></td>
+      </tr>
+      <tr>
+        <td style="${{_th}};color:#2c6fad">ENCORI</td>
+        <td><span data-en="Listed in ENCORI database → +2">收錄於 ENCORI 資料庫 → +2</span></td>
+      </tr>
+      <tr>
+        <td style="${{_th}};color:#1a6e3c"><span data-en="In circRNA">In circRNA</span></td>
+        <td><span data-en="Binding site falls within the circRNA span → +1">結合位點位於 circRNA 範圍內 → +1</span></td>
+      </tr>
+    </table>
+    <div style="margin-top:5px;font-size:11px;color:#888">
+      <span data-en="Priority score: log₂(sites+1)×2 (max +3) + internal (+2) + CLIP exp&gt;0 (+3) + ENCORI (+2) + in_circ (+1)">Priority score：log₂(sites+1)×2（上限 +3）+ internal（+2）+ CLIP 實驗（+3）+ ENCORI（+2）+ in circRNA（+1）</span>
+    </div>
   </div>` : '';
 
-  let html= seedNote + '<table class="itable"><thead><tr>';
+  let html= infoNote + '<table class="itable"><thead><tr>';
   headers.forEach((h,i)=>{{
     const tip=i===0?` title="${{priTitle}}"`:' title="Click to sort"';
     html+=`<th style="cursor:pointer;user-select:none" onclick="_sortITable(this)"${{tip}}>${{h}}${{i===0?' ▼':''}}</th>`;
