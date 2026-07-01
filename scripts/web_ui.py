@@ -571,13 +571,17 @@ def _update_paths_for_project(cfg: dict, new_pid: str) -> dict:
         for key in ("raw_dir", "trimmed_dir", "results_dir"):
             if key in cfg and old_pid in cfg[key]:
                 cfg[key] = cfg[key].replace(old_pid, new_pid)
-        # Also update sra_cache_dir / tmp_dir inside the download section
+
+    # Always re-derive sra_cache_dir / tmp_dir from the (now-updated) raw_dir.
+    # String-replace of old_pid is unreliable because download paths may reference
+    # an even older project that doesn't match the current project_id field.
+    raw = cfg.get("raw_dir", "")
+    if raw:
+        parent = str(Path(raw).parent)
         dl = cfg.get("download", {})
-        for key in ("sra_cache_dir", "tmp_dir"):
-            if key in dl and old_pid in dl[key]:
-                dl[key] = dl[key].replace(old_pid, new_pid)
-        if dl:
-            cfg["download"] = dl
+        dl["sra_cache_dir"] = parent + "/sra_cache"
+        dl["tmp_dir"]       = parent + "/sra_tmp"
+        cfg["download"] = dl
 
     # Ensure download section exists so download.smk doesn't KeyError
     if "download" not in cfg:

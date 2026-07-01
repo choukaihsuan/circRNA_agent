@@ -155,7 +155,7 @@ rule download_fastq:
                     if aria2c:
                         rc = run_cmd([
                             aria2c,
-                            "-x", "12", "-s", "12", "-k", "10M",
+                            "-x", "6", "-s", "6", "-k", "10M",
                             "--file-allocation=none",
                             "--retry-wait=10", "--max-tries=5",
                             "-c",  # resume partial download via .aria2 metadata
