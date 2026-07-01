@@ -244,29 +244,14 @@ def auth_log(email: str, action: str, ip: str = "") -> None:
         )
 
 
-def send_magic_link(to_email: str, link: str, lang: str = "zh") -> bool:
-    """Send magic link. Try Resend → SMTP → console (dev fallback)."""
-    if lang == "en":
-        subject = "circRNA Pipeline – Login Link"
-        html_body = f"""
-<p>Hello,</p>
-<p>Click the link below to sign in to circRNA Pipeline (valid for {TOKEN_MINUTES} minutes):</p>
-<p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
-<p style="color:#666;font-size:12px;">If you did not request this, please ignore this email.</p>
-"""
-    else:
-        subject = "circRNA Pipeline 登入連結"
-        html_body = f"""
-<p>您好，</p>
-<p>請點擊以下連結登入 circRNA Pipeline UI（連結 {TOKEN_MINUTES} 分鐘內有效）：</p>
-<p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
-<p style="color:#666;font-size:12px;">如非您本人操作，請忽略此信件。</p>
-"""
+def _send_html_email(to_email: str, subject: str, html_body: str,
+                     log_tag: str = "Email") -> bool:
+    """Shared email sender: Resend API → SMTP → Gmail → console fallback."""
     # 1. Resend API
     api_key = os.environ.get("RESEND_API_KEY", "")
     if api_key:
         try:
-            import urllib.request, urllib.parse
+            import urllib.request
             payload = json.dumps({
                 "from": os.environ.get("RESEND_FROM", "onboarding@resend.dev"),
                 "to": [to_email],
@@ -281,9 +266,11 @@ def send_magic_link(to_email: str, link: str, lang: str = "zh") -> bool:
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=10) as r:
-                return r.status < 300
+                if r.status < 300:
+                    print(f"[{log_tag}] Resend sent to {to_email}", flush=True)
+                    return True
         except Exception as e:
-            print(f"[Auth] Resend failed: {e}", flush=True)
+            print(f"[{log_tag}] Resend failed: {e}", flush=True)
 
     # 2. SMTP（自訂 SMTP_HOST）
     smtp_host = os.environ.get("SMTP_HOST", "")
@@ -305,9 +292,10 @@ def send_magic_link(to_email: str, link: str, lang: str = "zh") -> bool:
                 if smtp_user:
                     s.login(smtp_user, smtp_pass)
                 s.sendmail(from_addr, to_email, msg.as_string())
+            print(f"[{log_tag}] SMTP sent to {to_email}", flush=True)
             return True
         except Exception as e:
-            print(f"[Auth] SMTP failed: {e}", flush=True)
+            print(f"[{log_tag}] SMTP failed: {e}", flush=True)
 
     # 3. Gmail fallback（複用 notify.py 的 NOTIFY_EMAIL_FROM / NOTIFY_EMAIL_PASS）
     gmail_user = os.environ.get("NOTIFY_EMAIL_FROM", "")
@@ -324,17 +312,92 @@ def send_magic_link(to_email: str, link: str, lang: str = "zh") -> bool:
                 s.starttls()
                 s.login(gmail_user, gmail_pass)
                 s.sendmail(gmail_user, to_email, msg.as_string())
-            print(f"[Auth] Gmail sent to {to_email}", flush=True)
+            print(f"[{log_tag}] Gmail sent to {to_email}", flush=True)
             return True
         except Exception as e:
-            print(f"[Auth] Gmail failed: {e}", flush=True)
+            print(f"[{log_tag}] Gmail failed: {e}", flush=True)
 
-    # 3. Console fallback (dev / no mail configured)
+    # 4. Console fallback (dev / no mail configured)
     print(f"\n{'='*60}", flush=True)
-    print(f"[Magic Link] To: {to_email}", flush=True)
-    print(f"  {link}", flush=True)
+    print(f"[{log_tag}] To: {to_email} | Subject: {subject}", flush=True)
     print(f"{'='*60}\n", flush=True)
     return True  # always "succeeds" in dev mode
+
+
+def send_magic_link(to_email: str, link: str, lang: str = "zh") -> bool:
+    """Send magic link email."""
+    if lang == "en":
+        subject = "circRNA Pipeline – Login Link"
+        html_body = f"""
+<p>Hello,</p>
+<p>Click the link below to sign in to circRNA Pipeline (valid for {TOKEN_MINUTES} minutes):</p>
+<p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
+<p style="color:#666;font-size:12px;">If you did not request this, please ignore this email.</p>
+"""
+    else:
+        subject = "circRNA Pipeline 登入連結"
+        html_body = f"""
+<p>您好，</p>
+<p>請點擊以下連結登入 circRNA Pipeline UI（連結 {TOKEN_MINUTES} 分鐘內有效）：</p>
+<p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
+<p style="color:#666;font-size:12px;">如非您本人操作，請忽略此信件。</p>
+"""
+    return _send_html_email(to_email, subject, html_body, log_tag="Auth")
+
+
+def send_job_queued_email(to_email: str, gse_id: str, job_id: str,
+                          queue_pos: int, status_url: str) -> bool:
+    """Send pipeline queued notification with a direct link to the status page."""
+    pos_text = (f"排隊位置：第 {queue_pos} 位" if queue_pos > 1
+                else "即將開始執行（目前無排隊）")
+    subject = f"[circRNA Pipeline] {gse_id} 已加入工作佇列"
+    html_body = f"""
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
+            background:#f8fafc;padding:24px;border-radius:8px;">
+  <h2 style="color:#1d4ed8;margin-top:0;">circRNA Pipeline — 工作通知</h2>
+  <p style="color:#374151;">您的分析任務已成功加入工作佇列！</p>
+  <table style="border-collapse:collapse;width:100%;margin:16px 0;
+                background:#fff;border-radius:6px;overflow:hidden;
+                border:1px solid #e5e7eb;">
+    <tr style="background:#eff6ff;">
+      <td style="padding:10px 14px;font-weight:bold;color:#1e40af;width:120px;">資料集</td>
+      <td style="padding:10px 14px;font-size:16px;font-weight:bold;">{gse_id}</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px;font-weight:bold;color:#374151;">工作編號</td>
+      <td style="padding:10px 14px;font-family:monospace;color:#6b7280;">{job_id}</td>
+    </tr>
+    <tr style="background:#f9fafb;">
+      <td style="padding:10px 14px;font-weight:bold;color:#374151;">佇列狀態</td>
+      <td style="padding:10px 14px;color:#059669;">{pos_text}</td>
+    </tr>
+  </table>
+  <p style="margin:20px 0;">
+    <a href="{status_url}"
+       style="display:inline-block;background:#1d4ed8;color:#fff;
+              padding:12px 28px;border-radius:6px;text-decoration:none;
+              font-weight:bold;font-size:15px;">
+      &#128202; 查看執行進度
+    </a>
+  </p>
+  <p style="color:#9ca3af;font-size:12px;margin-top:24px;border-top:1px solid #e5e7eb;padding-top:12px;">
+    此信由 circRNA Pipeline 系統自動發送。點擊上方按鈕可追蹤最新執行狀態。
+  </p>
+</div>
+"""
+    return _send_html_email(to_email, subject, html_body, log_tag="Queue")
+
+
+def _notify_queued(user_email: str, gse_id: str, job_id: str) -> None:
+    """Fire-and-forget: send queued notification; never raises."""
+    if not user_email:
+        return
+    try:
+        pos = queue_position(job_id)
+        status_url = request.url_root.rstrip("/") + url_for("status_job", job_id=job_id)
+        send_job_queued_email(user_email, gse_id, job_id, pos, status_url)
+    except Exception as e:
+        print(f"[Queue] notify_queued failed: {e}", flush=True)
 
 
 # ── before_request: enforce login ─────────────────────────────────────────────
@@ -991,7 +1054,8 @@ def update():
         gse_id = cfg.get("project_id", "pipeline")
         job_id = generate_job_id(gse_id)
         log_path = job_log_path(job_id)
-        user_email = request.form.get("notify_email", "").strip()
+        user_email = (request.form.get("notify_email", "").strip()
+                      or session.get("email", ""))
         cmd = [
             _snake_bin(),
             "--snakefile", "workflow/Snakefile",
@@ -1002,6 +1066,7 @@ def update():
             "--rerun-incomplete",
         ]
         queue_add(job_id, gse_id, cmd, str(log_path), cores, user_email)
+        _notify_queued(user_email, gse_id, job_id)
         return redirect(url_for("queue_page"))
 
     return redirect(url_for("index"))
@@ -1039,9 +1104,11 @@ def run_gse():
 
     save_project_snapshot(cfg)
 
-    user_email = request.form.get("notify_email", "").strip()
+    user_email = (request.form.get("notify_email", "").strip()
+                  or session.get("email", ""))
     cmd = [_sys.executable, "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)]
     queue_add(job_id, gse_id, cmd, str(log_path), cores, user_email)
+    _notify_queued(user_email, gse_id, job_id)
     return redirect(url_for("queue_page"))
 
 
@@ -1127,7 +1194,7 @@ def run_manual():
     # ── Enqueue job (FIFO) ──────────────────────────────────────────────────────
     job_id   = generate_job_id(project_id)
     log_path = job_log_path(job_id)
-    user_email = notify_email  # already extracted above
+    user_email = notify_email or session.get("email", "")
     cmd = [
         _snake_bin(),
         "--snakefile", "workflow/Snakefile",
@@ -1136,6 +1203,7 @@ def run_manual():
         "--keep-going", "--rerun-incomplete",
     ]
     queue_add(job_id, project_id, cmd, str(log_path), cores, user_email)
+    _notify_queued(user_email, project_id, job_id)
     return redirect(url_for("queue_page"))
 
 
@@ -1257,7 +1325,7 @@ def run_local():
 
     job_id     = generate_job_id(project_id)
     log_path   = job_log_path(job_id)
-    user_email = request.form.get("notify_email", "").strip()
+    user_email = notify_email or session.get("email", "")
     cmd = [
         _snake_bin(),
         "--snakefile", "workflow/Snakefile",
@@ -1266,6 +1334,7 @@ def run_local():
         "--keep-going", "--rerun-incomplete",
     ]
     queue_add(job_id, project_id, cmd, str(log_path), cores, user_email)
+    _notify_queued(user_email, project_id, job_id)
     return redirect(url_for("queue_page"))
 
 
