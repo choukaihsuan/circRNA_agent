@@ -2226,7 +2226,7 @@ function showCircDetail(circId) {{
     const _rbpEl = document.getElementById('cm-rbp');
     _rbpEl.innerHTML = _buildInteractionTable(
       d.rbp||[], ['_priority','RBPName','bindingSites','_mapped','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
-      ['Priority','RBP','Sites','Mapped','Chr Position','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
+      ['Priority','RBP','Sites','Mapped','Site Positions (hg19)','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
     _applyLangToContainer(_rbpEl);
     _fetchSeqsInTable('cm-mirna');
     _fetchSeqsInTable('cm-rbp');
@@ -2950,9 +2950,17 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
              +`padding:2px 7px;font-size:11px">${{sc.toFixed(1)}}</span></td>`;
         return;
       }}
+      if(k==='bindingSites') {{
+        // ENCORI: bindingSites = clipExpNum (not position count); show max(bindingSites, sites.length)
+        const posCount=(r.sites||[]).length;
+        const v2=Math.max(parseInt(v)||0, posCount);
+        html+=`<td data-val="${{v2}}">${{v2}}</td>`;
+        return;
+      }}
       if(k==='_mapped') {{
         const mapped=(r.sites||[]).length;
-        const total=parseInt(r.bindingSites||0)||mapped;
+        // For ENCORI, bindingSites = clipExpNum (not position count); use max to avoid mapped > total
+        const total=Math.max(parseInt(r.bindingSites||0)||0, mapped);
         if(mapped===0) {{
           html+=`<td data-val="0"><span style="color:#bbb;font-size:11px">0</span></td>`;
         }} else if(mapped<total) {{
@@ -2964,7 +2972,24 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
         }}
         return;
       }}
-      if(k==='circ_pos') v=_absPos(v);
+      if(k==='circ_pos') {{
+        if(tableType==='rbp' && r.sites && r.sites.length>0) {{
+          // Per-site absolute hg19 positions with letter labels matching Structure tab
+          const _lbl='abcdefghijklmnopqrstuvwxyz';
+          let _posHtml=r.sites.map((s,i)=>{{
+            const _letter=_lbl[i%26];
+            const _rawPos=s.circ_pos||(s.circ_start+'–'+s.circ_end);
+            const _absP=_absPos(_rawPos);
+            return `<span style="white-space:nowrap;display:block">`
+              +`<b style="background:#555;color:#fff;border-radius:3px;padding:0 4px;`
+              +`font-size:10px;margin-right:3px;font-family:sans-serif">${{_letter}}</b>`
+              +`<span style="font-family:monospace;font-size:10px">${{_absP}}</span></span>`;
+          }}).join('');
+          html+=`<td style="line-height:1.7;vertical-align:top">${{_posHtml}}</td>`;
+          return;
+        }}
+        v=_absPos(v);
+      }}
       if(k==='_seq_logo') {{
         const rawPos=String(r.circ_pos||'');
         // ENCORI: absolute coord "chrN:start-end"
@@ -3552,43 +3577,58 @@ _makeSortable('tbl_biomarker');
             '})();'
             '</script>'
         )
-        if '</body>' in _mqc_raw:
-            _mqc_raw = _mqc_raw.replace('</body>', _nav_guard + '</body>', 1)
+        _last_body = _mqc_raw.rfind('</body>')
+        if _last_body >= 0:
+            _mqc_raw = _mqc_raw[:_last_body] + _nav_guard + _mqc_raw[_last_body:]
         else:
             _mqc_raw += _nav_guard
-        _mqc_srcdoc = _html_mod.escape(_mqc_raw, quote=True)
+        # Embed MultiQC as data:text/html;base64,... directly in the iframe src attribute.
+        # This is the only approach that avoids all four known issues in file:// context:
+        #   1. srcdoc >~1MB silently loads parent page (Chrome/Edge bug)
+        #   2. <script type="application/json"> closed early by </script> inside MultiQC
+        #   3. blob:null iframe #anchor clicks resolve to parent file URL (Edge bug)
+        #   4. document.write() context confusion makes MultiQC JS execute in parent frame
+        # Base64 alphabet (A-Za-z0-9+/=) has no HTML-special chars, so the attribute is safe.
+        # Anchor links (href="#section") inside the data: iframe trigger same-document
+        # fragment navigation — they scroll within the iframe, never navigate the parent.
+        _mqc_b64 = base64.b64encode(_mqc_raw.encode('utf-8')).decode('ascii')
         multiqc_section = (
-            '<details id="qc-section" style="margin:16px 0 24px 0">\n'
+            '<details id="qc-section" open style="margin:16px 0 24px 0">\n'
             '  <summary style="cursor:pointer;padding:10px 16px;background:#f0f9ff;'
             'border:1px solid #bae6fd;border-radius:8px;font-size:15px;font-weight:600;'
             'color:#0369a1;list-style:none;display:flex;align-items:center;gap:8px">\n'
-            '    <span>▶</span> \U0001f4ca QC Report (MultiQC)\n'
+            '    <span>▼</span> \U0001f4ca QC Report (MultiQC)\n'
             '    <span style="font-size:12px;font-weight:400;color:#64748b;margin-left:4px">'
-            '（點擊展開）</span>\n'
+            '（點擊折疊）</span>\n'
             '  </summary>\n'
             '  <div style="margin-top:8px">\n'
-            '    <iframe id="qc-iframe" srcdoc="' + _mqc_srcdoc + '"\n'
-            '      style="width:100%;height:850px;border:1px solid #e2e8f0;border-radius:6px"\n'
+            '    <iframe id="qc-iframe"\n'
+            '      src="data:text/html;base64,' + _mqc_b64 + '"\n'
+            '      style="width:100%;height:850px;border:1px solid #e2e8f0;border-radius:6px;background:#fff"\n'
             '      title="MultiQC Report"></iframe>\n'
             '  </div>\n'
             '</details>\n'
             '<script>\n'
             '(function(){\n'
             '  var det=document.getElementById("qc-section");\n'
-            '  if(!det) return;\n'
-            '  det.addEventListener("toggle",function(){\n'
-            '    if(!this.open) return;\n'
-            '    var fr=document.getElementById("qc-iframe");\n'
-            '    function _reflow(){\n'
-            '      try{\n'
-            '        var hc=fr.contentWindow.Highcharts;\n'
-            '        if(hc&&hc.charts) hc.charts.forEach(function(c){if(c)c.reflow();});\n'
-            '      }catch(e){}\n'
-            '    }\n'
-            '    setTimeout(_reflow,200);\n'
-            '    setTimeout(_reflow,700);\n'
-            '    setTimeout(_reflow,1500);\n'
-            '  });\n'
+            '  if(det){\n'
+            '    det.addEventListener("toggle",function(){\n'
+            '      var sp=det.querySelector("summary span:first-child");\n'
+            '      var lb=det.querySelector("summary span:last-child");\n'
+            '      if(sp) sp.textContent=this.open?"▼":"▶";\n'
+            '      if(lb) lb.textContent=this.open?"（點擊折疊）":"（點擊展開）";\n'
+            '      if(this.open){\n'
+            '        var fr=document.getElementById("qc-iframe");\n'
+            '        function _r(){\n'
+            '          try{\n'
+            '            var hc=fr.contentWindow.Highcharts;\n'
+            '            if(hc&&hc.charts) hc.charts.forEach(function(c){if(c)c.reflow();});\n'
+            '          }catch(e){}\n'
+            '        }\n'
+            '        setTimeout(_r,300); setTimeout(_r,800);\n'
+            '      }\n'
+            '    });\n'
+            '  }\n'
             '})();\n'
             '</script>'
         )

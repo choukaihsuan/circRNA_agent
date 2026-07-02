@@ -21,6 +21,12 @@
                  display:flex; align-items:center; gap:4px; margin-left:auto; }
     .back-link:hover { text-decoration:underline; }
 
+    /* ── Lang switcher ── */
+    .lang-btn { font-size:12px; background:none; border:1px solid #cbd5e1;
+                border-radius:6px; padding:3px 10px; cursor:pointer;
+                color:#64748b; font-weight:600; transition:all 0.15s; }
+    .lang-btn:hover { border-color:var(--primary); color:var(--primary); }
+
     /* ── Card ── */
     .card { background:white; border:1px solid var(--border);
             border-radius:var(--radius); padding:20px; margin-bottom:20px; }
@@ -115,42 +121,48 @@
 
   <div class="header">
     <span style="font-size:28px">📊</span>
-    <h1>Pipeline 執行狀態</h1>
-    <a href="/" class="back-link">← 回到設定</a>
-    <a href="/logout" style="font-size:12px;color:#94a3b8;text-decoration:none;margin-left:12px;">登出</a>
+    <h1 data-en="Pipeline Status">Pipeline 執行狀態</h1>
+    <a href="/" class="back-link" data-en="← Settings">← 回到設定</a>
+    <a href="/logout" style="font-size:12px;color:#94a3b8;text-decoration:none;margin-left:12px;"
+       data-en="Logout">登出</a>
+    <button class="lang-btn" id="lang-btn" onclick="switchLang()" style="margin-left:8px">EN</button>
   </div>
 
   <!-- Job ID card -->
   {% if job %}
   <div class="job-card">
     <div class="job-id-block">
-      <div class="job-id-label">任務編號</div>
+      <div class="job-id-label" data-en="Job ID">任務編號</div>
       <div class="job-id-code" id="job-id-code">{{ job_id }}</div>
     </div>
-    <button class="copy-btn" id="copy-btn" onclick="copyJobId()">複製編號</button>
+    <button class="copy-btn" id="copy-btn" onclick="copyJobId()" data-en="Copy ID">複製編號</button>
     <div class="job-meta">
       <div class="job-meta-gse">{{ job.gse_id }}</div>
-      <div class="job-meta-time">啟動於 {{ job.start_time }}</div>
+      <div class="job-meta-time">
+        <span data-en="Started">啟動於</span> {{ job.start_time }}
+      </div>
     </div>
   </div>
   {% elif job_id %}
   <div style="padding:14px 18px;background:#fee2e2;border:1px solid #fca5a5;
               border-radius:10px;margin-bottom:20px;font-size:14px;color:#991b1b;">
-    找不到任務編號：<strong>{{ job_id }}</strong>，請確認編號是否正確。
+    <span data-en="Job not found:">找不到任務編號：</span><strong>{{ job_id }}</strong>
+    <span data-en=", please check the ID.">，請確認編號是否正確。</span>
   </div>
   {% endif %}
 
-  <!-- Queue position banner (shown when job is pending) -->
+  <!-- Queue position banner -->
   {% if queue_status and queue_status.status == 'pending' %}
   <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px;
               padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">
     <span style="font-size:24px;">⏳</span>
     <div>
-      <div style="font-weight:700;font-size:15px;">排隊等待中</div>
+      <div style="font-weight:700;font-size:15px;" data-en="Queued">排隊等待中</div>
       <div style="font-size:13px;color:#92400e;margin-top:2px;">
-        目前排隊位置：第 <strong>{{ queue_status.position }}</strong> 位，
-        pipeline 完成前一個工作後將自動執行。
-        <a href="/queue" style="color:var(--primary);margin-left:8px;">查看完整佇列 →</a>
+        <span data-en="Position in queue:">目前排隊位置：第</span>
+        <strong>{{ queue_status.position }}</strong>
+        <span data-en="— will start automatically when the current job finishes.">位，pipeline 完成前一個工作後將自動執行。</span>
+        <a href="/queue" style="color:var(--primary);margin-left:8px;" data-en="View queue →">查看完整佇列 →</a>
       </div>
     </div>
   </div>
@@ -169,14 +181,14 @@
     <div class="prog-wrap">
       <div class="prog-fill" id="prog-fill" style="width:0%"></div>
     </div>
-    <div class="prog-label" id="prog-label">— / — 步驟完成</div>
+    <div class="prog-label" id="prog-label">— / — <span data-en="steps completed">步驟完成</span></div>
   </div>
 
   <!-- Stage status grid -->
   <div class="card">
-    <div class="card-title">分析步驟</div>
+    <div class="card-title" data-en="Analysis Steps">分析步驟</div>
     <div class="stage-grid" id="stages-grid">
-      <div style="color:#94a3b8;font-size:13px">載入中…</div>
+      <div style="color:#94a3b8;font-size:13px" data-en="Loading…">載入中…</div>
     </div>
   </div>
 
@@ -184,10 +196,10 @@
   <div class="card">
     <div class="log-toggle" id="log-toggle" onclick="toggleLog()">
       <span id="log-caret">▶</span>
-      執行 Log
+      <span data-en="Execution Log">執行 Log</span>
       <label class="auto-label" onclick="event.stopPropagation()">
         <input type="checkbox" id="auto-refresh" checked>
-        每 5 秒自動更新
+        <span data-en="Auto-refresh every 5s">每 5 秒自動更新</span>
       </label>
     </div>
     <div id="log-wrap" style="display:none">
@@ -196,18 +208,15 @@
   </div>
 
   <div class="btn-row">
-    <a href="/" class="btn btn-back">← 回到設定</a>
-    <button onclick="refreshAll()" class="btn btn-refresh">↻ 立即更新</button>
+    <a href="/" class="btn btn-back" data-en="← Settings">← 回到設定</a>
+    <button onclick="refreshAll()" class="btn btn-refresh" data-en="↻ Refresh">↻ 立即更新</button>
     {% if job_id %}
-    <a href="/qc/{{ job_id }}" target="_blank" class="btn btn-qc" id="qc-btn" style="display:none">
-      🔬 QC 報告
-    </a>
-    <a href="/report/{{ job_id }}" target="_blank" class="btn btn-report" id="report-btn" style="display:none">
-      📄 分析報告
-    </a>
-    <a href="/download/{{ job_id }}" class="btn btn-report" id="dl-report-btn" style="display:none;background:#15803d;">
-      ⬇ 下載報告
-    </a>
+    <a href="/qc/{{ job_id }}" target="_blank" class="btn btn-qc" id="qc-btn" style="display:none"
+       data-en="🔬 QC Report">🔬 QC 報告</a>
+    <a href="/report/{{ job_id }}" target="_blank" class="btn btn-report" id="report-btn" style="display:none"
+       data-en="📄 Analysis Report">📄 分析報告</a>
+    <a href="/download/{{ job_id }}" class="btn btn-report" id="dl-report-btn" style="display:none;background:#15803d;"
+       data-en="⬇ Download Report">⬇ 下載報告</a>
     {% endif %}
   </div>
 
@@ -216,15 +225,67 @@
   const JOB_ID = {{ ('"' + job_id + '"') | safe if job_id else 'null' }};
   let timer = null;
   let logOpen = false;
+  let _LANG = localStorage.getItem('circrna_lang') || 'zh';
+
+  /* ── Language switcher ── */
+  function switchLang() {
+    _LANG = _LANG === 'zh' ? 'en' : 'zh';
+    localStorage.setItem('circrna_lang', _LANG);
+    applyLang();
+    refreshProgress(); // immediately re-render stage labels in new language
+  }
+
+  function applyLang() {
+    const btn = document.getElementById('lang-btn');
+    btn.textContent = _LANG === 'zh' ? 'EN' : '中文';
+    document.querySelectorAll('[data-en]').forEach(el => {
+      if (_LANG === 'en') {
+        if (!el.dataset.zh) el.dataset.zh = el.innerHTML;
+        el.innerHTML = el.dataset.en;
+      } else {
+        if (el.dataset.zh !== undefined) el.innerHTML = el.dataset.zh;
+      }
+    });
+    // Re-render dynamic content with new language
+    const label = document.getElementById('status-label');
+    if (label && label.dataset.key) _updateStatusLabel(label.dataset.key);
+    const progLabel = document.getElementById('prog-label');
+    if (progLabel && progLabel.dataset.fin !== undefined) {
+      _setProgLabel(parseInt(progLabel.dataset.fin), parseInt(progLabel.dataset.tot), parseInt(progLabel.dataset.pct));
+    }
+  }
+
+  function _T(zh, en) { return _LANG === 'en' ? en : zh; }
+
+  function _updateStatusLabel(key) {
+    const el = document.getElementById('status-label');
+    if (!el) return;
+    el.dataset.key = key;
+    const map = {
+      running: _T('流程執行中…', 'Running…'),
+      queued:  _T('排隊等待中…', 'Queued…'),
+      idle:    _T('流程閒置（未執行）', 'Idle'),
+    };
+    el.textContent = map[key] || key;
+  }
+
+  function _setProgLabel(fin, tot, pct) {
+    const el = document.getElementById('prog-label');
+    if (!el) return;
+    el.dataset.fin = fin; el.dataset.tot = tot; el.dataset.pct = pct;
+    el.textContent = tot > 0
+      ? _T(`${fin} / ${tot} 步驟完成（${pct}%）`, `${fin} / ${tot} steps completed (${pct}%)`)
+      : _T('— / — 步驟完成', '— / — steps completed');
+  }
 
   function copyJobId() {
     if (!JOB_ID) return;
     navigator.clipboard.writeText(JOB_ID).then(() => {
       const btn = document.getElementById('copy-btn');
-      btn.textContent = '已複製！';
+      btn.textContent = _T('已複製！', 'Copied!');
       btn.classList.add('copied');
       setTimeout(() => {
-        btn.textContent = '複製編號';
+        btn.textContent = _T('複製編號', 'Copy ID');
         btn.classList.remove('copied');
       }, 2000);
     });
@@ -260,25 +321,26 @@
     }
   }
 
-  const BADGE_LABEL = { pending:'等待中', running:'執行中', done:'完成', error:'失敗' };
+  const BADGE_LABEL_ZH = { pending:'等待中', running:'執行中', done:'完成', error:'失敗' };
+  const BADGE_LABEL_EN = { pending:'Pending', running:'Running', done:'Done',  error:'Failed' };
 
   function renderStages(stages) {
     if (!stages || !stages.length)
-      return '<div style="color:#94a3b8;font-size:13px">無法取得進度資訊</div>';
+      return `<div style="color:#94a3b8;font-size:13px">${_T('無法取得進度資訊','Unable to fetch progress')}</div>`;
+    const BL = _LANG === 'en' ? BADGE_LABEL_EN : BADGE_LABEL_ZH;
     return stages.map(s => {
-      // Show "N/M 樣本" for per-sample stages; plain count for single-step ones
       let count = '';
       if (s.started > 1) {
-        count = `${s.done}/${s.started} 樣本`;
+        count = `${s.done}/${s.started} ${_T('樣本','samples')}`;
       } else if (s.started === 1) {
-        count = s.done >= 1 ? '完成' : '';
+        count = s.done >= 1 ? _T('完成','Done') : '';
       }
       const dimClass = s.status === 'pending' ? ' pending' : '';
       return `
         <div class="stage-row${dimClass}">
           ${stageIcon(s.status)}
-          <span class="stage-label">${s.label}</span>
-          <span class="stage-badge badge-${s.status}">${BADGE_LABEL[s.status] || s.status}</span>
+          <span class="stage-label">${_LANG === 'en' && s.label_en ? s.label_en : s.label}</span>
+          <span class="stage-badge badge-${s.status}">${BL[s.status] || s.status}</span>
           <span class="stage-count">${count}</span>
         </div>`;
     }).join('');
@@ -292,25 +354,19 @@
       const pct = data.total_count > 0
         ? Math.round(data.finished_count / data.total_count * 100) : 0;
       document.getElementById('prog-fill').style.width = pct + '%';
-      document.getElementById('prog-label').textContent = data.total_count > 0
-        ? `${data.finished_count} / ${data.total_count} 步驟完成（${pct}%）`
-        : '— / — 步驟完成';
+      _setProgLabel(data.finished_count, data.total_count, pct);
 
-      const dot   = document.getElementById('status-dot');
-      const label = document.getElementById('status-label');
-      dot.className     = 'dot ' + (data.running ? 'dot-run' : 'dot-idle');
-      label.textContent = data.running ? '流程執行中…' : '流程閒置（未執行）';
+      const dot = document.getElementById('status-dot');
+      dot.className = 'dot ' + (data.running ? 'dot-run' : 'dot-idle');
+      _updateStatusLabel(data.running ? 'running' : 'idle');
 
       document.getElementById('stages-grid').innerHTML = renderStages(data.stages);
 
-      // Show QC button: file exists on disk OR multiqc stage done
       const qcBtn = document.getElementById('qc-btn');
       if (qcBtn) {
         const qcStage = data.stages && data.stages.find(s => s.id === 'multiqc');
-        const qcDone = (qcStage && qcStage.status === 'done') || data.qc_exists;
-        qcBtn.style.display = qcDone ? '' : 'none';
+        qcBtn.style.display = ((qcStage && qcStage.status === 'done') || data.qc_exists) ? '' : 'none';
       }
-      // Show report button: file exists on disk OR generate_report stage done
       const reportBtn = document.getElementById('report-btn');
       const dlReportBtn = document.getElementById('dl-report-btn');
       if (reportBtn) {
@@ -319,7 +375,7 @@
         reportBtn.style.display = reportDone ? '' : 'none';
         if (dlReportBtn) dlReportBtn.style.display = reportDone ? '' : 'none';
       }
-    } catch (_) { /* network error — ignore */ }
+    } catch (_) {}
   }
 
   async function refreshLog() {
@@ -350,6 +406,7 @@
   // Init
   document.getElementById('log-box').innerHTML =
     colorizeLog(document.getElementById('log-box').textContent);
+  if (_LANG === 'en') applyLang();
   refreshProgress();
   startTimer();
 </script>

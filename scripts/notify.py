@@ -61,7 +61,7 @@ _ATTACH_LIMIT_MB = 20  # Gmail attachment size limit
 
 def send_email(subject: str, body: str, attachment_path: str = "") -> None:
     if not all([SMTP_USER, SMTP_PASS, EMAIL_TO]):
-        print("[notify] Email 設定不完整（NOTIFY_EMAIL_FROM / NOTIFY_EMAIL_PASS / NOTIFY_EMAIL_TO），跳過")
+        print("[notify] Email not configured (NOTIFY_EMAIL_FROM / NOTIFY_EMAIL_PASS / NOTIFY_EMAIL_TO), skipping")
         return
 
     msg = MIMEMultipart()
@@ -83,7 +83,7 @@ def send_email(subject: str, body: str, attachment_path: str = "") -> None:
             )
             msg.attach(part)
         else:
-            print(f"[notify] 報告 {size_mb:.1f} MB > {_ATTACH_LIMIT_MB} MB，略過附件")
+            print(f"[notify] Report {size_mb:.1f} MB > {_ATTACH_LIMIT_MB} MB, skipping attachment")
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
@@ -93,7 +93,7 @@ def send_email(subject: str, body: str, attachment_path: str = "") -> None:
             s.send_message(msg)
         print(f"[notify] Email → {EMAIL_TO}")
     except Exception as exc:
-        print(f"[notify] Email 失敗: {exc}")
+        print(f"[notify] Email failed: {exc}")
 
 
 def send_slack(text: str) -> None:
@@ -107,16 +107,16 @@ def send_slack(text: str) -> None:
     )
     try:
         urllib.request.urlopen(req, timeout=10)
-        print("[notify] Slack 通知已發送")
+        print("[notify] Slack notification sent")
     except Exception as exc:
-        print(f"[notify] Slack 失敗: {exc}")
+        print(f"[notify] Slack failed: {exc}")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def notify_start(project_id: str) -> None:
     now  = datetime.now().strftime("%Y-%m-%d %H:%M")
-    text = f"🚀 [{project_id}] Pipeline 啟動（{now}）"
+    text = f"🚀 [{project_id}] Pipeline started ({now})"
     send_slack(text)
     print(f"[notify] start: {text}")
 
@@ -126,29 +126,29 @@ def notify_success(project_id: str, report_path: str = "",
     now   = datetime.now().strftime("%Y-%m-%d %H:%M")
     stats = stats or {}
 
-    subject = f"[circRNA Agent] {project_id} 分析完成 ✅"
+    subject = f"[circRNA Agent] {project_id} Analysis Complete ✅"
     body = f"""
-<h2 style="color:#16a34a">✅ circRNA 分析完成</h2>
+<h2 style="color:#16a34a">✅ circRNA Analysis Complete</h2>
 <table style="border-collapse:collapse;font-family:sans-serif">
-  <tr><td style="padding:4px 12px 4px 0"><b>專案</b></td>
+  <tr><td style="padding:4px 12px 4px 0"><b>Project</b></td>
       <td>{project_id}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>完成時間</b></td>
+  <tr><td style="padding:4px 12px 4px 0"><b>Completed at</b></td>
       <td>{now}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>總 circRNA 數</b></td>
+  <tr><td style="padding:4px 12px 4px 0"><b>Total circRNAs</b></td>
       <td>{stats.get("total_circ", "N/A")}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>顯著 DECs</b></td>
+  <tr><td style="padding:4px 12px 4px 0"><b>Significant DECs</b></td>
       <td>{stats.get("n_sig", "N/A")}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>上調</b></td>
+  <tr><td style="padding:4px 12px 4px 0"><b>Up-regulated</b></td>
       <td>{stats.get("n_up", "N/A")}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>下調</b></td>
+  <tr><td style="padding:4px 12px 4px 0"><b>Down-regulated</b></td>
       <td>{stats.get("n_down", "N/A")}</td></tr>
 </table>
-{f'<p>報告已附加，或至 server 查看：<br><code>{report_path}</code></p>' if report_path else ''}
+{f'<p>Report attached, or view on server:<br><code>{report_path}</code></p>' if report_path else ''}
 """
     slack_text = (
-        f"✅ *{project_id}* 分析完成（{now}）\n"
-        f"顯著 circRNA: {stats.get('n_sig','N/A')} 個 "
-        f"（↑{stats.get('n_up','?')} ↓{stats.get('n_down','?')}）"
+        f"✅ *{project_id}* analysis complete ({now})\n"
+        f"Significant circRNAs: {stats.get('n_sig','N/A')} "
+        f"(↑{stats.get('n_up','?')} ↓{stats.get('n_down','?')})"
     )
 
     send_email(subject, body, report_path)
@@ -164,17 +164,17 @@ def notify_failure(project_id: str, failed_rule: str = "unknown",
         lines    = Path(log_path).read_text(errors="replace").splitlines()
         log_tail = "\n".join(lines[-50:])
 
-    subject = f"[circRNA Agent] {project_id} 分析失敗 ❌ ({failed_rule})"
+    subject = f"[circRNA Agent] {project_id} Analysis Failed ❌ ({failed_rule})"
     body = f"""
-<h2 style="color:#dc2626">❌ Pipeline 失敗</h2>
-<p><b>專案：</b>{project_id}<br>
-<b>失敗 rule：</b>{failed_rule}<br>
-<b>時間：</b>{now}</p>
-<h3>Log（最後 50 行）</h3>
+<h2 style="color:#dc2626">❌ Pipeline Failed</h2>
+<p><b>Project:</b> {project_id}<br>
+<b>Failed rule:</b> {failed_rule}<br>
+<b>Time:</b> {now}</p>
+<h3>Log (last 50 lines)</h3>
 <pre style="background:#f5f5f5;padding:10px;font-size:12px">{log_tail}</pre>
 """
     slack_text = (
-        f"❌ *{project_id}* 失敗（{now}）\n"
+        f"❌ *{project_id}* failed ({now})\n"
         f"Rule: `{failed_rule}`"
     )
 

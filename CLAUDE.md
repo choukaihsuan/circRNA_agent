@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，🔜 待執行）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -469,6 +469,23 @@ Web UI 主頁新增常駐卡片，使用者點標題行即可展開；內容包�
 **手動 SRR 清單 → 方式二 CSV 上傳範例表**（`templates/index.html`，2026-06-14）：
 「CSV 格式範例」說明文字下方加入 GSE113230 的 6 行示範表格（srr_id / condition 兩欄，斑馬紋底色，寬度 340px），讓使用者清楚知道正確格式。
 
+**PDF 下載按鈕**（`templates/index.html`，2026-07-02）：
+Dataset Selection Guide 和 Pipeline Tutorial 折疊區塊標題列各加一個「⬇ PDF」按鈕；點擊後呼叫 `printSection(type, event)` 在新視窗開啟嵌入完整 CSS 的 HTML 頁面並自動觸發 `window.print()`，使用者存為 PDF。`event.stopPropagation()` 防止點擊觸發折疊。Tutorial 所有分頁在列印視窗自動展開（`.tut-panel{display:block!important}`）。支援中英文雙語（`localStorage.getItem('circrna_lang')`）。
+
+**Queue/Status 頁面雙語支援**（`templates/queue.html`、`templates/status.html`，2026-07-02）：
+- 兩個頁面均加入右上角 lang-btn（中文/EN 切換），採用 `data-en` 屬性儲存英文文字，`switchLang()` 函式切換
+- Queue 頁面新增手動執行中任務提示橫幅（`ext_gse` 正在手動執行時，說明下一個佇列任務將在完成後自動啟動）
+- Status 頁面新增 Job ID 顯示 + Copy 按鈕，啟動時間標籤雙語化
+
+**Queue 通知 Email**（`web_ui.py`，2026-07-02）：
+工作加入佇列後，`notify_queued_job(gse_id, job_id, queue_pos)` 發送 HTML 格式通知信件（dataset / Job ID / 佇列位置 / 進度頁連結），使用 Resend API → SMTP → console fallback 與 magic link 相同機制。
+
+**PIPELINE_STAGES 雙語化**（`web_ui.py`，2026-07-02）：
+`PIPELINE_STAGES` 由 tuple `(rule_id, label_zh, label_en)` 組成；API 回應及前端均可依語言顯示對應 stage 名稱。
+
+**Pipeline 流程圖更新**（`scripts/static/pipeline_diagram.png`，2026-07-02）：
+替換為使用者手繪版本（`流程圖1.png`）；生成腳本保存於 `scripts/gen_pipeline_diagram.py`（使用 matplotlib `FancyArrowPatch`，版本號 `?v=6`）。
+
 **`_fetch_geo_title(gse_id)`**（`web_ui.py`，2026-06-19）：
 呼叫 `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gds&id=200{NNNNNN}&retmode=json`，
 從 `result[uid]["title"]` 取研究標題。GEO uid 公式：`"200" + GSE 數字部分`（GSE130078 → 200130078）。
@@ -898,6 +915,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | Web UI 頁面被瀏覽器自動翻譯為韓文或日文 | Chrome/Edge 偵測到 `<html lang="zh-TW">` 的中文頁面後，若瀏覽器語言偏好含韓文/日文或使用者曾接受翻譯提示，會自動將整頁翻譯 | 三個模板（`index.html`/`status.html`/`login.html`）均加入 `translate="no"` 屬性至 `<html>` 標籤，並在 `<head>` 新增 `<meta name="google" content="notranslate">` 和 `<meta http-equiv="Content-Language" content="zh-TW">`（2026-07-01）|
 | web_ui 啟動後 log 停止更新（stdout pipe 斷裂）| `nohup conda run -n ciriquant python scripts/web_ui.py >> logs/web_ui.log` 中，`conda run` 建立的子進程 stdout/stderr 走 pipe 回傳給 conda 進程，conda 進程在 nohup shell session 關閉後 pipe 斷裂，log 不再更新；但 python 進程本身仍存活 | 改用直接指定 conda env python 路徑：`nohup /home/choukaihsuan/miniconda3/envs/ciriquant/bin/python scripts/web_ui.py --host 0.0.0.0 --port 5000 >> logs/web_ui.log 2>&1 &`；stdout 直接重導向 log 檔，不過 conda run 的 pipe 層 |
 | `run_manual` 提交後 `sample_groups.csv` 遺失 `patient_id` 欄 | `run_manual` 路由固定只寫 `srr_id`/`condition` 兩欄到 `sample_groups.csv`，CSV 上傳中的 `patient_id`/`description` 欄直接被丟棄 | 手動在 server 補充 `patient_id` 欄（見 GSE229705 段落的補充指令）；長期解法：`run_manual` 讀取 CSV 時若有 `patient_id` 欄則一起寫入 `sample_groups.csv` |
+| RBP Binding modal 的 Site Positions 欄顯示相對座標 | ENCORI `circ_pos` 格式為 `chr6:148390208-148390208`（絕對座標），`_absPos()` 誤以為是相對座標再加 `chromStart`，導致超出染色體長度回傳 "N/A" | `_absPos()` 加偵測：若 `circ_pos` 以 `chr` 開頭則視為絕對座標直接使用（已修正，`generate_report.py`）；此外 RBP Binding modal 改為顯示 per-site 字母標籤（a/b/c…）+ 絕對 hg19 座標，與 Circular Structure SVG badge 一一對應（2026-07-02）|
+| RBP 表格 `bindingSites` 欄顯示 ENCORI clip 次數而非 site 數 | ENCORI 的 `bindingSites` 欄是 CLIP 實驗次數（clipExpNum），不是 binding site 位置數；直接顯示導致 mapped > total 的矛盾 | `bindingSites` cell 改為 `Math.max(bindingSites, sites.length)`，取兩者較大值確保 mapped 不超過 total（`generate_report.py`，2026-07-02）|
 
 ---
 
@@ -1060,7 +1079,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-07-01 完成 PRJNA553289，GSE229705 待執行）
+## 目前執行進度（2026-07-02 完成 GSE229705，所有 11 個資料集均完成）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1625,7 +1644,9 @@ SCLC 小細胞肺癌手術切除組織，tumor vs. adjacent normal，6 pairs（1
 
 ---
 
-## GSE229705（LUAD 肺腺癌，配對 tumor/normal，🔜 待執行）
+## GSE229705（LUAD 肺腺癌，配對 tumor/normal，✅ 完成 2026-07-02）
+
+**✅ 完成（2026-07-02 16:06）。** 報告位置：`~/GSE229705_results/report.html`（server，8.3MB）；本機備份：`/mnt/c/Users/User/Desktop/circRNA agent report/GSE229705_report.html`
 
 NYU LUAD 肺腺癌手術切除組織，tumor vs. adjacent normal，123 對配對，Illumina NovaSeq 6000，100bp PE，Total RNA（Trio RNA-Seq, Tecan Genomics, rRNA Deplete）。選 6 對（T/N 深度最平衡且總深度最高）。
 
@@ -1666,6 +1687,13 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 ```
 
 **論文參考**：Sakata et al. 2024 *Nature Genetics*，PMC10632519；LUAD tumor-adjacent inflammation cohort，123 pairs。
+
+**主要數值結果**：
+- 偵測：consensus circRNAs → filterByExpr 後 **29 tested**（edgeR，配對設計 `~patient+condition` 自由度有限）
+- DE（edgeR_ciriquant）：**1 significant**（nominal p < 0.05；n=6 pairs + 100bp reads 偵測數少）
+- DE（DESeq2）：**162 significant**；DE（limma-voom）：**0 significant**
+- predict_interactions：union mode（三方法 top-50 聯集）
+- report：study_title = `LUAD Lung Adenocarcinoma — tumor vs. adjacent normal tissues, 6 pairs (NYU Langone Health, Sakata et al. 2024 Nature Genetics)`
 
 ---
 

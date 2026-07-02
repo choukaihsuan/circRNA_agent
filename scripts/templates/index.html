@@ -178,6 +178,15 @@
                          margin:20px 0 8px; padding-bottom:4px;
                          border-bottom:1px solid #ede9fe; }
 
+    /* ── PDF download button ── */
+    .btn-pdf { display:inline-flex; align-items:center; gap:4px;
+               padding:4px 10px; font-size:11px; font-weight:700;
+               background:#f8fafc; color:#64748b;
+               border:1px solid #cbd5e1; border-radius:6px;
+               cursor:pointer; transition:all .15s; white-space:nowrap;
+               text-decoration:none; }
+    .btn-pdf:hover { background:#f1f5f9; border-color:#94a3b8; color:#374151; }
+
     /* ── Buttons ── */
     .btn-row { display: flex; gap: 12px; margin-top: 24px; }
     .btn { padding: 11px 24px; border: none; border-radius: 8px; font-size: 14px;
@@ -333,7 +342,11 @@
         <div class="section-title" data-en="Dataset Guide">選擇指引</div>
         <h2 style="margin-bottom:0" data-en="📋 Dataset Selection Guide">📋 資料集選擇指引</h2>
       </div>
-      <span id="guide-arrow" style="font-size:20px;color:var(--muted)">▶</span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn-pdf" onclick="printSection('guide',event)"
+                data-en="⬇ PDF">⬇ PDF</button>
+        <span id="guide-arrow" style="font-size:20px;color:var(--muted)">▶</span>
+      </div>
     </div>
     <div id="guide-body" class="guide-body">
       <p style="font-size:13px;color:var(--muted);margin:12px 0 14px">
@@ -413,7 +426,11 @@
         <div class="section-title" style="color:#7c3aed" data-en="Tutorial">使用教學</div>
         <h2 style="margin-bottom:0" data-en="📖 Pipeline Tutorial">📖 Pipeline 使用教學</h2>
       </div>
-      <span id="tut-arrow" style="font-size:20px;color:var(--muted)">▶</span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn-pdf" onclick="printSection('tutorial',event)"
+                data-en="⬇ PDF">⬇ PDF</button>
+        <span id="tut-arrow" style="font-size:20px;color:var(--muted)">▶</span>
+      </div>
     </div>
 
     <div id="tut-body" class="tut-body">
@@ -433,7 +450,7 @@
 
         <!-- Pipeline diagram -->
         <div style="text-align:center;margin:4px 0 20px;">
-          <img src="/static/pipeline_diagram.png?v=5" alt="circRNA Analysis Pipeline"
+          <img src="/static/pipeline_diagram.png?v=6" alt="circRNA Analysis Pipeline"
                style="max-width:100%;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.08);cursor:zoom-in;"
                onclick="document.getElementById('diagram-lightbox').style.display='flex';"
                title="點擊放大 / Click to zoom">
@@ -1041,7 +1058,7 @@
             <label data-en="Threads (per job)">Threads（每個 job）</label>
             <input type="number" name="threads" min="1" max="64"
                    value="{{ config.get('threads', 8) }}">
-            <div class="param-hint">CPU 核心數 / sample</div>
+            <div class="param-hint" data-en="CPU cores / sample">CPU 核心數 / sample</div>
           </div>
 
         </div>
@@ -1322,7 +1339,7 @@
 
     'tut-workflow': `
       <div style="text-align:center;margin:4px 0 20px;">
-        <img src="/static/pipeline_diagram.png?v=5" alt="circRNA Analysis Pipeline"
+        <img src="/static/pipeline_diagram.png?v=6" alt="circRNA Analysis Pipeline"
              style="max-width:100%;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.08);cursor:zoom-in;"
              onclick="document.getElementById('diagram-lightbox').style.display='flex';"
              title="Click to zoom">
@@ -1563,6 +1580,119 @@
     btn.classList.add('active');
     document.getElementById(panelId).classList.add('active');
   }
+
+  // ── PDF print ────────────────────────────────────────────────────────────────
+  function printSection(type, e) {
+    e.stopPropagation();
+    const isEn = localStorage.getItem('circrna_lang') === 'en';
+
+    let title, bodyHtml;
+    if (type === 'guide') {
+      title = isEn ? 'Dataset Selection Guide' : '資料集選擇指引 — circRNA Analysis Pipeline';
+      bodyHtml = document.getElementById('guide-body').innerHTML;
+    } else {
+      title = isEn ? 'Pipeline Tutorial — circRNA Analysis Pipeline' : 'Pipeline 使用教學 — circRNA Analysis Pipeline';
+      const wfTitle = isEn ? '⚙️ Workflow' : '⚙️ 操作流程';
+      const rptTitle = isEn ? '📊 Report Guide' : '📊 報告解讀';
+      const wf  = document.getElementById('tut-workflow').innerHTML;
+      const rpt = document.getElementById('tut-report').innerHTML;
+      bodyHtml = `
+        <h2 class="panel-heading">${wfTitle}</h2>
+        <div>${wf}</div>
+        <hr class="section-sep">
+        <h2 class="panel-heading">${rptTitle}</h2>
+        <div>${rpt}</div>`;
+    }
+
+    const baseUrl = location.origin;
+    const css = `
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+           color:#1e293b;padding:28px 44px 40px;line-height:1.5;font-size:13px}
+      h1.doc-title{font-size:20px;font-weight:700;margin-bottom:20px;
+                   padding-bottom:10px;border-bottom:2px solid #e2e8f0}
+      h2.panel-heading{font-size:16px;font-weight:700;color:#4b5563;
+                        margin:4px 0 16px;padding:10px 14px;
+                        background:#f8fafc;border-radius:8px;
+                        border-left:4px solid #7c3aed}
+      hr.section-sep{border:none;border-top:2px solid #e2e8f0;margin:28px 0}
+      p{font-size:13px;color:#374151;line-height:1.6;margin-bottom:6px}
+      b{font-weight:700}a{color:#2563eb}
+      code,.code-inline{font-family:monospace;background:#f1f5f9;
+                         border:1px solid #e2e8f0;border-radius:4px;
+                         padding:1px 5px;font-size:11px}
+      .guide-body{display:block!important;padding:0;border:none;background:none}
+      .guide-body>p:first-child{margin:0 0 14px}
+      .guide-checklist{list-style:none;display:grid;
+                        grid-template-columns:repeat(2,1fr);
+                        gap:5px 20px;margin-bottom:14px}
+      .guide-checklist li{display:flex;align-items:flex-start;gap:6px;line-height:1.4}
+      .gi{flex-shrink:0;font-size:14px;margin-top:1px}
+      .guide-factor-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+      .guide-factor-table th{text-align:left;padding:5px 8px;background:#f1f5f9;
+                               color:#64748b;font-weight:600;font-size:11px;
+                               text-transform:uppercase;border-bottom:2px solid #e2e8f0}
+      .guide-factor-table td{padding:5px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+      .guide-factor-table tr:last-child td{border-bottom:none}
+      .gf-ok{color:#16a34a;font-weight:600}.gf-warn{color:#d97706;font-weight:600}.gf-bad{color:#dc2626;font-weight:600}
+      .tut-body,.tut-panel{display:block!important}
+      .tut-tabs,.tut-tab,.btn-pdf{display:none!important}
+      .step-card{display:flex;gap:16px;margin-bottom:22px;align-items:flex-start}
+      .step-num{flex-shrink:0;width:32px;height:32px;border-radius:50%;
+                background:#7c3aed;color:#fff;font-size:15px;font-weight:700;
+                display:flex;align-items:center;justify-content:center;margin-top:2px}
+      .step-content h4{font-size:15px;font-weight:700;margin-bottom:5px}
+      .tip-box{background:#fef9c3;border-left:3px solid #eab308;border-radius:6px;
+                padding:8px 12px;font-size:12px;color:#713f12;margin-top:6px;line-height:1.5}
+      .info-box{background:#eff6ff;border-left:3px solid #3b82f6;border-radius:6px;
+                 padding:8px 12px;font-size:12px;color:#1e3a5f;margin-top:6px;line-height:1.5}
+      .warn-box{background:#fef2f2;border-left:3px solid #ef4444;border-radius:6px;
+                 padding:8px 12px;font-size:12px;color:#7f1d1d;margin-top:6px;line-height:1.5}
+      .tut-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12px;margin-top:6px}
+      .tut-kv dt{font-weight:700;color:#4b5563;white-space:nowrap}
+      .tut-kv dd{color:#374151;line-height:1.5}
+      .tut-flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0;
+                 font-size:12px;font-weight:600}
+      .tut-flow-step{background:#ede9fe;color:#5b21b6;padding:4px 12px;
+                      border-radius:999px;white-space:nowrap}
+      .tut-flow-arrow{color:#64748b}
+      .rpt-badge{display:inline-block;padding:2px 8px;border-radius:4px;
+                  font-size:11px;font-weight:700;margin-right:4px}
+      .rpt-type1{background:#d1fae5;color:#065f46}
+      .rpt-type2{background:#fef3c7;color:#78350f}
+      .rpt-ns{background:#f1f5f9;color:#475569}
+      .rpt-section-title{font-size:13px;font-weight:700;color:#7c3aed;
+                          margin:20px 0 8px;padding-bottom:4px;
+                          border-bottom:1px solid #ede9fe}
+      img{max-width:100%;border-radius:8px;cursor:default}
+      @media print{
+        body{padding:0}
+        h2.panel-heading{break-after:avoid}
+        .step-card{break-inside:avoid}
+        .tip-box,.info-box,.warn-box,.rpt-section-title{break-inside:avoid}
+        hr.section-sep{break-after:page}
+      }`;
+
+    const html = `<!DOCTYPE html><html lang="${isEn?'en':'zh-TW'}"><head>
+      <meta charset="UTF-8">
+      <title>${title}</title>
+      <style>${css}</style>
+    </head><body>
+      <h1 class="doc-title">${title}</h1>
+      ${bodyHtml}
+      <script>
+        // fix relative image paths
+        document.querySelectorAll('img[src^="/"]').forEach(function(img){
+          img.src = '${baseUrl}' + img.getAttribute('src');
+        });
+        window.onload = function(){ window.print(); };
+      <\/script>
+    </body></html>`;
+
+    const w = window.open('', '_blank', 'width=960,height=760,scrollbars=yes');
+    w.document.write(html);
+    w.document.close();
+  }
 </script>
 
 <!-- Pipeline diagram lightbox -->
@@ -1570,7 +1700,7 @@
      style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;
             align-items:center;justify-content:center;cursor:zoom-out;"
      onclick="this.style.display='none'">
-  <img src="/static/pipeline_diagram.png?v=5"
+  <img src="/static/pipeline_diagram.png?v=6"
        style="max-width:94vw;max-height:94vh;border-radius:10px;
               box-shadow:0 12px 60px rgba(0,0,0,.6);pointer-events:none;">
 </div>

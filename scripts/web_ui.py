@@ -348,27 +348,27 @@ def send_magic_link(to_email: str, link: str, lang: str = "zh") -> bool:
 def send_job_queued_email(to_email: str, gse_id: str, job_id: str,
                           queue_pos: int, status_url: str) -> bool:
     """Send pipeline queued notification with a direct link to the status page."""
-    pos_text = (f"排隊位置：第 {queue_pos} 位" if queue_pos > 1
-                else "即將開始執行（目前無排隊）")
-    subject = f"[circRNA Pipeline] {gse_id} 已加入工作佇列"
+    pos_text = (f"Queue position: #{queue_pos}" if queue_pos > 1
+                else "Starting soon (no queue)")
+    subject = f"[circRNA Pipeline] {gse_id} added to job queue"
     html_body = f"""
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
             background:#f8fafc;padding:24px;border-radius:8px;">
-  <h2 style="color:#1d4ed8;margin-top:0;">circRNA Pipeline — 工作通知</h2>
-  <p style="color:#374151;">您的分析任務已成功加入工作佇列！</p>
+  <h2 style="color:#1d4ed8;margin-top:0;">circRNA Pipeline — Job Notification</h2>
+  <p style="color:#374151;">Your analysis job has been successfully added to the queue.</p>
   <table style="border-collapse:collapse;width:100%;margin:16px 0;
                 background:#fff;border-radius:6px;overflow:hidden;
                 border:1px solid #e5e7eb;">
     <tr style="background:#eff6ff;">
-      <td style="padding:10px 14px;font-weight:bold;color:#1e40af;width:120px;">資料集</td>
+      <td style="padding:10px 14px;font-weight:bold;color:#1e40af;width:120px;">Dataset</td>
       <td style="padding:10px 14px;font-size:16px;font-weight:bold;">{gse_id}</td>
     </tr>
     <tr>
-      <td style="padding:10px 14px;font-weight:bold;color:#374151;">工作編號</td>
+      <td style="padding:10px 14px;font-weight:bold;color:#374151;">Job ID</td>
       <td style="padding:10px 14px;font-family:monospace;color:#6b7280;">{job_id}</td>
     </tr>
     <tr style="background:#f9fafb;">
-      <td style="padding:10px 14px;font-weight:bold;color:#374151;">佇列狀態</td>
+      <td style="padding:10px 14px;font-weight:bold;color:#374151;">Queue Status</td>
       <td style="padding:10px 14px;color:#059669;">{pos_text}</td>
     </tr>
   </table>
@@ -377,11 +377,11 @@ def send_job_queued_email(to_email: str, gse_id: str, job_id: str,
        style="display:inline-block;background:#1d4ed8;color:#fff;
               padding:12px 28px;border-radius:6px;text-decoration:none;
               font-weight:bold;font-size:15px;">
-      &#128202; 查看執行進度
+      &#128202; View Progress
     </a>
   </p>
   <p style="color:#9ca3af;font-size:12px;margin-top:24px;border-top:1px solid #e5e7eb;padding-top:12px;">
-    此信由 circRNA Pipeline 系統自動發送。點擊上方按鈕可追蹤最新執行狀態。
+    This message was sent automatically by the circRNA Pipeline system. Click the button above to track pipeline progress.
   </p>
 </div>
 """
@@ -662,24 +662,24 @@ def _update_paths_for_project(cfg: dict, new_pid: str) -> dict:
 
 
 PIPELINE_STAGES = [
-    ("download_fastq",         "下載 SRA → FASTQ"),
-    ("fastqc_raw",             "FastQC (raw)"),
-    ("fastp_trim",             "fastp 品質過濾"),
-    ("multiqc",                "MultiQC 報告"),
-    ("check_ciriquant_config", "驗證 CIRIquant 設定"),
-    ("ciriquant",              "CIRIquant"),
-    ("star_align",             "STAR paired"),
-    ("star_align_mate1",       "STAR mate1"),
-    ("star_align_mate2",       "STAR mate2"),
-    ("dcc",                    "DCC"),
-    ("consensus_filter",       "Consensus filter"),
-    ("merge_counts",           "合併計數矩陣"),
-    ("annotate_circbase",      "circBase 注釋"),
-    ("de_analysis",            "DE 分析"),
-    ("rank_biomarkers",        "Biomarker 排序"),
-    ("assign_isoforms",        "Isoform 分組"),
-    ("isoform_switching",      "Isoform switching"),
-    ("generate_report",        "HTML 報告"),
+    ("download_fastq",         "下載 SRA → FASTQ",    "Download SRA → FASTQ"),
+    ("fastqc_raw",             "FastQC (raw)",         "FastQC (raw)"),
+    ("fastp_trim",             "fastp 品質過濾",        "fastp Quality Filtering"),
+    ("multiqc",                "MultiQC 報告",          "MultiQC Report"),
+    ("check_ciriquant_config", "驗證 CIRIquant 設定",   "Verify CIRIquant Config"),
+    ("ciriquant",              "CIRIquant",            "CIRIquant"),
+    ("star_align",             "STAR paired",          "STAR paired"),
+    ("star_align_mate1",       "STAR mate1",           "STAR mate1"),
+    ("star_align_mate2",       "STAR mate2",           "STAR mate2"),
+    ("dcc",                    "DCC",                  "DCC"),
+    ("consensus_filter",       "Consensus filter",     "Consensus filter"),
+    ("merge_counts",           "合併計數矩陣",           "Merge Count Matrix"),
+    ("annotate_circbase",      "circBase 注釋",         "circBase Annotation"),
+    ("de_analysis",            "DE 分析",               "DE Analysis"),
+    ("rank_biomarkers",        "Biomarker 排序",        "Biomarker Ranking"),
+    ("assign_isoforms",        "Isoform 分組",          "Isoform Grouping"),
+    ("isoform_switching",      "Isoform switching",    "Isoform switching"),
+    ("generate_report",        "HTML 報告",             "HTML Report"),
 ]
 
 
@@ -775,7 +775,7 @@ def parse_log_progress(log_text: str) -> dict:
     pipeline_finished = "generate_report" in rule_ever_done
 
     stages = []
-    for rule_id, label in PIPELINE_STAGES:
+    for rule_id, label, label_en in PIPELINE_STAGES:
         started = rule_started.get(rule_id, 0)
         done    = rule_done.get(rule_id, 0)
         failed  = rule_id in rule_failed
@@ -804,11 +804,12 @@ def parse_log_progress(log_text: str) -> dict:
             status = "pending"
 
         stages.append({
-            "id":      rule_id,
-            "label":   label,
-            "status":  status,
-            "started": started,
-            "done":    done,
+            "id":       rule_id,
+            "label":    label,
+            "label_en": label_en,
+            "status":   status,
+            "started":  started,
+            "done":     done,
         })
 
     # Second pass: if a later stage is running/done, all earlier pending stages
@@ -846,11 +847,11 @@ def _infer_stages_from_files(results_dir_str: str, stages: list,
 
     def mark_done(*ids):
         for sid in ids:
-            if sid in stage_map and stage_map[sid]["status"] in ("pending", "failed"):
+            if sid in stage_map and stage_map[sid]["status"] in ("pending", "failed", "error"):
                 stage_map[sid].update({"status": "done", "started": 1, "done": 1})
 
     def mark_partial(sid: str, n_done: int, n_total: int):
-        """Update a stage's N/M counts from filesystem; upgrade pending/failed→running/done."""
+        """Update a stage's N/M counts from filesystem; upgrade pending/failed/error→running/done."""
         if sid not in stage_map or n_done == 0:
             return
         s = stage_map[sid]
@@ -858,7 +859,7 @@ def _infer_stages_from_files(results_dir_str: str, stages: list,
         s["done"]    = n_done
         if n_done >= n_total:
             s["status"] = "done"
-        elif s["status"] in ("pending", "failed"):
+        elif s["status"] in ("pending", "failed", "error"):
             s["status"] = "running"
 
     # ── Per-sample counting (requires sample list from config metadata) ──────
