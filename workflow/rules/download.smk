@@ -86,7 +86,7 @@ rule download_fastq:
         ascp_speed      = config.get("download", {}).get("ascp_speed", "500m"),
         s3_url_retry    = config.get("download", {}).get("s3_url_retry", 5),
         s3_retry_wait   = config.get("download", {}).get("s3_retry_wait_sec", 300),
-    threads: 3
+    threads: 4   # 24 cores ÷ 4 = 6 parallel jobs × 8 conn = 48 S3 connections max
     log: "logs/download/{srr}.log"
     run:
         srr       = wildcards.srr
@@ -155,7 +155,7 @@ rule download_fastq:
                     if aria2c:
                         rc = run_cmd([
                             aria2c,
-                            "-x", "6", "-s", "6", "-k", "10M",
+                            "-x", "8", "-s", "8", "-k", "10M",
                             "--file-allocation=none",
                             "--retry-wait=10", "--max-tries=5",
                             "-c",  # resume partial download via .aria2 metadata

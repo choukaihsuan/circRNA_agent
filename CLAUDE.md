@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，🔄 執行中）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -365,7 +365,7 @@ threads: 8
 
 **aria2c 並行下載建議**：
 - **S3 per-IP 總連線數安全閾值**：≤ 48 連線（實測 `-x 12` × 4 parallel = 48 可接受，GSE77509 驗證）；超過 60 會觸發 DNS SERVFAIL（AWS S3 throttle），持續約 2 小時
-- **當前 download.smk 設定**：`-x 8 -s 8`；Snakemake `threads: 8`，max 4 parallel → 4 × 8 = 32 連線（保守安全）
+- **當前 download.smk 設定**：`-x 8 -s 8`；Snakemake `threads: 4`，24 cores ÷ 4 = 6 parallel → 6 × 8 = 48 連線（接近安全上限，GSE148036 預設設定）
 - **手動腳本建議設定**：`-x 12 -s 12`，batch size 4（4 parallel）→ 48 連線，每個 sample 實測 ~7 MB/s，總速度 ~25–30 MB/s
 - **勿手動腳本同時跑多個 SRR**：10 × 16 = 160 連線曾觸發 DNS 封鎖（GSE133998 教訓）
 - S3 間歇性不可用（NCBI API）：`srapath --location s3` 回傳空字串，等待恢復後手動重啟
@@ -898,7 +898,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | DE 表格 gene_name 顯示 "intergenic" 與 region 欄重複 | `assign_isoforms.py` 對無 host gene 的 circRNA 設 `gene_name = gene_id = "intergenic"`；DE table 照原值顯示 | `_renderDETables` JS 中加入 `if(col==='gene_name')` 判斷：當 `v==='intergenic'` 時顯示 `'—'`（region 欄已有此資訊，gene_name 欄不重複顯示）|
 | Web UI 重啟後狀態頁全顯示「等待中」 | pipeline 執行狀態只存在 Flask 記憶體中；web_ui 重啟後 stages 全重設為 pending，即使所有步驟已完成 | `_infer_stages_from_files()` 掃描 results_dir output 檔（multiqc_report.html / count_matrix.tsv / de_results.tsv / report.html 等）→ 升級 pending stage 為 done；`/api/progress` 每次 polling 都呼叫此函式 |
 | `/api/progress` 未回報 report/QC 存在 | 狀態頁「分析報告」和「QC 報告」按鈕依賴 stages 狀態，若 web_ui 重啟後 stages 全 pending，按鈕不顯示 | 在 `/api/progress` 回應中加入 `report_exists`（bool）和 `qc_exists`（bool）欄位；前端 JS 以 `data.report_exists \|\| stage.done` 控制按鈕顯示 |
-| `web_ui.py _update_paths_for_project()` 未更新 `download.sra_cache_dir` / `download.tmp_dir` | 切換到新 GSE 時，`_update_paths_for_project()` 只更新 `raw_dir`、`trimmed_dir`、`results_dir`，不更新 `config.download.sra_cache_dir` 和 `config.download.tmp_dir`；中間 SRA 快取和暫存檔案放到前一個專案的目錄 | `web_ui.py` 的 `_update_paths_for_project()` 加入：讀取 `cfg.get("download", {})`，對 `sra_cache_dir` 和 `tmp_dir` 若含舊 project_id 則做字串替換後寫回 `cfg["download"]` |
+| `web_ui.py _update_paths_for_project()` 未更新 `download.sra_cache_dir` / `download.tmp_dir` | 切換到新 GSE 時，`_update_paths_for_project()` 只更新 `raw_dir`、`trimmed_dir`、`results_dir`，不更新 `config.download.sra_cache_dir` 和 `config.download.tmp_dir`；中間 SRA 快取和暫存檔案放到前一個專案的目錄 | ✅ 已修正（2026-07-02）：`sra_cache_dir` / `tmp_dir` 從更新後的 `raw_dir` parent 自動重新推算（`parent + "/sra_cache"` / `parent + "/sra_tmp"`），不再做字串替換，路徑永遠跟 `raw_dir` 同步 |
+| `_update_paths_for_project()` 在 `old_pid == new_pid` 時不做路徑替換，config 已存在但路徑錯誤時無法自修 | `config/projects/GSE148036.yaml` 已有 `project_id: GSE148036` 但路徑指向 `GSE229705/`；`old_pid = cfg["project_id"] = "GSE148036"` = `new_pid` → 條件跳過 → 路徑未更新 → pipeline 下載到 GSE229705 目錄並可能覆蓋結果（GSE148036-SFJU 教訓，2026-07-02）| ✅ 已修正（2026-07-02）：移除 `old_pid != new_pid` guard，改為逐個 key 檢查「path 是否已含 new_pid」，不含則先嘗試 `old_pid` 替換，再 fallback 到 regex 替換路徑中任何 `GSE/SRP/PRJNA\d+` 字串 |
 | SSH heredoc 寫入腳本含 CRLF，變數在執行時為空 | 在 SSH double-quoted 命令中用 `<< 'SCRIPT'` heredoc 寫 shell 腳本，Windows 端 SSH client 將行尾轉為 CRLF（`\r\n`）；shell 讀取後變數賦值包含 `\r`，`echo "$VAR"` 看似有值但實際傳入命令時被截斷或輸出空值 | 改用 `printf '%s\n' 'line1' 'line2' ...` 逐行寫入，每行明確加 `\n`，完全避開 heredoc CRLF 問題 |
 | `$TMP` 系統保留變數名稱衝突 | Shell 環境中 `TMP` 是保留變數（通常指向 `/tmp`）；腳本中 `TMP=/home3/.../sra_tmp/SRR...` 看似賦值，但某些情境下 `$TMP` 展開為系統值或空字串，導致 `fasterq-dump --temp $TMP` 路徑錯誤 | 改用自訂名稱 `SRA_TMP`（避開 `TMP`、`TMPDIR`、`TEMP` 等系統保留名）；`SRA_CACHE` 同理（避開 `CACHE`）|
 | Biomarker 表格 `n_rbp` 顯示舊值（如 8）但 RBP Binding modal 顯示 50+ RBP | `predict_interactions.py` 用 `--gtf` 重跑後更新 `interactions.json`，但 `rank_biomarkers.py` 未重跑，`biomarker_candidates.tsv` 的 `n_rbp` 仍是舊值；`_bm_lookup` 從 TSV 讀取，不反映新的 `in_circ=True` 計數 | `generate_report.py` 的 `_bm_lookup` 建立後加入覆蓋步驟：`_is_in_circ_entry()` 函式（CircInteractome=True，ENCORI=`in_circ`）重新計算所有已存在 entry 的 `n_mirna`/`n_rbp`，用最新 `interactions.json` 覆蓋 TSV 的舊值；`mirna_n`/`rbp_n`（正規化值）也同步更新 |
@@ -1079,7 +1080,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-07-02 完成 GSE229705，所有 11 個資料集均完成）
+## 目前執行進度（2026-07-02 完成 GSE229705；GSE148036 執行中，共 12 個資料集）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1694,6 +1695,58 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 - DE（DESeq2）：**162 significant**；DE（limma-voom）：**0 significant**
 - predict_interactions：union mode（三方法 top-50 聯集）
 - report：study_title = `LUAD Lung Adenocarcinoma — tumor vs. adjacent normal tissues, 6 pairs (NYU Langone Health, Sakata et al. 2024 Nature Genetics)`
+
+---
+
+## GSE148036（LUAD 肺腺癌 tumor vs. normal，🔄 執行中 2026-07-02）
+
+**🔄 執行中（下載階段，2026-07-02 23:04 啟動）。** 預計報告位置：`~/GSE148036_results/report.html`
+
+多疾病肺部 RNA-seq 資料集，從中選取 LUAD（Lung Adenocarcinoma）vs. Normal Lung 各 5 samples。Illumina HiSeq 3000，PE146（avgLength ≈ 286–292bp），Ribo-Zero rRNA removal，Total RNA，University of Pittsburgh / UPMC 收集。
+
+**GEO**：GSE148036；**SRA**：PRJNA625051
+
+**注意**：LUAD 和 Normal 來自**不同患者**（非配對設計），使用 `~condition` 模型（無 `patient_id` 欄）。
+
+**選定的 10 samples**：
+
+| SRR | 分組 | 樣本名稱 |
+|-----|------|---------|
+| SRR11262292 | tumor | AD005 (Lung Adenocarcinoma Rep5) |
+| SRR11262293 | tumor | AD004 (Lung Adenocarcinoma Rep4) |
+| SRR11262294 | tumor | AD003 (Lung Adenocarcinoma Rep3) |
+| SRR11262295 | tumor | AD002 (Lung Adenocarcinoma Rep2) |
+| SRR11262296 | tumor | AD001 (Lung Adenocarcinoma Rep1) |
+| SRR11262284 | normal | NM005 (Normal Lung Tissue Rep5) |
+| SRR11262285 | normal | NM004 (Normal Lung Tissue Rep4) |
+| SRR11262286 | normal | NM003 (Normal Lung Tissue Rep3) |
+| SRR11262297 | normal | NM002 (Normal Lung Tissue Rep2) |
+| SRR11262298 | normal | NM001 (Normal Lung Tissue Rep1) |
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | 🔄 進行中（S3 aria2c，多 SRR 並行） |
+| fastp QC/trim | ⏳ 等待 |
+| CIRIquant | ⏳ 等待 |
+| STAR paired+mate1+mate2 | ⏳ 等待 |
+| DCC | ⏳ 等待 |
+| consensus_filter / merge_counts | ⏳ 等待 |
+| DE analysis | ⏳ 等待 |
+| report | ⏳ 等待 |
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- genome：hg19；**非配對設計**（5T + 5N，不同患者）
+- Condition CSV：`/mnt/c/Users/User/Desktop/GSE148036_condition.csv`（無 `patient_id` 欄）
+- Library：Total RNA（Ribo-Zero），PE146，Illumina HiSeq 3000
+- 每 sample 深度：~46M reads（23M spots × 2）
+- Queue job：GSE148036-SFJU（手動重啟，PID 71774）
+
+**config 錯誤歷史**：首次提交後 `config/projects/GSE148036.yaml` 的 `raw_dir`/`results_dir` 指向 `GSE229705/`（`_update_paths_for_project` bug，`old_pid == new_pid` 時不做路徑替換）。已手動 `sed` 修正，並修復 `web_ui.py` 的 `_update_paths_for_project` 函式（改用 regex 替換路徑中任何 GSE/SRP/PRJNA 編號）。
+
+**Server config**（`config/projects/GSE148036.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE148036/raw`
+- `results_dir: /home3/choukaihsuan/GSE148036_results`
 
 ---
 

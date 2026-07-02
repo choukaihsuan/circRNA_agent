@@ -630,11 +630,21 @@ def _snake_env() -> dict:
 def _update_paths_for_project(cfg: dict, new_pid: str) -> dict:
     """Replace the old project_id embedded in raw/trimmed/results paths,
     and ensure the download section exists with server-appropriate defaults."""
+    import re as _re
     old_pid = cfg.get("project_id", "")
-    if old_pid and old_pid != new_pid:
-        for key in ("raw_dir", "trimmed_dir", "results_dir"):
-            if key in cfg and old_pid in cfg[key]:
-                cfg[key] = cfg[key].replace(old_pid, new_pid)
+    _GSE_PAT = _re.compile(r'(?:GSE|SRP|PRJNA|SRR)\d+')
+    for key in ("raw_dir", "trimmed_dir", "results_dir"):
+        if key not in cfg:
+            continue
+        path = cfg[key]
+        if new_pid in path:
+            continue  # already correct
+        # Try exact old_pid replacement first
+        if old_pid and old_pid in path:
+            cfg[key] = path.replace(old_pid, new_pid)
+        else:
+            # Fallback: replace any GSE/SRP/PRJNA accession pattern in the path
+            cfg[key] = _GSE_PAT.sub(new_pid, path)
 
     # Always re-derive sra_cache_dir / tmp_dir from the (now-updated) raw_dir.
     # String-replace of old_pid is unreliable because download paths may reference
