@@ -10,7 +10,7 @@
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
 - **Server 路徑**：`~/circRNA_agent/`（即 `/home3/choukaihsuan/circRNA_agent/`，`/home/choukaihsuan` 是 symlink）
-- **Container**：Docker image `choukaihsuan/circrna-pipeline:1.0.0`；HPC 用 Singularity 拉取
+- **Container**：Docker image `choukaihsuan/circrna-pipeline:1.0.1`；HPC 用 Singularity 拉取
 
 ---
 
@@ -512,7 +512,7 @@ cd /mnt/c/Users/User/develop/circRNA_agent
 bash containers/build_and_deploy.sh   # 自動執行 docker build + docker push
 ```
 
-image name：`choukaihsuan/circrna-pipeline:1.0.0`
+image name：`choukaihsuan/circrna-pipeline:1.0.1`
 `Dockerfile` 使用 `mamba env create --yes`（非互動式），比 conda 快 3–5×。
 
 ### `envs/circrna.yaml` 重要設定
@@ -528,13 +528,13 @@ image name：`choukaihsuan/circrna-pipeline:1.0.0`
 Docker image 已上傳至 Docker Hub，任何有 Singularity 或 Apptainer 且開啟 user namespace 的 HPC server，執行以下一行即可取得完整環境：
 
 ```bash
-singularity pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.0
+singularity pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.1
 ```
 
 或使用 Apptainer（語法相同）：
 
 ```bash
-apptainer pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.0
+apptainer pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.1
 ```
 
 拉取後用容器執行 pipeline：
@@ -549,7 +549,7 @@ snakemake \
     --keep-going --rerun-incomplete
 ```
 
-`workflow/Snakefile` 頂部已設定：`singularity: "docker://choukaihsuan/circrna-pipeline:1.0.0"`
+`workflow/Snakefile` 頂部已設定：`singularity: "docker://choukaihsuan/circrna-pipeline:1.0.1"`
 
 **注意**：目前使用的 server（172.16.0.178，CentOS 7）預設關閉 user namespace，conda 版 apptainer 無法執行。需請管理員執行：
 ```bash
@@ -583,10 +583,48 @@ cp config/projects/GSE113230.yaml config.yaml
 
 當 server 上 config.yaml 已切換到其他專案時，用以下 wrapper 直接執行，繞過 Snakemake DAG：
 
-**`/tmp/run_generate_report.py`**（Python mock，`snakemake` = `types.SimpleNamespace`）：
+**`/tmp/run_generate_report.py`**（Python mock）：
 ```bash
-# 必須用 conda run，否則 base python 缺少 plotly，會生成靜態 PDF 報告
-conda run -n ciriquant python /tmp/run_generate_report.py
+# 必須用 conda env 的 Python，否則缺少 plotly 會生成靜態 PDF 報告
+/home/choukaihsuan/miniconda3/envs/ciriquant/bin/python /tmp/run_generate_report.py
+```
+
+Python mock 格式（三個關鍵：`output` 用 list；`exec(code, {"snakemake": sn})` 注入；屬性名稱需與 rule 一致）：
+```python
+import os
+os.chdir("/home/choukaihsuan/circRNA_agent")
+
+class _Sn: pass
+sn = _Sn(); sn.input = _Sn(); sn.params = _Sn()
+sn.log = ["/tmp/report_GSE.log"]
+
+R = "/home3/choukaihsuan/{GSE}_results"
+M = "/home/choukaihsuan/circRNA_agent/metadata/{GSE}"
+sn.input.de            = R + "/de/de_results.tsv"
+sn.input.de_edger      = R + "/de/de_results_edgeR_ciriquant.tsv"
+sn.input.de_deseq      = R + "/de/de_results_deseq2.tsv"       # de_deseq（非 de_deseq2）
+sn.input.de_limma      = R + "/de/de_results_limma.tsv"
+sn.input.biomarkers    = R + "/de/biomarker_candidates.tsv"
+sn.input.matrix        = R + "/circRNA/count_matrix.tsv"
+sn.input.volcano       = R + "/plots/volcano.pdf"
+sn.input.heatmap       = R + "/plots/heatmap.pdf"
+sn.input.pca           = R + "/plots/pca.pdf"
+sn.input.multiqc       = R + "/qc/multiqc_report.html"
+sn.input.switching     = R + "/de/isoform_switching.tsv"        # switching（非 isoform_switching）
+sn.input.groups        = M + "/sample_groups.csv"
+sn.input.isoform_groups = R + "/circRNA/isoform_groups.tsv"    # isoform_groups（非 isoforms）
+sn.input.circbase_annot = R + "/circRNA/circbase_annotated.tsv"
+sn.input.interactions  = R + "/de/interactions.json"
+sn.params.project_id   = "{GSE}"
+sn.params.de_method    = "edgeR_ciriquant"
+sn.params.fdr = 0.05; sn.params.lfc = 1.0
+sn.params.de_sig_by    = "pvalue"
+sn.params.tumor_label  = "tumor"; sn.params.normal_label = "normal"
+sn.params.heatmap_top_n = 10; sn.params.study_title = "..."
+sn.output = [R + "/report.html"]   # list，支援 output[0]
+
+exec(open("/home/choukaihsuan/circRNA_agent/scripts/generate_report.py").read(), {"snakemake": sn})
+# ⚠ 不可用 builtins.snakemake = sn，因為 dir() 不會包含 builtins namespace
 ```
 
 **`/tmp/run_de_analysis.R`**（R mock，S4 class with list slots）：
@@ -605,7 +643,7 @@ snakemake <- new('Snakemake',
 source('/home/choukaihsuan/circRNA_agent/scripts/analysis.R')
 ```
 
-兩個 wrapper 都 hardcode GSE113230 的 input/output/params 路徑。此模式可複用於任何需要獨立重跑 terminal rule 的情境。
+兩個 wrapper 都 hardcode GSE 的 input/output/params 路徑。此模式可複用於任何需要獨立重跑 terminal rule 的情境。
 
 ---
 
@@ -918,6 +956,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `run_manual` 提交後 `sample_groups.csv` 遺失 `patient_id` 欄 | `run_manual` 路由固定只寫 `srr_id`/`condition` 兩欄到 `sample_groups.csv`，CSV 上傳中的 `patient_id`/`description` 欄直接被丟棄 | 手動在 server 補充 `patient_id` 欄（見 GSE229705 段落的補充指令）；長期解法：`run_manual` 讀取 CSV 時若有 `patient_id` 欄則一起寫入 `sample_groups.csv` |
 | RBP Binding modal 的 Site Positions 欄顯示相對座標 | ENCORI `circ_pos` 格式為 `chr6:148390208-148390208`（絕對座標），`_absPos()` 誤以為是相對座標再加 `chromStart`，導致超出染色體長度回傳 "N/A" | `_absPos()` 加偵測：若 `circ_pos` 以 `chr` 開頭則視為絕對座標直接使用（已修正，`generate_report.py`）；此外 RBP Binding modal 改為顯示 per-site 字母標籤（a/b/c…）+ 絕對 hg19 座標，與 Circular Structure SVG badge 一一對應（2026-07-02）|
 | RBP 表格 `bindingSites` 欄顯示 ENCORI clip 次數而非 site 數 | ENCORI 的 `bindingSites` 欄是 CLIP 實驗次數（clipExpNum），不是 binding site 位置數；直接顯示導致 mapped > total 的矛盾 | `bindingSites` cell 改為 `Math.max(bindingSites, sites.length)`，取兩者較大值確保 mapped 不超過 total（`generate_report.py`，2026-07-02）|
+| 報告語言切換後 MultiQC「（點擊折疊）」文字不更新 | MultiQC `<details>` 折疊 span 沒有 `data-en` 屬性；`<details>` toggle JS 用 `textContent=` 硬編中文字串覆寫，讓之後 `switchReportLang` 的 innerHTML 操作也失效（因 `textContent` 設定後 `dataset.zh` 未更新） | `generate_report.py`：span 加 `id="qc-collapse-lbl"` + `data-en="(click to collapse)"`；toggle JS 改為偵測 `_LANG`、同步更新 `dataset.en`/`dataset.zh`、再依語言設定 textContent（2026-07-07）|
+| Python mock 腳本 `exec(code)` 後 `build_report()` 未被呼叫 | `generate_report.py` 入口為 `if "snakemake" in dir():`；`dir()` 只看 local namespace，不含 builtins；`builtins.snakemake = sn` 設法讓 snakemake 不出現在 `dir()` → 條件永遠 False | 改用 `exec(code, {"snakemake": sn})`（傳入 globals dict）；另外 `output` 必須是 list（`sn.output = [path]`）支援 `output[0]`；`input` 屬性名稱需與 Snakemake rule 完全一致（`switching`/`isoform_groups`/`de_deseq`/`multiqc`）（2026-07-07）|
 | ENCORI RBP/miRNA Mapped 數量極少（原本僅 27%）| ENCORI 提供宿主基因全長的 CLIP-seq peaks（橫跨所有 exon + intron），但 `_map_to_circ_pos()` 只接受精確落在 circRNA exon 邊界內的 sites；大量 peaks 落在其他 exon 或 intron 而被丟棄；`exon_nums=[]`（intronic/intergenic circRNA）時全部 mapping 直接跳過 | `predict_interactions.py` 新增 `_parse_circ_id()` + `_genomic_to_spliced()` 兩個 helper 函式；在 exon-level mapping 失敗後，自動 fallback 到 **genomic-span proportional mapping**：若 hg19 liftover 座標落在 `[circ_start, circ_end]` 範圍內，以比例方式估算 spliced position（`cs_frac = (ov_s - circ_start) / span × total_exon_len`）；`_fetch_encori_mirna` 和 `_fetch_encori_rbp` 均新增 `circ_id` + `strand` 參數，`can_map` 條件改為 `exon_nums OR circ_coords` 任一有效即可嘗試；改善幅度：27% → 約 60–75% Mapped 覆蓋率（2026-07-07）|
 
 ---

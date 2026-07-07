@@ -11,7 +11,7 @@ set -euo pipefail
 
 DOCKERHUB_USER="choukaihsuan"
 IMAGE_NAME="circrna-pipeline"
-IMAGE_TAG="1.0.0"
+IMAGE_TAG="1.0.1"
 FULL_IMAGE="${DOCKERHUB_USER}/${IMAGE_NAME}:${IMAGE_TAG}"
 SIF_DIR="${HOME}/circRNA_agent/containers"
 SIF_FILE="${SIF_DIR}/${IMAGE_NAME}_${IMAGE_TAG}.sif"

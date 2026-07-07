@@ -2,7 +2,7 @@ FROM continuumio/miniconda3:23.10.0-1
 
 LABEL maintainer="choukaihsuan" \
       description="circRNA analysis pipeline (CIRIquant + DCC + edgeR)" \
-      version="1.0.0"
+      version="1.0.1"
 
 # ── System dependencies ───────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
