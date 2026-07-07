@@ -562,14 +562,34 @@ _STYLE = """
             text-decoration:none; transition:background .15s; }
   .dl-btn:hover { background:#eaf3ff; }
   .tbl-dl-bar { text-align:right; margin-bottom:2px; }
-  .print-bar  { position:sticky; top:0; z-index:99; background:#2c6fad; color:#fff;
-                padding:8px 24px; display:flex; align-items:center; gap:12px;
-                flex-wrap:wrap; }
-  .print-bar span { font-size:13px; font-weight:bold; flex:1; }
-  .print-btn  { padding:5px 14px; border:2px solid #fff; border-radius:4px;
-                background:transparent; color:#fff; font-size:13px;
-                font-weight:bold; cursor:pointer; }
-  .print-btn:hover { background:rgba(255,255,255,.15); }
+  /* ── CircDEX Report Header ── */
+  .print-bar  { position:sticky; top:0; z-index:99;
+                background:#0F2137; color:#fff;
+                padding:0 24px; display:flex; align-items:center;
+                min-height:70px; gap:0; flex-wrap:nowrap; }
+  .print-bar::after { content:''; position:absolute; bottom:0; left:0; right:0; height:1px;
+                      background:linear-gradient(90deg,transparent,#00B4C6,transparent);
+                      opacity:.4; }
+  .cd-rpt-brand { display:flex; align-items:center; gap:12px; text-decoration:none;
+                  padding:10px 0; flex-shrink:0; }
+  .cd-rpt-meta { display:flex; flex-direction:column; }
+  .cd-rpt-wm   { font-size:26px; line-height:1; }
+  .cd-rpt-circ { font-weight:300; color:rgba(255,255,255,.82); }
+  .cd-rpt-dex  { font-weight:800; letter-spacing:.07em; color:#00B4C6; }
+  .cd-rpt-sub  { font-size:14px; color:rgba(255,255,255,.52); margin-top:3px; }
+  .cd-rpt-chips { display:flex; gap:5px; margin-top:5px; }
+  .cd-rpt-chip { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+                 color:#00B4C6; background:rgba(0,180,198,.14);
+                 border:1px solid rgba(0,180,198,.30); border-radius:4px; padding:3px 9px; }
+  .cd-rpt-nav  { margin-left:auto; display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .cd-rpt-proj { font-size:12px; font-weight:600; color:rgba(255,255,255,.65);
+                 background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15);
+                 border-radius:5px; padding:3px 10px; }
+  .print-btn  { padding:5px 13px; border:1.5px solid rgba(255,255,255,.35);
+                border-radius:5px; background:transparent; color:rgba(255,255,255,.75);
+                font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; }
+  .print-btn:hover { background:rgba(255,255,255,.10); color:#fff;
+                     border-color:rgba(255,255,255,.6); }
 
   /* DE method switcher */
   .msw-btn { padding:5px 14px; border:1px solid #2c6fad; border-radius:4px;
@@ -629,11 +649,12 @@ _STYLE = """
     /* Two-column distribution plots: stack vertically for print */
     div[style*="display:flex"] { display: block !important; }
   }
-  .lang-btn-rpt { padding:3px 10px; border:1.5px solid #b6d0f0; border-radius:6px;
-                  font-size:11px; font-weight:700; cursor:pointer; background:#fff;
-                  color:#2c6fad; transition:all .15s; margin-left:4px; }
-  .lang-btn-rpt:hover { border-color:#2c6fad; background:#e8f0fc; }
-  .lang-btn-rpt.active { background:#2c6fad; border-color:#2c6fad; color:#fff; }
+  .lang-btn-rpt { padding:2px 9px; border:1px solid rgba(255,255,255,.22); border-radius:4px;
+                  font-size:11px; font-weight:700; cursor:pointer;
+                  background:transparent; color:rgba(255,255,255,.50);
+                  transition:all .15s; }
+  .lang-btn-rpt:hover { background:rgba(255,255,255,.10); color:#fff; }
+  .lang-btn-rpt.active { background:#00B4C6; border-color:#00B4C6; color:#fff; }
   #qc-section > summary span:first-child { transition:transform .2s; display:inline-block; }
   #qc-section[open] > summary span:first-child { transform:rotate(90deg); }
 </style>
@@ -2382,13 +2403,14 @@ function _drawCircleRNA(circId, container) {{
       // exon label — collected and drawn after arcs so labels are on top
       const arcFrac=(eb.cum_end-eb.cum_start)/totalLen;
       const arcPx=arcFrac*2*Math.PI*(RIN+ROUT)/2;
-      if(arcPx>30){{  // only label if enough space
+      if(arcPx>12){{  // only label if enough space (12px ≈ 1.5% of ring for small exons)
         const aMid=posToAngle((eb.cum_start+eb.cum_end)/2);
         const [lx,ly]=polar((RIN+ROUT)/2,aMid);
         const isLow=(aMid>0&&aMid<Math.PI);
         const tdeg=isLow?(aMid*180/Math.PI-90):(aMid*180/Math.PI+90);
         const exonLabel=eb.label.replace(/^e(\\d+)$/,'exon $1');
-        exonLabelSvg+=`<text transform="translate(${{lx.toFixed(1)}},${{ly.toFixed(1)}}) rotate(${{tdeg.toFixed(1)}})" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#444" font-weight="600">${{exonLabel}}</text>`;
+        const fsize=arcPx>25?11:9;
+        exonLabelSvg+=`<text transform="translate(${{lx.toFixed(1)}},${{ly.toFixed(1)}}) rotate(${{tdeg.toFixed(1)}})" text-anchor="middle" dominant-baseline="central" font-size="${{fsize}}" fill="#444" font-weight="600">${{exonLabel}}</text>`;
       }}
     }});
   }}
@@ -2681,9 +2703,15 @@ function _drawCircleRNA(circId, container) {{
       ${{toggleBtn(_LS[_LANG||'zh'].toggleHide,'_toggleAll(\\'rbp\\',false,this.closest(\\'div\\'))')}}
       <div style="display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:4px">`;
     rbpLegend.forEach(e=>{{
+      // nm=0 + ENCORI → fallback badge (no arc drawn); show as CLIP count not sites
+      const encoriFallback=(e.nm===0&&(e.src||'').includes('ENCORI'));
+      const siteStr=encoriFallback
+        ?`<span style="color:#aaa" title="ENCORI 染色體絕對座標，位置未對應至 spliced 序列">${{e.ns}} CLIP</span>`
+        :(e.nm>0&&e.nm<e.ns?`${{e.nm}}/${{e.ns}} sites`:`${{e.ns}} sites`);
+      const borderStyle=encoriFallback?'border:1px dashed #ccc;opacity:.7':'border:1px solid #eee';
       legHtml+=`<span id="_leg_rbp_${{e.num}}" onclick="_toggleBadge('rbp',${{e.num}},this)"
-        title="${{_LS[_LANG||'zh'].toggleTip}}" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;border:1px solid #eee">
-        ${{badge(e.color,e.num)}}${{e.name}} (${{e.nm>0&&e.nm<e.ns?`${{e.nm}}/${{e.ns}}`:`${{e.ns}}`}} sites)${{e.src?srcBadge(e.src):''}}</span>`;
+        title="${{encoriFallback?'ENCORI (染色體絕對座標，badge 為均分位置)':_LS[_LANG||'zh'].toggleTip}}" style="display:inline-flex;align-items:center;gap:2px;cursor:pointer;padding:1px 3px;border-radius:3px;${{borderStyle}}">
+        ${{badge(e.color,e.num)}}${{e.name}} (${{siteStr}})${{e.src?srcBadge(e.src):''}}</span>`;
     }});
     legHtml+='</div></div>';
   }}
@@ -2959,9 +2987,12 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
       }}
       if(k==='_mapped') {{
         const mapped=(r.sites||[]).length;
-        // For ENCORI, bindingSites = clipExpNum (not position count); use max to avoid mapped > total
         const total=Math.max(parseInt(r.bindingSites||0)||0, mapped);
-        if(mapped===0) {{
+        // ENCORI entries use absolute genomic coords — cannot map to spliced position
+        const encoriAbs=(r.source||'').includes('ENCORI') && mapped===0;
+        if(encoriAbs) {{
+          html+=`<td data-val="0" title="ENCORI 提供染色體絕對座標，無法直接對應至 spliced 序列位置"><span style="color:#bbb;font-size:11px">—</span></td>`;
+        }} else if(mapped===0) {{
           html+=`<td data-val="0"><span style="color:#bbb;font-size:11px">0</span></td>`;
         }} else if(mapped<total) {{
           html+=`<td data-val="${{mapped}}" title="${{mapped}} / ${{total}} sites have hg19 position">`
@@ -3598,7 +3629,8 @@ _makeSortable('tbl_biomarker');
             'border:1px solid #bae6fd;border-radius:8px;font-size:15px;font-weight:600;'
             'color:#0369a1;list-style:none;display:flex;align-items:center;gap:8px">\n'
             '    <span>▼</span> \U0001f4ca QC Report (MultiQC)\n'
-            '    <span style="font-size:12px;font-weight:400;color:#64748b;margin-left:4px">'
+            '    <span id="qc-collapse-lbl" data-en="(click to collapse)" '
+            'style="font-size:12px;font-weight:400;color:#64748b;margin-left:4px">'
             '（點擊折疊）</span>\n'
             '  </summary>\n'
             '  <div style="margin-top:8px">\n'
@@ -3614,9 +3646,16 @@ _makeSortable('tbl_biomarker');
             '  if(det){\n'
             '    det.addEventListener("toggle",function(){\n'
             '      var sp=det.querySelector("summary span:first-child");\n'
-            '      var lb=det.querySelector("summary span:last-child");\n'
+            '      var lb=document.getElementById("qc-collapse-lbl");\n'
             '      if(sp) sp.textContent=this.open?"▼":"▶";\n'
-            '      if(lb) lb.textContent=this.open?"（點擊折疊）":"（點擊展開）";\n'
+            '      if(lb){\n'
+            '        var isEn=typeof _LANG!=="undefined"&&_LANG==="en";\n'
+            '        var openZh="（點擊折疊）",closeZh="（點擊展開）";\n'
+            '        var openEn="(click to collapse)",closeEn="(click to expand)";\n'
+            '        lb.dataset.en=this.open?openEn:closeEn;\n'
+            '        lb.dataset.zh=this.open?openZh:closeZh;\n'
+            '        lb.textContent=this.open?(isEn?openEn:openZh):(isEn?closeEn:closeZh);\n'
+            '      }\n'
             '      if(this.open){\n'
             '        var fr=document.getElementById("qc-iframe");\n'
             '        function _r(){\n'
@@ -3647,23 +3686,41 @@ _makeSortable('tbl_biomarker');
 <body>
 
 <div class="print-bar no-print">
-  <span>circRNA Analysis Report — {project_id}</span>
-  <button class="print-btn" data-en="🖨 Print / Save PDF" onclick="window.print()">🖨 列印 / 存為 PDF</button>
-  <div style="display:flex;gap:4px;margin-left:12px">
-    <button class="lang-btn-rpt active" data-lang="zh" onclick="switchReportLang('zh')">中文</button>
-    <button class="lang-btn-rpt" data-lang="en" onclick="switchReportLang('en')">EN</button>
+  <!-- CircDEX brand -->
+  <div class="cd-rpt-brand">
+    <svg width="52" height="52" viewBox="0 0 38 38" fill="none" aria-hidden="true">
+      <circle cx="19" cy="19" r="15" stroke="rgba(0,180,198,.18)" stroke-width="1.5"/>
+      <path d="M19 4 A15 15 0 1 1 7.3 28" stroke="#00B4C6" stroke-width="2.6"
+            stroke-linecap="round" fill="none"/>
+      <circle cx="19" cy="4"   r="2.8" fill="#00B4C6"/>
+      <circle cx="7.3" cy="28" r="1.8" fill="#00B4C6" opacity=".55"/>
+    </svg>
+    <div class="cd-rpt-meta">
+      <div class="cd-rpt-wm"><span class="cd-rpt-circ">Circ</span><span class="cd-rpt-dex">DEX</span></div>
+      <div class="cd-rpt-sub">From reads to circRNA biomarkers</div>
+      <div class="cd-rpt-chips">
+        <span class="cd-rpt-chip">Dual-tool consensus</span>
+        <span class="cd-rpt-chip">Differential expression</span>
+        <span class="cd-rpt-chip">6D biomarker ranking</span>
+      </div>
+    </div>
+  </div>
+  <!-- Nav right -->
+  <div class="cd-rpt-nav">
+    <span class="cd-rpt-proj">{project_id}</span>
+    <span class="method-tag" style="font-size:12px">{de_method}</span>
+    <span style="font-size:11px;color:rgba(255,255,255,.35);padding:0 4px">{datetime.now().strftime('%Y-%m-%d')}</span>
+    <button class="print-btn" data-en="🖨 Print / PDF" onclick="window.print()">🖨 列印 / PDF</button>
+    <div style="display:flex;gap:3px;margin-left:4px">
+      <button class="lang-btn-rpt active" data-lang="zh" onclick="switchReportLang('zh')">中文</button>
+      <button class="lang-btn-rpt" data-lang="en" onclick="switchReportLang('en')">EN</button>
+    </div>
   </div>
 </div>
-
-  <h1>circRNA Analysis Report</h1>
-  <p><strong>Project:</strong> {project_id} &nbsp;&nbsp;
-     <strong>Method:</strong> <span class="method-tag">{de_method}</span> &nbsp;&nbsp;
-     <strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}
-  </p>
-  {"<p style='font-size:12px;color:#888'>Interaction data pre-fetched for "
+  {"<p style='font-size:12px;color:#888;margin-top:20px'>Interaction data pre-fetched for "
    + str(n_ixn) + " circRNAs (" + str(n_ixn_mirna) + " with miRNA data, from CircInteractome). "
    + "Click any circ_position to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>" if n_ixn > 0
-   else "<p style='font-size:12px;color:#aaa'>Click any circ_position to view exon diagram "
+   else "<p style='font-size:12px;color:#aaa;margin-top:20px'>Click any circ_position to view exon diagram "
         "(interaction data not yet fetched — run predict_interactions rule).</p>"}
   <p style="font-size:11px;color:#888">
     <button onclick="showCircDetail('{list(interactions.keys())[0] if interactions else ''}')"

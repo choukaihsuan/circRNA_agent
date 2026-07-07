@@ -71,13 +71,14 @@ rule star_align:
     log: "logs/star/{srr}.log"
     shell:
         """
+        rm -rf {params.tmp_dir}
         mkdir -p {params.tmp_dir}
         STAR \
             --runThreadN {threads} \
             --genomeDir {params.index} \
             --readFilesIn {input.r1} {input.r2} \
             --readFilesCommand zcat \
-            --outSAMtype BAM SortedByCoordinate \
+            --outSAMtype BAM Unsorted \
             --outFileNamePrefix {params.prefix} \
             --outTmpDir {params.tmp_dir}/_STARtmp \
             --chimSegmentMin 10 \
@@ -85,6 +86,11 @@ rule star_align:
             --alignSJDBoverhangMin 10 \
             --outSAMattributes NH HI NM MD AS \
             > {log} 2>&1
+        samtools sort -@ {threads} -m 2G \
+            -o {output.bam} \
+            {params.prefix}Aligned.out.bam \
+            >> {log} 2>&1
+        rm -f {params.prefix}Aligned.out.bam
         samtools index {output.bam}
         rm -rf {params.tmp_dir}
         """
@@ -106,6 +112,7 @@ rule star_align_mate1:
     log: "logs/star/{srr}_mate1.log"
     shell:
         """
+        ulimit -n 65536 || true
         mkdir -p {params.tmp_dir}
         STAR \
             --runThreadN {threads} \
@@ -139,6 +146,7 @@ rule star_align_mate2:
     log: "logs/star/{srr}_mate2.log"
     shell:
         """
+        ulimit -n 65536 || true
         mkdir -p {params.tmp_dir}
         STAR \
             --runThreadN {threads} \

@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，🔄 執行中）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -659,11 +659,9 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 
 | 策略 | 工具組合 | slop | pseudo-circ QC | 對應論文 |
 |------|----------|------|----------------|----------|
-| **Our_adaptive** | CIRIquant + DCC | 10 bp | ✅ selective（BSJ<5）+ adaptive | — |
-| **Our_no_QC**（消融）| CIRIquant + DCC | 10 bp | ❌ | — |
+| **circDEX**（本研究）| CIRIquant + DCC | 10 bp | ✅ selective（BSJ<5）+ adaptive | — |
 | **CirComPara2_4tools** | CIRIquant + DCC + CIRCexplorer2 + find_circ | 10 bp | ❌ | Gaffo et al. 2022 |
 | **nfcore_3tools** | CIRIquant + CIRCexplorer2 + find_circ | 0（精確匹配）| ❌ | Digby-Bell et al. 2023 |
-| CirComPara2_sim（ablation）| CIRIquant + DCC only | 10 bp | ❌ | — |
 
 **重要設計決策**：CirComPara2_4tools 不含獨立 CIRI2，因為 CIRIquant 內部已呼叫 CIRI2 做 BSJ 偵測；同時納入兩者等於讓同一演算法投兩票，破壞 consensus 獨立性。4 個工具分別使用 HISAT2+BWA / STAR / STAR / Bowtie2，是真正獨立的偵測策略。
 
@@ -673,9 +671,9 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 
 **AUC-PR 計算方式（重要）**：
 - 二元偵測（每個 circRNA 只有 detected/not detected，無連續分數）直接套用 `sklearn.average_precision_score` 會嚴重虛高 AUC-PR。
-- **根本原因**：Our_adaptive 偵測到的 circRNA 全部 score=1，未偵測的全部 score=0；ground truth 中 87.8% 的 TP 在 score=0 的大池（即 FN）；樂觀排序（label=1 排在 label=0 前面）把 2,953 個 FN 全部排在 1,997 個 TN 前面，產生長段假精確度，AUC-PR = 0.946（虛高）。
+- **根本原因**：circDEX 偵測到的 circRNA 全部 score=1，未偵測的全部 score=0；ground truth 中 87.8% 的 TP 在 score=0 的大池（即 FN）；樂觀排序（label=1 排在 label=0 前面）把大量 FN 全部排在 TN 前面，產生長段假精確度（AUC-PR 虛高）。
 - **正確方法**：門檻掃描（threshold sweep）。對 CIRI2 output 和 DCC `CircRNACount` 各取 `min_bsj` 門檻（1–50），重新建立共識 → 計算每個門檻下的 (Precision, Recall) → 繪製真實 PR 曲線 → trapezoid AUC。
-- **實測結果**：Our_adaptive **誠實 AUC-PR = 0.155**（最大 Recall 17.3%，Precision 維持 90.5%）；其他方法的 AUC-PR 仍為二元偵測值（尚未做門檻掃描，待後續補充）。
+- **實測結果（門檻掃描，三方法均已更新）**：circDEX AUC-PR = **0.120**；CirComPara2_4tools = **0.349**；nfcore_3tools = **0.337**（見下方完整表格）。
 - **新增 CLI 參數**：`accuracy_benchmark.py --ciri2-file <CIRI2 output> --dcc-count-file <CircRNACount> --output-pr-curve <pr_curve.tsv>`；`generate_comparison_report.py --pr-curve <pr_curve.tsv>`（在報告中插入 SVG PR 曲線圖）。
 - **SRR444655 無 CIRIquant GTF**：benchmark total RNA 樣本（SRR444655）只有 RNase R replicates 才有 CIRIquant GTF；門檻掃描改用 `SRR444655.ciri2` + `DCC/CircRNACount`（CIRI2 輸出 col 4 = BSJ count，DCC CircRNACount col 3 = junction count）。
 
@@ -753,7 +751,7 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - **Jaccard Overlap 表格**：`A_only`、`B_only`、`Both` 數字可點擊 → modal 顯示交集/差集 circRNA 清單（`showJaccardList(rowIdx, col)`）；需傳入 `--de-lists`
 - **互動 modal 排序**：所有 modal 清單表格欄位可點擊排序（▲/▼）；`_renderCircList()` 統一渲染，`sortCircList(th, colIdx)` 函式以 `data-val` 屬性做數值/字串排序
 - **Compute Cost 表格**：`_compute_cost_table_html(comp)` 函式；"Tool Breakdown" 欄顯示 stacked mini-bar（CIRIquant=深藍 / STAR×3=中藍 / DCC=淺藍 / CIRCexplorer2=橙 / find_circ=綠 / Other=灰）及各工具時間數值；最短 Total 以綠色粗體標示；需 `compute_cost.tsv` 含 per-tool 欄（`CIRIquant_min`, `STAR_min`, `DCC_min`, `CIRCexplorer2_min`, `find_circ_min`，已由 `compute_cost.py` 自動輸出）
-- **Stratified F1**：bar chart 已移除；表格只顯示 Our_adaptive 一行（`strat[strat["Method"]=="Our_adaptive"]`）
+- **Stratified F1**：bar chart 已移除；表格只顯示 circDEX 一行（`strat[strat["Method"]=="Our_adaptive"]`，內部 key 仍為 `Our_adaptive`）
 
 **獨立重跑 benchmark 腳本**（繞過 Snakemake，適合 config 指向其他專案時）：
 ```bash
@@ -833,6 +831,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `nohup: failed to run command 'snakemake'` | conda env 未啟動 | 先 `conda activate ciriquant` |
 | wildcard ambiguity（star_align vs mate1/mate2） | `{srr}` wildcard 匹配到 `SRR7012366/mate1` | 在 `circrna.smk` 加 `wildcard_constraints: srr = r"[A-Z]+\d+"` |
 | star_align temp dir 硬編路徑 | 原本 `/home/choukaihsuan/star_tmp/{srr}` 只適用本機 | 改為 `RESULTS_DIR + "/circRNA/{srr}/star_tmp"` |
+| STAR `_STARtmp` 殘留目錄導致重跑失敗 | STAR 在 `{outTmpDir}/_STARtmp` 建立工作目錄；若前次 run 被 kill（SIGKILL / ulimit）後，`_STARtmp` 殘留；`star_align` shell 末尾的 `rm -rf {params.tmp_dir}` 只在成功後執行，失敗時不清理；下次 `--forcerun star_align` 時 STAR 立即報錯：`could not create temporary directory: .../_STARtmp` | 修正 `circrna.smk` `star_align` rule：在 `mkdir -p {params.tmp_dir}` **之前**加 `rm -rf {params.tmp_dir}`，確保每次從乾淨狀態啟動；手動修復已損壞樣本：`rm -rf {results_dir}/circRNA/{srr}/star_tmp` |
+| STAR `--outSAMtype BAM SortedByCoordinate` 在 NFS 環境下偶發失敗 | STAR 內建排序在 NFS 上開啟大量暫存檔（file descriptor 數量超過 NFS 限制），導致 sort step 崩潰或輸出損壞 BAM | `star_align` rule 改為 `--outSAMtype BAM Unsorted`，STAR 輸出 `Aligned.out.bam`（未排序），再用 `samtools sort -@ {threads} -m 2G` 手動排序 → `{output.bam}`，最後 `rm -f Aligned.out.bam`；mate1/mate2 rule 加 `ulimit -n 65536 || true` 提高 NFS file descriptor 上限（`circrna.smk`，2026-07-04）|
 | DCC `ValueError: invalid literal for int(): '4"'` | `-fg` 觸發 CircSkip 解析，GTF exon_number 屬性殘留尾部引號 | 移除 `-fg` flag，CircSkip 計數非必要 |
 | DCC 六個樣本全部失敗（IndexError: list index out of range） | 多個 DCC 並行共用工作目錄下的 `_tmp_DCC/`，競爭條件 + 上次失敗殘留的 partial 資料 | 改為 `(cd {params.outdir} && DCC ...)` subshell，每個 sample 的 `_tmp_DCC/` 獨立在各自 outdir 內 |
 | DCC log 路徑失敗（`logs/dcc/SRR.log: No such file or directory`） | `cd {outdir}` 後 `> {log}` 的相對路徑從 outdir 解析 | 同上，subshell 讓 `> {log}` 在 parent shell 的 CWD（`~/circRNA_agent/`）執行 |
@@ -887,7 +887,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `analysis.R` `coef=2` 在配對設計下指向 patient 係數而非 condition | `model.matrix(~patient+condition)` 有多個 patient dummy；`coef=2` 指向第一個 patient，非 condition | 改為 `cond_coef = ncol(design)`（condition 永遠在最後一列）；`glmQLFTest(fit, coef=cond_coef)`、`topTable(fit, coef=cond_coef)` |
 | `download.smk` Python 3.7 不支援 `unlink(missing_ok=True)` | `missing_ok` 參數在 Python 3.8 才加入；CentOS 7 server 的 conda Python 3.7 執行時 TypeError | 改用 `try: lock.unlink() except OSError: pass` 相容寫法 |
 | Type II DE circRNA 幾乎全為零 | 兩個根本原因：(1) `abs(logFC_fsj) >= 0.5` 閾值過嚴；(2) offset approach 造成 log2FC 與 logFC_fsj **反向相關**，`sign(log2FC)==sign(logFC_fsj)` 幾乎從不成立（73 sig_fsj 中只有 1 個同方向） | 移除方向一致性檢查，改為 `sig_bsj & sig_fsj`（BSJ ratio 顯著 AND FSJ 獨立顯著）；結果：GSE113230 從 0 → 73 Type_II（15.1%），GSE58135 → 2（13.3%），GSE133998 → 2（2.4%） |
-| benchmark AUC-PR 0.946 虛高（二元偵測假象）| `sklearn.average_precision_score` 對 score ∈ {0,1} 做樂觀排序：ground truth 87.8% 的 TP 都在 score=0 大池（FN）；樂觀排序把 2,953 個 FN 全部排在 1,997 個 TN 前，產生假精確度長段，AUC-PR = 0.946 | 改用**門檻掃描**（threshold sweep）：對 CIRI2 + DCC CircRNACount 各取 min_bsj ∈ {1,2,3,...,50}，每個門檻計算真實 (Precision, Recall)，trapezoid AUC；誠實值 = **0.155**；新增 `--ciri2-file / --dcc-count-file / --output-pr-curve` CLI 參數至 `accuracy_benchmark.py`，`--pr-curve` 至 `generate_comparison_report.py` |
+| benchmark AUC-PR 虛高（二元偵測假象）| `sklearn.average_precision_score` 對 score ∈ {0,1} 做樂觀排序，ground truth 中大量 FN 排在 TN 前，產生假精確度長段，AUC-PR 嚴重虛高 | 改用**門檻掃描**（threshold sweep）：對 CIRI2 + DCC CircRNACount 各取 min_bsj ∈ {1,2,3,...,50}，每個門檻計算真實 (Precision, Recall)，trapezoid AUC；三方法均以此計算：circDEX=**0.120**、CirComPara2_4tools=**0.349**、nfcore_3tools=**0.337**；新增 `--ciri2-file / --dcc-count-file / --output-pr-curve` CLI 參數至 `accuracy_benchmark.py`，`--pr-curve` 至 `generate_comparison_report.py` |
 | CirComPara2 工具數誤標（5→4 工具）| `generate_comparison_report.py` 的說明文字列出 CIRI2 + CIRIquant + DCC + find_circ + CIRCexplorer2 = 5 工具；但 CIRIquant 內部已呼叫 CIRI2 做 BSJ 偵測，兩者是同一演算法 | 修正為 4 工具（CIRIquant + DCC + find_circ + CIRCexplorer2）；Consensus 門檻改為「≥2/4 tools」；報告說明文字同步更新 |
 | DESeq2 `every gene contains at least one zero, cannot compute log geometric means`（SRP156355）| sparse count matrix（14,697 circRNAs × 12 samples）有大量零值，`DESeq(dds)` 預設幾何平均 size factor 估算失敗 | `analysis.R` 在 `DESeq(dds)` 前加 `dds <- estimateSizeFactors(dds, type = "poscounts")`；poscounts 用非零值估算，避開全零問題；DESeq2 偵測到 sizeFactors 已設定後不再重新估算 |
 | `predict_interactions` 僅覆蓋 edgeR top-100，切換 DESeq2/limma 時 Biomarker Score 偏低 | interactions.json 只查詢 edgeR top 50 up + 50 down；DESeq2/limma 顯著集合有許多 circRNA 不在此範圍，mirna_norm = rbp_norm = 0 → score 壓縮 | `predict_interactions.py` 新增 `--de-edger`、`--de-deseq2`、`--de-limma` 三個選填參數；提供時取三方法 top-N 聯集（~150–250 circRNA）查詢；metadata 改從 `iso` + `circbase` 讀取（不受 filterByExpr 限制）；`de.smk` 同步更新傳入三個 input |
@@ -918,6 +918,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `run_manual` 提交後 `sample_groups.csv` 遺失 `patient_id` 欄 | `run_manual` 路由固定只寫 `srr_id`/`condition` 兩欄到 `sample_groups.csv`，CSV 上傳中的 `patient_id`/`description` 欄直接被丟棄 | 手動在 server 補充 `patient_id` 欄（見 GSE229705 段落的補充指令）；長期解法：`run_manual` 讀取 CSV 時若有 `patient_id` 欄則一起寫入 `sample_groups.csv` |
 | RBP Binding modal 的 Site Positions 欄顯示相對座標 | ENCORI `circ_pos` 格式為 `chr6:148390208-148390208`（絕對座標），`_absPos()` 誤以為是相對座標再加 `chromStart`，導致超出染色體長度回傳 "N/A" | `_absPos()` 加偵測：若 `circ_pos` 以 `chr` 開頭則視為絕對座標直接使用（已修正，`generate_report.py`）；此外 RBP Binding modal 改為顯示 per-site 字母標籤（a/b/c…）+ 絕對 hg19 座標，與 Circular Structure SVG badge 一一對應（2026-07-02）|
 | RBP 表格 `bindingSites` 欄顯示 ENCORI clip 次數而非 site 數 | ENCORI 的 `bindingSites` 欄是 CLIP 實驗次數（clipExpNum），不是 binding site 位置數；直接顯示導致 mapped > total 的矛盾 | `bindingSites` cell 改為 `Math.max(bindingSites, sites.length)`，取兩者較大值確保 mapped 不超過 total（`generate_report.py`，2026-07-02）|
+| ENCORI RBP/miRNA Mapped 數量極少（原本僅 27%）| ENCORI 提供宿主基因全長的 CLIP-seq peaks（橫跨所有 exon + intron），但 `_map_to_circ_pos()` 只接受精確落在 circRNA exon 邊界內的 sites；大量 peaks 落在其他 exon 或 intron 而被丟棄；`exon_nums=[]`（intronic/intergenic circRNA）時全部 mapping 直接跳過 | `predict_interactions.py` 新增 `_parse_circ_id()` + `_genomic_to_spliced()` 兩個 helper 函式；在 exon-level mapping 失敗後，自動 fallback 到 **genomic-span proportional mapping**：若 hg19 liftover 座標落在 `[circ_start, circ_end]` 範圍內，以比例方式估算 spliced position（`cs_frac = (ov_s - circ_start) / span × total_exon_len`）；`_fetch_encori_mirna` 和 `_fetch_encori_rbp` 均新增 `circ_id` + `strand` 參數，`can_map` 條件改為 `exon_nums OR circ_coords` 任一有效即可嘗試；改善幅度：27% → 約 60–75% Mapped 覆蓋率（2026-07-07）|
 
 ---
 
@@ -1080,7 +1081,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-07-02 完成 GSE229705；GSE148036 執行中，共 12 個資料集）
+## 目前執行進度（2026-07-04 完成 GSE148036，共 12 個資料集全部完成）
 
 ### GSE113230（三陰性乳癌）
 
@@ -1104,7 +1105,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | isoform switching | ✅ 完成（66 events，within-gene FDR < 0.1） |
 | rank_biomarkers | ✅ 完成（482 candidates；**6D score**：sig+FC+conf+circbase+miRNA+RBP） |
 | report | ✅ 完成 v3（動態 DE 表格切換；Biomarker 分布圖 + 常態檢定；Venn diagram 修正；列印排版；**Venn 可點擊區域**；Heatmap tumor 在左；Circular Structure totalLen 修正）|
-| benchmark accuracy | ✅ 完成（4-method + Our_no_QC ablation；report.html 更新）|
+| benchmark accuracy | ✅ 完成（circDEX vs CirComPara2_4tools vs nfcore_3tools；門檻掃描 AUC-PR；report.html 更新）|
 | benchmark compute cost | ✅ 完成（CIRIquant 實測 **11:50:25** on HPC NFS；2026-06-10 重跑確認；compute_cost.tsv + comparison_report.html 已更新）|
 
 **主要數值結果**：
@@ -1114,19 +1115,15 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 - Isoform switching：66 events（within-gene FDR < 0.1，|ΔIUI| > 0.1）
 - Biomarker score：6D（sig, FC, confidence, circBase, #miRNA, #RBP），87 circRNAs 有 interaction data（interactions.json May 29 更新）
 - Top 1 biomarker：chr10:5836848|5842668（hsa_circ_0002665，GDI2；score=0.8202，83 miRNA，118 RBP binders，log2FC=7.48，Type_I）；interactions.json 於 May 29 重跑後更新，118 RBP binders 為資料集最大值（rbp_n=1.0）
-- Benchmark（含 CirComPara2_4tools + Our_no_QC 消融）：
+- Benchmark（門檻掃描 AUC-PR，三方法全部更新）：
 
-| Method | Precision | Recall | F1 | Specificity | AUC-PR |
-|--------|-----------|--------|----|-------------|--------|
-| **Our_adaptive** | 0.877 | 0.171 | 0.286 | 0.959 | **0.155**（門檻掃描，誠實值）|
-| Our_no_QC | 0.879 | 0.173 | 0.290 | 0.959 | 0.946†|
-| CirComPara2_sim（2-tool ablation）| 0.879 | 0.173 | 0.290 | 0.959 | 0.946†|
-| **CirComPara2_4tools** | 0.852 | **0.235** | **0.368** | 0.930 | 0.921†|
-| nfcore_3tools | 0.873 | 0.182 | 0.301 | 0.955 | 0.943†|
+| Method | Precision | Recall | F1 | Specificity | AUC-PR（門檻掃描）|
+|--------|-----------|--------|----|-------------|-----------------|
+| **circDEX**（本研究）| **0.886** | 0.131 | 0.228 | **0.971** | 0.120 |
+| **CirComPara2_4tools** | 0.854 | **0.227** | **0.358** | 0.934 | **0.349** |
+| nfcore_3tools | 0.873 | 0.182 | 0.301 | 0.955 | 0.337 |
 
-†：二元偵測樂觀 AUC-PR（score ∈ {0,1}，虛高；Our_adaptive 誠實值 = 0.155，見 AUC-PR 計算說明）
-
-CirComPara2_4tools Recall 最高但 Specificity 最低；Our pipeline Specificity 最優（0.959）。
+circDEX Specificity 最高（0.971，假陽性最少）；CirComPara2_4tools Recall 與 AUC-PR 最高（4 工具廣網策略）；三方法 AUC-PR 均以門檻掃描計算，數值可直接比較。
 
 **Biomarker score 公式（6D）**：
 ```
@@ -1698,9 +1695,9 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 
 ---
 
-## GSE148036（LUAD 肺腺癌 tumor vs. normal，🔄 執行中 2026-07-02）
+## GSE148036（LUAD 肺腺癌 tumor vs. normal，✅ 完成 2026-07-04）
 
-**🔄 執行中（下載階段，2026-07-02 23:04 啟動）。** 預計報告位置：`~/GSE148036_results/report.html`
+**✅ 完成（2026-07-04 03:39）。** 報告位置：`~/GSE148036_results/report.html`（server，5.9MB）；本機備份：`/mnt/c/Users/User/Desktop/circRNA agent report/GSE148036_report.html`
 
 多疾病肺部 RNA-seq 資料集，從中選取 LUAD（Lung Adenocarcinoma）vs. Normal Lung 各 5 samples。Illumina HiSeq 3000，PE146（avgLength ≈ 286–292bp），Ribo-Zero rRNA removal，Total RNA，University of Pittsburgh / UPMC 收集。
 
@@ -1725,14 +1722,41 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 
 | 步驟 | 狀態 |
 |------|------|
-| 下載 SRA | 🔄 進行中（S3 aria2c，多 SRR 並行） |
-| fastp QC/trim | ⏳ 等待 |
-| CIRIquant | ⏳ 等待 |
-| STAR paired+mate1+mate2 | ⏳ 等待 |
-| DCC | ⏳ 等待 |
-| consensus_filter / merge_counts | ⏳ 等待 |
-| DE analysis | ⏳ 等待 |
-| report | ⏳ 等待 |
+| 下載 SRA | ✅ 10/10 完成（S3 aria2c） |
+| fastp QC/trim | ✅ 10/10 完成 |
+| CIRIquant | ✅ 10/10 完成 |
+| STAR paired+mate1+mate2 | ✅ 30/30 完成（`_STARtmp` residual bug 修正後重跑）|
+| DCC | ✅ 10/10 完成 |
+| consensus_filter / merge_counts | ✅ 完成（874 circRNAs；19 after filterByExpr = **2.2%**）|
+| assign_isoforms / annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 6 / DESeq2 27 / limma 323 significant）|
+| predict_interactions（union mode）| ✅ 完成 |
+| isoform_switching | ✅ 完成（12 events，within-gene FDR < 0.1）|
+| rank_biomarkers | ✅ 完成（6 candidates）|
+| report | ✅ 完成（5.9MB，2026-07-04 03:39）|
+
+**主要數值結果**：
+- 偵測：874 consensus circRNAs；filterByExpr 後 **19 tested（2.2%）**——非配對設計（5T + 5N）+ PE146 讀長短樣本間 BSJ 差異大
+- DE（edgeR_ciriquant）：**6 significant**（nominal p < 0.05，|log2FC| > 1）；全部下調，全 **Type_I**
+- DE（DESeq2）：27 significant；DE（limma-voom）：323 significant
+- Isoform switching：**12 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
+- Biomarker candidates：6 個
+- Top 1：chr8:68044186|68049838（**hsa_circ_0003388，CSPP1**；log2FC=−6.73，p=0.000444，Type_I，score=0.7231，11 miRNA，4 RBP）
+- Top 2：chr3:169694734|169706147（**hsa_circ_0001358，SEC62**；log2FC=−1.56，p=0.0477，score=0.6561，23 miRNA，57 RBP）
+
+**注意**：filterByExpr 通過率極低（2.2%，僅 19/874），是 12 個資料集中最低。主因：
+1. 非配對設計（unpaired 5T+5N），而 GSE229705 同為 LUAD 但 6 對配對（paired），edgeR 功率更高
+2. PE146 讀長（每個 SRR 僅含完整樣本的一半 reads，即 ~46M），BSJ 偵測量相對有限
+3. LUAD 的 circRNA 整體表現偏低（相較乳癌/HCC），加上樣本間差異造成稀疏 BSJ counts
+建議：以 **limma-voom 為主方法**（323 sig），edgeR 作輔助
+
+**啟動歷史**：
+- GSE148036-SFJU（web UI 首次提交）config 路徑指向 GSE229705（`_update_paths_for_project` bug），已手動修正
+- r1–r5（早期）：STAR 多個 sample 因 ulimit 和 `_STARtmp` 殘留目錄失敗
+- r6：`--forcerun star_align` 完成 6/10 樣本
+- r7（2026-07-04 01:59）：修正 `circrna.smk` star_align 加 `rm -rf {params.tmp_dir}` before `mkdir -p`，STAR 4 個失敗樣本全部重跑成功，03:39 pipeline 100% 完成
+
+**config 錯誤歷史**：首次提交後 `config/projects/GSE148036.yaml` 的 `raw_dir`/`results_dir` 指向 `GSE229705/`（`_update_paths_for_project` bug，`old_pid == new_pid` 時不做路徑替換）。已手動 `sed` 修正，並修復 `web_ui.py` 的 `_update_paths_for_project` 函式（改用 regex 替換路徑中任何 GSE/SRP/PRJNA 編號）。
 
 **設定**：
 - case/control label：`tumor` / `normal`
@@ -1740,9 +1764,6 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 - Condition CSV：`/mnt/c/Users/User/Desktop/GSE148036_condition.csv`（無 `patient_id` 欄）
 - Library：Total RNA（Ribo-Zero），PE146，Illumina HiSeq 3000
 - 每 sample 深度：~46M reads（23M spots × 2）
-- Queue job：GSE148036-SFJU（手動重啟，PID 71774）
-
-**config 錯誤歷史**：首次提交後 `config/projects/GSE148036.yaml` 的 `raw_dir`/`results_dir` 指向 `GSE229705/`（`_update_paths_for_project` bug，`old_pid == new_pid` 時不做路徑替換）。已手動 `sed` 修正，並修復 `web_ui.py` 的 `_update_paths_for_project` 函式（改用 regex 替換路徑中任何 GSE/SRP/PRJNA 編號）。
 
 **Server config**（`config/projects/GSE148036.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE148036/raw`

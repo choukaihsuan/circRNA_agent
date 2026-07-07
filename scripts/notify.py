@@ -112,6 +112,28 @@ def send_slack(text: str) -> None:
         print(f"[notify] Slack failed: {exc}")
 
 
+# ── CircDEX Email Brand Header ────────────────────────────────────────────────
+
+def _cd_email_header() -> str:
+    return """
+<div style="background:#0F2137;padding:20px 28px 16px;border-radius:8px 8px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <div style="display:inline-block">
+    <span style="font-size:30px;font-weight:300;color:rgba(255,255,255,.85);letter-spacing:-.5px">Circ</span><span
+          style="font-size:30px;font-weight:800;letter-spacing:.07em;color:#00B4C6">DEX</span>
+  </div>
+  <div style="font-size:14px;color:rgba(255,255,255,.55);margin-top:4px">
+    From reads to circRNA biomarkers
+  </div>
+  <div style="margin-top:8px">
+    <span style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#00B4C6;background:rgba(0,180,198,.15);border:1px solid rgba(0,180,198,.35);border-radius:4px;padding:3px 8px;margin-right:5px">Dual-tool consensus</span><span
+          style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#00B4C6;background:rgba(0,180,198,.15);border:1px solid rgba(0,180,198,.35);border-radius:4px;padding:3px 8px;margin-right:5px">Differential expression</span><span
+          style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#00B4C6;background:rgba(0,180,198,.15);border:1px solid rgba(0,180,198,.35);border-radius:4px;padding:3px 8px">6D biomarker ranking</span>
+  </div>
+</div>
+<div style="height:1px;background:linear-gradient(90deg,transparent,#00B4C6,transparent);opacity:.5"></div>
+"""
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def notify_start(project_id: str) -> None:
@@ -126,24 +148,27 @@ def notify_success(project_id: str, report_path: str = "",
     now   = datetime.now().strftime("%Y-%m-%d %H:%M")
     stats = stats or {}
 
-    subject = f"[circRNA Agent] {project_id} Analysis Complete ✅"
+    subject = f"[CircDEX] {project_id} Analysis Complete ✅"
     body = f"""
-<h2 style="color:#16a34a">✅ circRNA Analysis Complete</h2>
-<table style="border-collapse:collapse;font-family:sans-serif">
-  <tr><td style="padding:4px 12px 4px 0"><b>Project</b></td>
-      <td>{project_id}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>Completed at</b></td>
-      <td>{now}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>Total circRNAs</b></td>
-      <td>{stats.get("total_circ", "N/A")}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>Significant DECs</b></td>
-      <td>{stats.get("n_sig", "N/A")}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>Up-regulated</b></td>
-      <td>{stats.get("n_up", "N/A")}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0"><b>Down-regulated</b></td>
-      <td>{stats.get("n_down", "N/A")}</td></tr>
+{_cd_email_header()}
+<div style="padding:24px 28px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<h2 style="color:#16a34a;margin:0 0 16px">✅ Analysis Complete</h2>
+<table style="border-collapse:collapse">
+  <tr><td style="padding:4px 14px 4px 0;color:#64748b;font-size:13px"><b>Project</b></td>
+      <td style="font-size:13px">{project_id}</td></tr>
+  <tr><td style="padding:4px 14px 4px 0;color:#64748b;font-size:13px"><b>Completed at</b></td>
+      <td style="font-size:13px">{now}</td></tr>
+  <tr><td style="padding:4px 14px 4px 0;color:#64748b;font-size:13px"><b>Total circRNAs</b></td>
+      <td style="font-size:13px">{stats.get("total_circ", "N/A")}</td></tr>
+  <tr><td style="padding:4px 14px 4px 0;color:#64748b;font-size:13px"><b>Significant DECs</b></td>
+      <td style="font-size:13px">{stats.get("n_sig", "N/A")}</td></tr>
+  <tr><td style="padding:4px 14px 4px 0;color:#64748b;font-size:13px"><b>Up-regulated</b></td>
+      <td style="font-size:13px">{stats.get("n_up", "N/A")}</td></tr>
+  <tr><td style="padding:4px 14px 4px 0;color:#64748b;font-size:13px"><b>Down-regulated</b></td>
+      <td style="font-size:13px">{stats.get("n_down", "N/A")}</td></tr>
 </table>
-{f'<p>Report attached, or view on server:<br><code>{report_path}</code></p>' if report_path else ''}
+{f'<p style="margin-top:16px;font-size:13px">Report attached, or view on server:<br><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">{report_path}</code></p>' if report_path else ''}
+</div>
 """
     slack_text = (
         f"✅ *{project_id}* analysis complete ({now})\n"
@@ -164,14 +189,17 @@ def notify_failure(project_id: str, failed_rule: str = "unknown",
         lines    = Path(log_path).read_text(errors="replace").splitlines()
         log_tail = "\n".join(lines[-50:])
 
-    subject = f"[circRNA Agent] {project_id} Analysis Failed ❌ ({failed_rule})"
+    subject = f"[CircDEX] {project_id} Analysis Failed ❌ ({failed_rule})"
     body = f"""
-<h2 style="color:#dc2626">❌ Pipeline Failed</h2>
-<p><b>Project:</b> {project_id}<br>
+{_cd_email_header()}
+<div style="padding:24px 28px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<h2 style="color:#dc2626;margin:0 0 12px">❌ Pipeline Failed</h2>
+<p style="font-size:13px"><b>Project:</b> {project_id}<br>
 <b>Failed rule:</b> {failed_rule}<br>
 <b>Time:</b> {now}</p>
-<h3>Log (last 50 lines)</h3>
-<pre style="background:#f5f5f5;padding:10px;font-size:12px">{log_tail}</pre>
+<h3 style="margin:16px 0 8px;font-size:13px">Log (last 50 lines)</h3>
+<pre style="background:#f5f5f5;padding:12px;font-size:11px;border-radius:6px;overflow-x:auto">{log_tail}</pre>
+</div>
 """
     slack_text = (
         f"❌ *{project_id}* failed ({now})\n"

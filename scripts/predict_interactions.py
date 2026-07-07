@@ -289,7 +289,9 @@ def _parse_encori_tsv(text: str) -> List[dict]:
 def _fetch_encori_mirna(gene_name: str, clip_exp_num: int = 1,
                         program_num: int = 2,
                         lo=None, coord_idx: Optional[dict] = None,
-                        exon_nums: Optional[List[int]] = None) -> List[dict]:
+                        exon_nums: Optional[List[int]] = None,
+                        circ_id: Optional[str] = None,
+                        strand: str = "+") -> List[dict]:
     """Query ENCORI miRNATarget (TSV) for circRNA host gene. Returns one entry per unique miRNA."""
     if not _REQUESTS or not gene_name or gene_name in ("", "nan"):
         return []
@@ -340,17 +342,37 @@ def _fetch_encori_mirna(gene_name: str, clip_exp_num: int = 1,
         if hg38 and hg38 not in agg[name]["hg38_list"]:
             agg[name]["hg38_list"].append(hg38)
 
+    # Pre-compute: circ genomic coords + total exon len for proportional fallback
+    circ_coords  = _parse_circ_id(circ_id) if circ_id else None
+    gene_exons   = (coord_idx or {}).get(gene_name, {})
+    total_exon_len = sum(
+        max(0, gene_exons[en][2] - gene_exons[en][1])
+        for en in (exon_nums or []) if en in gene_exons
+    ) if gene_exons else 0
+    if total_exon_len == 0 and circ_coords:
+        total_exon_len = circ_coords[2] - circ_coords[1]  # genomic span as fallback len
+
     _circ_pos_re = re.compile(r'^\d+[–\-]\d+$')
     mirna_list = []
     for name, info in agg.items():
         circ_pos = info["pos"]
-        if lo is not None and coord_idx is not None and exon_nums and info["hg38_list"]:
+        mapped = None
+        if lo is not None and info["hg38_list"]:
             for hg38 in info["hg38_list"]:
                 lifted = _liftover_interval(lo, hg38[0], hg38[1], hg38[2])
                 if not lifted:
                     continue
-                mapped = _map_to_circ_pos(lifted[0], lifted[1], lifted[2],
-                                          gene_name, exon_nums, coord_idx)
+                # 1) Try exon-level mapping
+                if coord_idx is not None and exon_nums:
+                    mapped = _map_to_circ_pos(lifted[0], lifted[1], lifted[2],
+                                              gene_name, exon_nums, coord_idx)
+                # 2) Genomic-span proportional fallback
+                if not mapped and circ_coords:
+                    mapped = _genomic_to_spliced(
+                        lifted[1], lifted[2],
+                        circ_coords[0], circ_coords[1], circ_coords[2],
+                        strand, total_exon_len,
+                    )
                 if mapped:
                     circ_pos = mapped
                     break  # use first successfully mapped position
@@ -370,7 +392,9 @@ def _fetch_encori_mirna(gene_name: str, clip_exp_num: int = 1,
 
 def _fetch_encori_rbp(gene_name: str, clip_exp_num: int = 1,
                       lo=None, coord_idx: Optional[dict] = None,
-                      exon_nums: Optional[List[int]] = None) -> List[dict]:
+                      exon_nums: Optional[List[int]] = None,
+                      circ_id: Optional[str] = None,
+                      strand: str = "+") -> List[dict]:
     """Query ENCORI RBPTarget (TSV) for circRNA host gene. Returns one entry per unique RBP."""
     if not _REQUESTS or not gene_name or gene_name in ("", "nan"):
         return []
@@ -420,19 +444,42 @@ def _fetch_encori_rbp(gene_name: str, clip_exp_num: int = 1,
         if hg38 and hg38 not in agg[name]["hg38_list"]:
             agg[name]["hg38_list"].append(hg38)
 
+    # Pre-compute: circ genomic coords + total exon len for proportional fallback
+    circ_coords    = _parse_circ_id(circ_id) if circ_id else None
+    gene_exons     = (coord_idx or {}).get(gene_name, {})
+    total_exon_len = sum(
+        max(0, gene_exons[en][2] - gene_exons[en][1])
+        for en in (exon_nums or []) if en in gene_exons
+    ) if gene_exons else 0
+    if total_exon_len == 0 and circ_coords:
+        total_exon_len = circ_coords[2] - circ_coords[1]  # genomic span as fallback len
+
     _circ_pos_re2 = re.compile(r'^(\d+)[–\-](\d+)$')
     rbp_list = []
     for name, info in agg.items():
         circ_pos = info["pos"]
         sites: List[dict] = []
-        if lo is not None and coord_idx is not None and exon_nums and info["hg38_list"]:
+        can_map = lo is not None and info["hg38_list"] and (
+            (coord_idx is not None and exon_nums) or circ_coords
+        )
+        if can_map:
             seen_ranges: set = set()
             for hg38 in info["hg38_list"]:
                 lifted = _liftover_interval(lo, hg38[0], hg38[1], hg38[2])
                 if not lifted:
                     continue
-                mapped = _map_to_circ_pos(lifted[0], lifted[1], lifted[2],
-                                          gene_name, exon_nums, coord_idx)
+                # 1) Try exon-level mapping
+                mapped = None
+                if coord_idx is not None and exon_nums:
+                    mapped = _map_to_circ_pos(lifted[0], lifted[1], lifted[2],
+                                              gene_name, exon_nums, coord_idx)
+                # 2) Genomic-span proportional fallback
+                if not mapped and circ_coords:
+                    mapped = _genomic_to_spliced(
+                        lifted[1], lifted[2],
+                        circ_coords[0], circ_coords[1], circ_coords[2],
+                        strand, total_exon_len,
+                    )
                 if not mapped:
                     continue
                 if circ_pos == info["pos"]:
@@ -632,6 +679,39 @@ def _liftover_interval(lo, chrom: str, start0: int, end0: int) -> Optional[Tuple
         return (c1, min(p1, p2), max(p1, p2) + 1)
     except Exception:
         return None
+
+
+def _parse_circ_id(circ_id: str) -> Optional[Tuple[str, int, int]]:
+    """Parse 'chrN:start|end' → (chrom, start, end) 0-based. Returns None on failure."""
+    m = re.match(r'(chr[^:]+):(\d+)\|(\d+)', circ_id or "")
+    if not m:
+        return None
+    return m.group(1), int(m.group(2)), int(m.group(3))
+
+
+def _genomic_to_spliced(hg19_start: int, hg19_end: int,
+                        circ_chrom: str, circ_start: int, circ_end: int,
+                        strand: str, total_len: int) -> Optional[str]:
+    """
+    Fallback: estimate spliced position from genomic fraction within circRNA span.
+    Returns '1234–1256' string, or None if outside span or total_len=0.
+    """
+    span = circ_end - circ_start
+    if span <= 0 or total_len <= 0:
+        return None
+    ov_s = max(hg19_start, circ_start)
+    ov_e = min(hg19_end,   circ_end)
+    if ov_s >= ov_e:
+        return None
+    if strand == '-':
+        cs_frac = (circ_end - ov_e) / span
+        ce_frac = (circ_end - ov_s) / span
+    else:
+        cs_frac = (ov_s - circ_start) / span
+        ce_frac = (ov_e - circ_start) / span
+    cs = max(1, int(cs_frac * total_len))
+    ce = max(cs, min(total_len, int(ce_frac * total_len)))
+    return f"{cs}–{ce}"
 
 
 def _get_exon_nums_ordered(exon_span: str, strand: str) -> List[int]:
@@ -842,9 +922,11 @@ def main():
         exon_nums = _get_exon_nums_ordered(exon_span, strand) if exon_span else []
         if can_query_encori:
             enc_mirna = _fetch_encori_mirna(gene_name, args.clip_exp_num, args.program_num,
-                                            lo=lo, coord_idx=coord_index, exon_nums=exon_nums)
+                                            lo=lo, coord_idx=coord_index, exon_nums=exon_nums,
+                                            circ_id=circ_id, strand=strand)
             enc_rbp   = _fetch_encori_rbp(gene_name, args.clip_exp_num,
-                                          lo=lo, coord_idx=coord_index, exon_nums=exon_nums)
+                                          lo=lo, coord_idx=coord_index, exon_nums=exon_nums,
+                                          circ_id=circ_id, strand=strand)
             mirna = mirna + enc_mirna
             rbp   = rbp   + enc_rbp
 

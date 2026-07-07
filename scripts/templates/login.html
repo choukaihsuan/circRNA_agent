@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="google" content="notranslate">
   <meta http-equiv="Content-Language" content="zh-TW">
-  <title>登入 – circRNA Pipeline</title>
+  <title>登入 – CircDEX</title>
   <style>
-    :root { --primary:#2563eb; --border:#e2e8f0; --bg:#f8fafc; --radius:12px; }
+    :root { --primary:#2563eb; --border:#e2e8f0; --bg:#f8fafc; --radius:12px;
+            --midnight:#0F2137; --bsj:#00B4C6; }
     * { box-sizing:border-box; margin:0; padding:0; }
     body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
            background:var(--bg); color:#1e293b;
@@ -15,12 +16,28 @@
 
     .card {
       background:white; border:1px solid var(--border);
-      border-radius:var(--radius); padding:40px 36px; width:100%; max-width:400px;
+      border-radius:var(--radius); width:100%; max-width:400px;
       box-shadow:0 4px 24px rgba(0,0,0,.07); position:relative;
+      overflow:hidden;
     }
-    .logo { font-size:28px; margin-bottom:6px; text-align:center; }
-    h1 { font-size:18px; font-weight:700; text-align:center; margin-bottom:4px; }
-    .sub { font-size:13px; color:#64748b; text-align:center; margin-bottom:28px; }
+    .sub { font-size:13px; color:#64748b; text-align:center; margin-bottom:24px; }
+    /* CircDEX card brand header */
+    .cd-card-hdr { background:var(--midnight); padding:22px 28px 18px;
+                   text-align:center; position:relative; }
+    .cd-card-hdr::after { content:''; position:absolute; bottom:0; left:0; right:0;
+                           height:1px;
+                           background:linear-gradient(90deg,transparent,var(--bsj),transparent);
+                           opacity:.5; }
+    .cd-brand-block { display:flex; flex-direction:column; align-items:center; gap:3px; }
+    .cd-wordmark { font-size:28px; line-height:1; margin-top:6px; }
+    .cd-circ { font-weight:300; color:rgba(255,255,255,.82); }
+    .cd-dex  { font-weight:800; letter-spacing:.07em; color:var(--bsj); }
+    .cd-tagline { font-size:14px; color:rgba(255,255,255,.52); margin-top:4px; }
+    .cd-chips { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; justify-content:center; }
+    .cd-chip { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+               color:#00B4C6; background:rgba(0,180,198,.14);
+               border:1px solid rgba(0,180,198,.30); border-radius:4px; padding:4px 10px; }
+    .cd-card-body { padding:22px 36px 36px; }
 
     label { font-size:13px; font-weight:600; display:block; margin-bottom:6px; }
     input[type=email] {
@@ -53,29 +70,49 @@
     .err { background:#fee2e2; border:1px solid #fca5a5; border-radius:8px;
            padding:10px 14px; font-size:13px; color:#991b1b; margin-bottom:14px; }
 
-    /* Lang switcher */
+    /* Lang switcher (inside dark card header) */
     .lang-switcher {
-      position:absolute; top:14px; right:16px;
-      display:flex; gap:4px;
+      position:absolute; top:10px; right:12px;
+      display:flex; gap:3px;
     }
     .lang-btn {
-      padding:3px 10px; border-radius:6px; font-size:12px; font-weight:600;
-      border:1px solid var(--border); background:white; cursor:pointer; color:#64748b;
+      padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;
+      border:1px solid rgba(255,255,255,.20); background:transparent;
+      cursor:pointer; color:rgba(255,255,255,.48); transition:all .15s;
     }
-    .lang-btn.active { background:var(--primary); color:white; border-color:var(--primary); }
+    .lang-btn:hover { background:rgba(255,255,255,.10); color:white; }
+    .lang-btn.active { background:var(--bsj); color:white; border-color:var(--bsj); }
   </style>
 </head>
 <body>
 <div class="card">
-
-  <!-- Language switcher -->
-  <div class="lang-switcher">
-    <button class="lang-btn active" data-lang="zh" onclick="switchLang('zh')">中文</button>
-    <button class="lang-btn"        data-lang="en" onclick="switchLang('en')">EN</button>
+  <!-- CircDEX brand header -->
+  <div class="cd-card-hdr">
+    <div class="lang-switcher">
+      <button class="lang-btn active" data-lang="zh" onclick="switchLang('zh')">中文</button>
+      <button class="lang-btn"        data-lang="en" onclick="switchLang('en')">EN</button>
+    </div>
+    <div class="cd-brand-block">
+      <svg width="44" height="44" viewBox="0 0 38 38" fill="none" aria-hidden="true">
+        <circle cx="19" cy="19" r="15" stroke="rgba(0,180,198,.20)" stroke-width="1.5"/>
+        <path d="M19 4 A15 15 0 1 1 7.3 28" stroke="#00B4C6" stroke-width="2.6"
+              stroke-linecap="round" fill="none"/>
+        <circle cx="19" cy="4"   r="2.8" fill="#00B4C6"/>
+        <circle cx="7.3" cy="28" r="1.8" fill="#00B4C6" opacity=".55"/>
+      </svg>
+      <div class="cd-wordmark">
+        <span class="cd-circ">Circ</span><span class="cd-dex">DEX</span>
+      </div>
+      <div class="cd-tagline">From reads to circRNA biomarkers</div>
+      <div class="cd-chips">
+        <span class="cd-chip">Dual-tool consensus</span>
+        <span class="cd-chip">Differential expression</span>
+        <span class="cd-chip">6D biomarker ranking</span>
+      </div>
+    </div>
   </div>
 
-  <div class="logo">🧬</div>
-  <h1>circRNA Pipeline</h1>
+  <div class="cd-card-body">
   <div class="sub"
        data-en="Enter your email — we'll send you a one-time login link">
     輸入 Email，我們將寄送一次性登入連結給您
@@ -111,6 +148,7 @@
             data-en="✉️ Send Login Link">✉️ 寄送登入連結</button>
   </form>
   {% endif %}
+  </div><!-- /cd-card-body -->
 </div>
 
 <script>

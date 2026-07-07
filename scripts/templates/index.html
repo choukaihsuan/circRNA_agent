@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="google" content="notranslate">
   <meta http-equiv="Content-Language" content="zh-TW">
-  <title>circRNA Analysis Pipeline</title>
+  <title>CircDEX — circRNA Analysis Pipeline</title>
   <style>
     :root {
       --primary:   #2563eb;
@@ -18,6 +18,8 @@
       --text:      #1e293b;
       --muted:     #64748b;
       --radius:    12px;
+      --midnight:  #0F2137;
+      --bsj:       #00B4C6;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -127,14 +129,44 @@
     .param-group input:focus { outline: none; border-color: var(--primary); }
     .param-hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
-    /* ── Language Switcher ── */
-    .lang-switcher { display:flex; gap:4px; margin-left:auto; align-items:center; }
+    /* ── Language Switcher (light context, forms etc.) ── */
     .lang-btn { padding:4px 12px; border:1.5px solid var(--border); border-radius:6px;
                 font-size:12px; font-weight:700; cursor:pointer; background:#fff;
                 color:var(--muted); transition:all .15s; letter-spacing:.04em; }
     .lang-btn:hover { border-color:var(--primary); color:var(--primary); }
-    .lang-btn.active { background:var(--primary); border-color:var(--primary);
-                       color:#fff; }
+    .lang-btn.active { background:var(--primary); border-color:var(--primary); color:#fff; }
+
+    /* ── CircDEX Site Header ── */
+    .cd-header { background:var(--midnight); padding:0 20px; display:flex;
+                 align-items:center; min-height:70px; position:relative; flex-shrink:0; }
+    .cd-header::after { content:''; position:absolute; bottom:0; left:0; right:0; height:1px;
+                        background:linear-gradient(90deg,transparent,var(--bsj),transparent);
+                        opacity:.4; }
+    .cd-brand { display:flex; align-items:center; gap:12px; text-decoration:none; padding:10px 0; flex-shrink:0; }
+    .cd-meta { display:flex; flex-direction:column; gap:0; }
+    .cd-wordmark { font-size:26px; line-height:1; }
+    .cd-circ { font-weight:300; color:rgba(255,255,255,.82); }
+    .cd-dex  { font-weight:800; letter-spacing:.07em; color:var(--bsj); }
+    .cd-sub  { font-size:14px; color:rgba(255,255,255,.52); margin-top:3px; }
+    .cd-chips-h { display:flex; gap:5px; margin-top:5px; }
+    .cd-chip-h  { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+                  color:#00B4C6; background:rgba(0,180,198,.14);
+                  border:1px solid rgba(0,180,198,.30); border-radius:4px; padding:3px 9px; }
+    .cd-nav { margin-left:auto; display:flex; align-items:center; gap:2px; }
+    .cd-nav-link { font-size:12px; font-weight:500; color:rgba(255,255,255,.52);
+                   text-decoration:none; padding:5px 9px; border-radius:5px;
+                   transition:color .15s, background .15s; }
+    .cd-nav-link:hover { color:white; background:rgba(255,255,255,.07); }
+    .cd-nav-sep { width:1px; height:16px; background:rgba(255,255,255,.12); margin:0 3px; }
+    .cd-user { font-size:11px; color:rgba(255,255,255,.34); padding:0 4px; }
+    .cd-lang-pill { display:flex; gap:2px; background:rgba(255,255,255,.06);
+                    border-radius:5px; padding:3px; margin-left:6px; }
+    .cd-header .lang-btn { background:transparent; border:1px solid rgba(255,255,255,.18);
+                            color:rgba(255,255,255,.48); font-size:11px; padding:2px 8px;
+                            border-radius:3px; font-weight:600; letter-spacing:normal; }
+    .cd-header .lang-btn:hover { background:rgba(255,255,255,.10); color:white;
+                                  border-color:rgba(255,255,255,.35); }
+    .cd-header .lang-btn.active { background:var(--bsj); color:white; border-color:var(--bsj); }
 
     /* ── Tutorial ── */
     .tut-body { display:none; margin-top:16px; }
@@ -275,31 +307,46 @@
   </style>
 </head>
 <body>
-<div class="container">
-
-  <!-- Header -->
-  <div class="header">
-    <div class="header-icon">🧬</div>
-    <div>
-      <h1>circRNA Analysis Pipeline</h1>
-      <p>{{ config.get('project_id', 'circRNA Pipeline') }} <span data-en="/ Configure analysis and run">／ 設定分析方法並執行</span></p>
+<!-- CircDEX Site Header -->
+<header class="cd-header">
+  <a class="cd-brand" href="/">
+    <svg width="52" height="52" viewBox="0 0 38 38" fill="none" aria-hidden="true">
+      <circle cx="19" cy="19" r="15" stroke="rgba(0,180,198,.18)" stroke-width="1.5"/>
+      <path d="M19 4 A15 15 0 1 1 7.3 28" stroke="#00B4C6" stroke-width="2.6"
+            stroke-linecap="round" fill="none"/>
+      <circle cx="19" cy="4"   r="2.8" fill="#00B4C6"/>
+      <circle cx="7.3" cy="28" r="1.8" fill="#00B4C6" opacity=".55"/>
+    </svg>
+    <div class="cd-meta">
+      <div class="cd-wordmark"><span class="cd-circ">Circ</span><span class="cd-dex">DEX</span></div>
+      <div class="cd-sub">From reads to circRNA biomarkers</div>
+      <div class="cd-chips-h">
+        <span class="cd-chip-h">Dual-tool consensus</span>
+        <span class="cd-chip-h">Differential expression</span>
+        <span class="cd-chip-h">6D biomarker ranking</span>
+      </div>
     </div>
+  </a>
+  <nav class="cd-nav">
     {% if running %}
     <span class="status-pill pill-running" data-en="⏳ Running">⏳ 執行中</span>
     {% else %}
     <span class="status-pill pill-idle" data-en="● Idle">● 閒置</span>
     {% endif %}
-    <div class="lang-switcher">
+    <div class="cd-nav-sep"></div>
+    <a href="/queue" class="cd-nav-link" data-en="Queue">佇列</a>
+    {% if session.email %}
+    <span class="cd-user">{{ session.email }}</span>
+    <a href="/logout" class="cd-nav-link" data-en="Sign out">登出</a>
+    {% endif %}
+    <div class="cd-lang-pill">
       <button class="lang-btn active" data-lang="zh" onclick="switchLang('zh')">中文</button>
       <button class="lang-btn"        data-lang="en" onclick="switchLang('en')">EN</button>
     </div>
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:8px;">
-      {% if session.email %}
-      <span style="font-size:11px;color:#64748b;">{{ session.email }}</span>
-      <a href="/logout" style="font-size:11px;color:#94a3b8;text-decoration:none;" data-en="Sign out">登出</a>
-      {% endif %}
-    </div>
-  </div>
+  </nav>
+</header>
+
+<div class="container">
 
   <!-- ── 查詢任務進度 ── -->
   <div class="section" style="border-color:#ddd6fe; background:linear-gradient(135deg,#faf5ff,#fff);">
@@ -450,7 +497,7 @@
 
         <!-- Pipeline diagram -->
         <div style="text-align:center;margin:4px 0 20px;">
-          <img src="/static/pipeline_diagram.png?v=6" alt="circRNA Analysis Pipeline"
+          <img src="/static/pipeline_diagram2.png?v=7" alt="circRNA Analysis Pipeline"
                style="max-width:100%;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.08);cursor:zoom-in;"
                onclick="document.getElementById('diagram-lightbox').style.display='flex';"
                title="點擊放大 / Click to zoom">
@@ -1339,7 +1386,7 @@
 
     'tut-workflow': `
       <div style="text-align:center;margin:4px 0 20px;">
-        <img src="/static/pipeline_diagram.png?v=6" alt="circRNA Analysis Pipeline"
+        <img src="/static/pipeline_diagram2.png?v=7" alt="circRNA Analysis Pipeline"
              style="max-width:100%;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.08);cursor:zoom-in;"
              onclick="document.getElementById('diagram-lightbox').style.display='flex';"
              title="Click to zoom">
@@ -1700,7 +1747,7 @@
      style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;
             align-items:center;justify-content:center;cursor:zoom-out;"
      onclick="this.style.display='none'">
-  <img src="/static/pipeline_diagram.png?v=6"
+  <img src="/static/pipeline_diagram2.png?v=7"
        style="max-width:94vw;max-height:94vh;border-radius:10px;
               box-shadow:0 12px 60px rgba(0,0,0,.6);pointer-events:none;">
 </div>

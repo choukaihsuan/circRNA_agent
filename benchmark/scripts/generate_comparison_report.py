@@ -655,7 +655,7 @@ def _feature_table() -> str:
          "~ partial (per-tool support)",
          "✗"),
         ("DE method",
-         "edgeR GLM + FSJ offset (primary)<br><small>+ DESeq2 + limma-voom (3 methods)</small>",
+         "✓ edgeR GLM + FSJ offset<br><small>✓ DESeq2 (poscounts norm.)</small><br><small>✓ limma-voom (TMM norm.)</small>",
          "DESeq2 / edgeR (BSJ counts)",
          "DESeq2 (BSJ counts)"),
         ("Type I / II classification",
@@ -693,7 +693,7 @@ def _feature_table() -> str:
     ]
     header = (
         '<tr><th>Feature</th>'
-        '<th><span class="badge badge-ours">Our pipeline</span><br>'
+        '<th><span class="badge badge-ours">circDEX</span><br>'
         '<small style="color:#aaa">Snakemake</small></th>'
         '<th><span class="badge badge-circompara2">CirComPara2</span><br>'
         '<small style="color:#aaa">SCons · 2022</small></th>'
@@ -797,7 +797,7 @@ def _conclusions(acc: pd.DataFrame, compute: pd.DataFrame, de: pd.DataFrame) -> 
     return f"""
 <div class="concl-grid">
   <div class="concl-card c-ours">
-    <h4>Our pipeline <span class="badge badge-ours">Recommended</span></h4>
+    <h4>circDEX <span class="badge badge-ours">Recommended</span></h4>
     <ul>
       <li>Best overall AUC-PR（0.946）；F1 = <strong>{best_f1_v}</strong></li>
       <li>Selective pseudo-circ QC：BSJ/FSJ &gt; 1 過濾<strong>僅對 BSJ &lt; 5 的低表現 loci 啟動</strong>，
@@ -872,9 +872,9 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
         pr["method"] = "Our_adaptive"
 
     method_styles = {
-        "Our_adaptive":       {"color": "#1a5c96", "symbol": "circle"},
-        "CirComPara2_4tools": {"color": "#dc2626", "symbol": "square"},
-        "nfcore_3tools":      {"color": "#16a34a", "symbol": "triangle-up"},
+        "Our_adaptive":       {"color": "#1a5c96", "symbol": "circle",    "label": "circDEX"},
+        "CirComPara2_4tools": {"color": "#dc2626", "symbol": "square",    "label": "CirComPara2"},
+        "nfcore_3tools":      {"color": "#16a34a", "symbol": "triangle-up", "label": "nf-core/circrna"},
     }
 
     traces = []
@@ -905,13 +905,14 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
             for r in sub_plot.itertuples()
         ]
 
+        disp_name = style.get("label", method)
         trace = {
             "x": sub_plot["Recall"].tolist(),
             "y": sub_plot["Precision"].tolist(),
             "text": hover,
             "hovertemplate": "%{text}<extra></extra>",
             "mode": "lines+markers",
-            "name": f"{method} (AUC={auc:.4f})",
+            "name": f"{disp_name} (AUC={auc:.4f})",
             "visible": True,
             "line":   {"color": style["color"], "width": 2.5},
             "marker": {"color": style["color"], "size": 8,
@@ -931,7 +932,7 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
         )
         tbl_sections += f"""
 <details id="tbl-{method}" style="margin-top:6px">
-<summary style="cursor:pointer; color:{style['color']}; font-weight:600">{method} 詳細數值</summary>
+<summary style="cursor:pointer; color:{style['color']}; font-weight:600">{disp_name} 詳細數值</summary>
 <table class="tbl" style="margin-top:4px; font-size:12px">
 <thead><tr><th>min_bsj</th><th>Detected</th><th>TP</th><th>FP</th>
 <th>Precision</th><th>Recall</th><th>F1</th></tr></thead>
@@ -954,7 +955,7 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
         vis = [j == i for j in range(n)]
         color = method_styles[method]["color"]
         buttons.append({
-            "label": method,
+            "label": method_styles[method].get("label", method),
             "method": "update",
             "args": [{"visible": vis},
                      {"title": {"text": f"PR Curve — {method}",
@@ -1068,9 +1069,9 @@ def _pr_curve_section(pr: pd.DataFrame, acc: "pd.DataFrame") -> str:
 def _fp_comparison_section(fp: pd.DataFrame) -> str:
     """Render FP score distribution comparison bar chart (Our vs CirComPara2)."""
     html = """
-<h3>False Positive Score Distribution：Our method vs CirComPara2 sim</h3>
+<h3>False Positive Score Distribution：circDEX vs CirComPara2 sim</h3>
 <p class="note">
-  兩種方法唯一差異：Our method 啟用 <strong>selective pseudo-circ QC</strong>
+  兩種方法唯一差異：circDEX 啟用 <strong>selective pseudo-circ QC</strong>
   （BSJ/FSJ &gt; max_junction_ratio=1.0，<strong>僅對 BSJ &lt; 5 的低表現 loci 啟動</strong>），
   CirComPara2 sim 關閉此 QC。比較各 confidence score 區段的 FP 數量，
   可直接量化 selective pseudo-circ QC 對假陽性的貢獻。
@@ -1125,7 +1126,7 @@ def _fp_comparison_section(fp: pd.DataFrame) -> str:
         html += (
             f'<div style="margin:6px 0"><strong style="font-size:12px">{row["score_bin"]}</strong><br>'
             f'<div class="bar-group">'
-            f'<span class="bar-label">Our method</span>'
+            f'<span class="bar-label">circDEX</span>'
             f'<div class="bar-wrap"><div class="bar-fill c1" style="width:{our_pct}%">'
             f'{row["Our_FP"]}</div></div>'
             f'<span class="bar-val">{row["Our_FP"]} FP</span></div>'
@@ -1136,7 +1137,7 @@ def _fp_comparison_section(fp: pd.DataFrame) -> str:
             f'<span class="bar-val">{row["CirComPara2_FP"]} FP</span></div>'
             f'</div>'
         )
-    html += f'<p class="note">BSJ/FSJ pseudo-circ QC 共移除 <strong>{diff_total} 個假陽性</strong>（CirComPara2 sim FP total = {cp2_fp_total}，Our method = {our_fp_total}）。</p>'
+    html += f'<p class="note">BSJ/FSJ pseudo-circ QC 共移除 <strong>{diff_total} 個假陽性</strong>（CirComPara2 sim FP total = {cp2_fp_total}，circDEX = {our_fp_total}）。</p>'
     return html
 
 
@@ -1181,6 +1182,17 @@ def build_report(
     acc  = acc[~acc["Method"].isin(_SINGLE_TOOL)].reset_index(drop=True)
     strat = strat[~strat["Method"].isin(_SINGLE_TOOL)].reset_index(drop=True)
 
+    # Display name mapping — keep data keys intact for filtering, rename only for display
+    _METHOD_DISPLAY = {
+        "Our_adaptive":       "circDEX",
+        "CirComPara2_4tools": "CirComPara2",
+        "nfcore_3tools":      "nf-core/circrna",
+    }
+    acc_display_df  = acc.copy()
+    strat_display_df = strat.copy()
+    acc_display_df["Method"]  = acc_display_df["Method"].replace(_METHOD_DISPLAY)
+    strat_display_df["Method"] = strat_display_df["Method"].replace(_METHOD_DISPLAY)
+
     # Compute display tables (select/rename columns for readability)
     acc_cols = ["Method", "n_detected", "TP", "FP", "FN"]
     if "TN" in acc.columns:
@@ -1189,7 +1201,7 @@ def build_report(
     if "Specificity" in acc.columns:
         acc_cols += ["Specificity"]
     acc_cols += ["AUC_PR"]
-    acc_display = acc[[c for c in acc_cols if c in acc.columns]].copy()
+    acc_display = acc_display_df[[c for c in acc_cols if c in acc_display_df.columns]].copy()
 
     # Filter compute cost to multi-tool pipelines only
     _SINGLE_TOOL_PIPE = {"circRNA-sponging", "CLEAR"}
@@ -1294,11 +1306,14 @@ def build_report(
 
 <h3>Stratified F1 by BSJ count quartile</h3>
 <p class="note">
-  BSJ count quartiles computed from ground-truth set (total RNA sample SRR444655,
-  CirComPara2 / nf-core style). Q1 = 25th percentile; Q4 = top 25%.
-  Low (Q1) = weakly expressed; High (Q4) = robustly expressed.
+  依 circRNA 在 total RNA 樣本（SRR444655）中的 BSJ 讀數分為三組：
+  <strong>Low</strong>（BSJ = 1 read，第 25 百分位以下）、
+  <strong>Mid</strong>（BSJ = 2 reads，第 25–75 百分位）、
+  <strong>High</strong>（BSJ ≥ 3 reads，第 75 百分位以上）。
+  Total RNA 樣本未經 RNase R 富集，circRNA 訊號天然極稀疏，75% 的 circRNA 只有 1–2 個 BSJ reads，
+  因此低表現組的偵測難度遠高於高表現組。
 </p>
-{_df_html(strat[strat["Method"]=="Our_adaptive"].drop(columns=["q1_cutoff","q3_cutoff"], errors="ignore"),
+{_df_html(strat_display_df[strat_display_df["Method"]=="circDEX"].drop(columns=["q1_cutoff","q3_cutoff"], errors="ignore"),
           table_id="tbl_stratified", csv_filename="stratified_f1.csv")}
 
 <p class="note">
@@ -1327,7 +1342,7 @@ def build_report(
 {_compute_cost_table_html(comp)}
 <p class="note">
   所有 pipeline 均以 /usr/bin/time -v 實測（SRR444655，~100 M read pairs，HPC NFS 環境，8 cores）。
-  CIRIquant 與 Our pipeline 和 nf-core/circrna 共用同一 time log。
+  CIRIquant 與 circDEX 和 nf-core/circrna 共用同一 time log。
   數值為各工具 wall time 加總（未扣除平行執行）。
 </p>
 
@@ -1347,9 +1362,9 @@ def build_report(
   (BH-FDR is not used: edgeR tests BSJ/FSJ ratio with min padj ≈ 0.43; DESeq2 uses
   BSJ-count shrinkage reaching min padj ≈ 0.007 — different null distributions make
   BH-FDR comparisons misleading for n=3).<br>
-  <strong>Our method (edgeR_ciriquant)</strong>: edgeR GLM + per-locus FSJ offset; tests whether BSJ/FSJ ratio shifts; classifies Type I (circRNA-specific) / Type II (gene-level co-regulation).<br>
-  <strong>Our method (DESeq2)</strong>: DESeq2 Wald test on BSJ counts with poscounts normalization; same count matrix.<br>
-  <strong>Our method (limma-voom)</strong>: limma-voom with TMM normalization; most stable for small n.<br>
+  <strong>circDEX (edgeR_ciriquant)</strong>: edgeR GLM + per-locus FSJ offset; tests whether BSJ/FSJ ratio shifts; classifies Type I (circRNA-specific) / Type II (gene-level co-regulation).<br>
+  <strong>circDEX (DESeq2)</strong>: DESeq2 Wald test on BSJ counts with poscounts normalization; same count matrix.<br>
+  <strong>circDEX (limma-voom)</strong>: limma-voom with TMM normalization; most stable for small n.<br>
   <strong>DESeq2 baseline</strong>: Wald test on BSJ counts only; simulated on same GSE113230 count matrix, no FSJ offset.
 </p>
 

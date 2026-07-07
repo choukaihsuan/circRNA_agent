@@ -5,25 +5,41 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="google" content="notranslate">
   <meta http-equiv="Content-Language" content="zh-TW">
-  <title>工作佇列 – circRNA Pipeline</title>
+  <title>工作佇列 – CircDEX</title>
   <style>
     :root { --primary:#2563eb; --success:#16a34a; --warn:#d97706;
-            --error:#dc2626; --border:#e2e8f0; --bg:#f8fafc; --radius:12px; }
+            --error:#dc2626; --border:#e2e8f0; --bg:#f8fafc; --radius:12px;
+            --midnight:#0F2137; --bsj:#00B4C6; }
     * { box-sizing:border-box; margin:0; padding:0; }
     body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
            background:var(--bg); color:#1e293b; }
     .container { max-width:960px; margin:0 auto; padding:32px 16px 64px; }
 
-    .header { display:flex; align-items:center; gap:12px; margin-bottom:28px; }
-    .header h1 { font-size:20px; font-weight:700; }
-    .back-link { font-size:13px; color:var(--primary); text-decoration:none;
-                 margin-left:auto; }
-    .back-link:hover { text-decoration:underline; }
-    .lang-btn { font-size:12px; background:none; border:1px solid #cbd5e1;
-                border-radius:6px; padding:3px 10px; cursor:pointer;
-                color:#64748b; font-weight:600; transition:all 0.15s;
-                margin-left:12px; }
-    .lang-btn:hover { border-color:var(--primary); color:var(--primary); }
+    /* ── CircDEX Site Header ── */
+    .cd-header { background:var(--midnight); padding:0 20px; display:flex;
+                 align-items:center; min-height:70px; position:relative; }
+    .cd-header::after { content:''; position:absolute; bottom:0; left:0; right:0; height:1px;
+                        background:linear-gradient(90deg,transparent,var(--bsj),transparent);
+                        opacity:.4; }
+    .cd-brand { display:flex; align-items:center; gap:12px; text-decoration:none; padding:10px 0; flex-shrink:0; }
+    .cd-meta { display:flex; flex-direction:column; }
+    .cd-wordmark { font-size:26px; line-height:1; }
+    .cd-circ { font-weight:300; color:rgba(255,255,255,.82); }
+    .cd-dex  { font-weight:800; letter-spacing:.07em; color:var(--bsj); }
+    .cd-sub  { font-size:14px; color:rgba(255,255,255,.52); margin-top:3px; }
+    .cd-nav  { margin-left:auto; display:flex; align-items:center; gap:2px; }
+    .cd-nav-link { font-size:12px; font-weight:500; color:rgba(255,255,255,.52);
+                   text-decoration:none; padding:5px 9px; border-radius:5px;
+                   transition:color .15s, background .15s; }
+    .cd-nav-link:hover { color:white; background:rgba(255,255,255,.07); }
+    .cd-nav-sep { width:1px; height:16px; background:rgba(255,255,255,.12); margin:0 3px; }
+    .cd-lang-pill { display:flex; gap:2px; background:rgba(255,255,255,.06);
+                    border-radius:5px; padding:3px; margin-left:6px; }
+    .lang-btn { font-size:11px; background:transparent; border:1px solid rgba(255,255,255,.18);
+                border-radius:3px; padding:2px 8px; cursor:pointer;
+                color:rgba(255,255,255,.48); font-weight:600; transition:all 0.15s; }
+    .lang-btn:hover { background:rgba(255,255,255,.10); color:white; border-color:rgba(255,255,255,.35); }
+    .lang-btn.active { background:var(--bsj); color:white; border-color:var(--bsj); }
 
     .card { background:white; border:1px solid var(--border);
             border-radius:var(--radius); padding:24px; margin-bottom:20px; }
@@ -77,13 +93,32 @@
   </style>
 </head>
 <body>
-<div class="container">
+<!-- CircDEX Site Header -->
+<header class="cd-header">
+  <a class="cd-brand" href="/">
+    <svg width="52" height="52" viewBox="0 0 38 38" fill="none" aria-hidden="true">
+      <circle cx="19" cy="19" r="15" stroke="rgba(0,180,198,.18)" stroke-width="1.5"/>
+      <path d="M19 4 A15 15 0 1 1 7.3 28" stroke="#00B4C6" stroke-width="2.6"
+            stroke-linecap="round" fill="none"/>
+      <circle cx="19" cy="4"   r="2.8" fill="#00B4C6"/>
+      <circle cx="7.3" cy="28" r="1.8" fill="#00B4C6" opacity=".55"/>
+    </svg>
+    <div class="cd-meta">
+      <div class="cd-wordmark"><span class="cd-circ">Circ</span><span class="cd-dex">DEX</span></div>
+      <div class="cd-sub">From reads to circRNA biomarkers</div>
+    </div>
+  </a>
+  <nav class="cd-nav">
+    <a href="/" class="cd-nav-link" data-en="← Home">← 返回主頁</a>
+    <div class="cd-nav-sep"></div>
+    <div class="cd-lang-pill">
+      <button class="lang-btn active" data-lang="zh" onclick="switchLang('zh')">中文</button>
+      <button class="lang-btn"        data-lang="en" onclick="switchLang('en')">EN</button>
+    </div>
+  </nav>
+</header>
 
-  <div class="header">
-    <h1>📋 <span data-en="Job Queue">工作佇列</span></h1>
-    <a class="back-link" href="/" data-en="← Home">← 返回主頁</a>
-    <button class="lang-btn" id="lang-btn" onclick="switchLang()">EN</button>
-  </div>
+<div class="container">
 
   <!-- Stats: running_externally jobs count as running, not failed -->
   {% set n_pending   = jobs | selectattr('status','eq','pending')   | list | length %}
@@ -191,15 +226,17 @@
 <script>
   let _LANG = localStorage.getItem('circrna_lang') || 'zh';
 
-  function switchLang() {
-    _LANG = _LANG === 'zh' ? 'en' : 'zh';
+  function switchLang(lang) {
+    if (lang) _LANG = lang;
+    else _LANG = _LANG === 'zh' ? 'en' : 'zh';
     localStorage.setItem('circrna_lang', _LANG);
     applyLang();
   }
 
   function applyLang() {
-    const btn = document.getElementById('lang-btn');
-    btn.textContent = _LANG === 'zh' ? 'EN' : '中文';
+    document.querySelectorAll('.lang-btn[data-lang]').forEach(b => {
+      b.classList.toggle('active', b.dataset.lang === _LANG);
+    });
     document.querySelectorAll('[data-en]').forEach(el => {
       if (_LANG === 'en') {
         if (!el.dataset.zh) el.dataset.zh = el.innerHTML;

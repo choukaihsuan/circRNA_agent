@@ -37,6 +37,7 @@ _sys.path.insert(0, str(Path(__file__).parent))
 
 from flask import (Flask, jsonify, redirect, render_template,
                    request, session, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 BASE_DIR = Path(__file__).parent.parent
 CONFIG_PATH = BASE_DIR / "config.yaml"
@@ -54,12 +55,18 @@ def _get_secret_key() -> str:
         return SECRET_KEY_FILE.read_text().strip()
     key = secrets.token_hex(32)
     SECRET_KEY_FILE.write_text(key)
+    SECRET_KEY_FILE.chmod(0o600)  # owner read/write only
     return key
 
 
 app = Flask(__name__, template_folder="templates")
 app.secret_key = _get_secret_key()
 app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SESSION_COOKIE_HTTPONLY"] = True   # JS cannot read session cookie
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"   # Allow cross-site GET (email magic link clicks)
+# Trust X-Forwarded-Proto from reverse proxies (ngrok / Cloudflare Tunnel)
+# so request.url_root uses https:// and cookies are scheme-correct
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 
 # ── Job registry ──────────────────────────────────────────────────────────────
@@ -324,23 +331,48 @@ def _send_html_email(to_email: str, subject: str, html_body: str,
     return True  # always "succeeds" in dev mode
 
 
+_CD_EMAIL_HEADER = """
+<div style="background:#0F2137;padding:20px 28px 16px;border-radius:8px 8px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <div style="display:inline-block">
+    <span style="font-size:30px;font-weight:300;color:rgba(255,255,255,.85);letter-spacing:-.5px">Circ</span><span
+          style="font-size:30px;font-weight:800;letter-spacing:.07em;color:#00B4C6">DEX</span>
+  </div>
+  <div style="font-size:14px;color:rgba(255,255,255,.55);margin-top:4px">
+    From reads to circRNA biomarkers
+  </div>
+  <div style="margin-top:8px">
+    <span style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#00B4C6;background:rgba(0,180,198,.15);border:1px solid rgba(0,180,198,.35);border-radius:4px;padding:3px 8px;margin-right:5px">Dual-tool consensus</span><span
+          style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#00B4C6;background:rgba(0,180,198,.15);border:1px solid rgba(0,180,198,.35);border-radius:4px;padding:3px 8px;margin-right:5px">Differential expression</span><span
+          style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#00B4C6;background:rgba(0,180,198,.15);border:1px solid rgba(0,180,198,.35);border-radius:4px;padding:3px 8px">6D biomarker ranking</span>
+  </div>
+</div>
+<div style="height:1px;background:linear-gradient(90deg,transparent,#00B4C6,transparent);opacity:.5;margin-bottom:20px"></div>
+"""
+
+
 def send_magic_link(to_email: str, link: str, lang: str = "zh") -> bool:
     """Send magic link email."""
     if lang == "en":
-        subject = "circRNA Pipeline – Login Link"
+        subject = "CircDEX – Login Link"
         html_body = f"""
+{_CD_EMAIL_HEADER}
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:0 4px 24px">
 <p>Hello,</p>
-<p>Click the link below to sign in to circRNA Pipeline (valid for {TOKEN_MINUTES} minutes):</p>
-<p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
-<p style="color:#666;font-size:12px;">If you did not request this, please ignore this email.</p>
+<p>Click the link below to sign in to CircDEX (valid for {TOKEN_MINUTES} minutes):</p>
+<p><a href="{link}" style="font-size:15px;font-weight:bold;color:#2563eb;">{link}</a></p>
+<p style="color:#94a3b8;font-size:12px;margin-top:20px">If you did not request this, please ignore this email.</p>
+</div>
 """
     else:
-        subject = "circRNA Pipeline 登入連結"
+        subject = "CircDEX 登入連結"
         html_body = f"""
+{_CD_EMAIL_HEADER}
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:0 4px 24px">
 <p>您好，</p>
-<p>請點擊以下連結登入 circRNA Pipeline UI（連結 {TOKEN_MINUTES} 分鐘內有效）：</p>
-<p><a href="{link}" style="font-size:16px;font-weight:bold;">{link}</a></p>
-<p style="color:#666;font-size:12px;">如非您本人操作，請忽略此信件。</p>
+<p>請點擊以下連結登入 CircDEX（連結 {TOKEN_MINUTES} 分鐘內有效）：</p>
+<p><a href="{link}" style="font-size:15px;font-weight:bold;color:#2563eb;">{link}</a></p>
+<p style="color:#94a3b8;font-size:12px;margin-top:20px">如非您本人操作，請忽略此信件。</p>
+</div>
 """
     return _send_html_email(to_email, subject, html_body, log_tag="Auth")
 
@@ -350,39 +382,41 @@ def send_job_queued_email(to_email: str, gse_id: str, job_id: str,
     """Send pipeline queued notification with a direct link to the status page."""
     pos_text = (f"Queue position: #{queue_pos}" if queue_pos > 1
                 else "Starting soon (no queue)")
-    subject = f"[circRNA Pipeline] {gse_id} added to job queue"
+    subject = f"[CircDEX] {gse_id} added to job queue"
     html_body = f"""
-<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
-            background:#f8fafc;padding:24px;border-radius:8px;">
-  <h2 style="color:#1d4ed8;margin-top:0;">circRNA Pipeline — Job Notification</h2>
-  <p style="color:#374151;">Your analysis job has been successfully added to the queue.</p>
-  <table style="border-collapse:collapse;width:100%;margin:16px 0;
-                background:#fff;border-radius:6px;overflow:hidden;
-                border:1px solid #e5e7eb;">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            max-width:560px;margin:0 auto;border-radius:8px;overflow:hidden;
+            border:1px solid #e2e8f0;">
+{_CD_EMAIL_HEADER}
+<div style="padding:4px 24px 24px">
+  <p style="color:#374151;margin-bottom:16px">Your analysis job has been added to the queue.</p>
+  <table style="border-collapse:collapse;width:100%;background:#fff;
+                border-radius:6px;overflow:hidden;border:1px solid #e5e7eb;">
     <tr style="background:#eff6ff;">
-      <td style="padding:10px 14px;font-weight:bold;color:#1e40af;width:120px;">Dataset</td>
-      <td style="padding:10px 14px;font-size:16px;font-weight:bold;">{gse_id}</td>
+      <td style="padding:10px 14px;font-weight:bold;color:#1e40af;width:110px;font-size:13px">Dataset</td>
+      <td style="padding:10px 14px;font-size:15px;font-weight:bold">{gse_id}</td>
     </tr>
     <tr>
-      <td style="padding:10px 14px;font-weight:bold;color:#374151;">Job ID</td>
-      <td style="padding:10px 14px;font-family:monospace;color:#6b7280;">{job_id}</td>
+      <td style="padding:10px 14px;font-weight:bold;color:#374151;font-size:13px">Job ID</td>
+      <td style="padding:10px 14px;font-family:monospace;font-size:13px;color:#6b7280">{job_id}</td>
     </tr>
     <tr style="background:#f9fafb;">
-      <td style="padding:10px 14px;font-weight:bold;color:#374151;">Queue Status</td>
-      <td style="padding:10px 14px;color:#059669;">{pos_text}</td>
+      <td style="padding:10px 14px;font-weight:bold;color:#374151;font-size:13px">Queue Status</td>
+      <td style="padding:10px 14px;color:#059669;font-size:13px">{pos_text}</td>
     </tr>
   </table>
-  <p style="margin:20px 0;">
+  <p style="margin:20px 0 4px">
     <a href="{status_url}"
-       style="display:inline-block;background:#1d4ed8;color:#fff;
-              padding:12px 28px;border-radius:6px;text-decoration:none;
-              font-weight:bold;font-size:15px;">
+       style="display:inline-block;background:#0F2137;color:#fff;
+              padding:11px 26px;border-radius:6px;text-decoration:none;
+              font-weight:bold;font-size:14px;border:1px solid #00B4C6;">
       &#128202; View Progress
     </a>
   </p>
-  <p style="color:#9ca3af;font-size:12px;margin-top:24px;border-top:1px solid #e5e7eb;padding-top:12px;">
-    This message was sent automatically by the circRNA Pipeline system. Click the button above to track pipeline progress.
+  <p style="color:#94a3b8;font-size:11px;margin-top:20px;border-top:1px solid #e5e7eb;padding-top:12px">
+    Sent automatically by CircDEX · Click the button above to track pipeline progress.
   </p>
+</div>
 </div>
 """
     return _send_html_email(to_email, subject, html_body, log_tag="Queue")
@@ -461,6 +495,11 @@ def auth_magic_link(token: str):
     ).strftime("%Y-%m-%d %H:%M:%S")
     auth_log(email, "login_success", request.remote_addr)
     next_url = request.args.get("next") or url_for("index")
+    # Prevent open redirect: only allow relative paths (no scheme or netloc)
+    from urllib.parse import urlparse as _urlparse
+    _parsed = _urlparse(next_url)
+    if _parsed.scheme or _parsed.netloc:
+        next_url = url_for("index")
     if lang == "en":
         sep = "&" if "?" in next_url else "?"
         next_url = f"{next_url}{sep}lang=en"
@@ -600,24 +639,27 @@ def _snake_env() -> dict:
     """Return os.environ copy with working SRA-tool paths prepended to PATH.
 
     Priority order (front → back):
-      1. sra_env  — has fasterq-dump that works on CentOS 7 glibc 2.17
-      2. circrna  — has aria2c for fast multi-connection S3 downloads
-      3. base conda bin — has prefetch / srapath
+      1. sra_env    — has fasterq-dump that works on CentOS 7 glibc 2.17
+      2. circrna    — has aria2c for fast multi-connection S3 downloads
+      3. ciriquant  — has STAR, BWA, HISAT2, samtools, snakemake, etc.
+      4. base conda bin — has prefetch / srapath
     """
     import os, sys as _sys
     env = dict(os.environ)
     # envs/ciriquant/bin/python → miniconda3
     conda_root = Path(_sys.executable).parents[3]
     prepend = [
-        str(conda_root / "envs" / "sra_env"  / "bin"),
-        str(conda_root / "envs" / "circrna"  / "bin"),
+        str(conda_root / "envs" / "sra_env"   / "bin"),
+        str(conda_root / "envs" / "circrna"   / "bin"),
+        str(conda_root / "envs" / "ciriquant" / "bin"),  # STAR, BWA, HISAT2, DCC, snakemake
         str(conda_root / "bin"),
     ]
     # Also check miniforge3 if present
     miniforge = Path(_sys.executable).parents[3].parent / "miniforge3"
     if miniforge.is_dir():
         prepend += [
-            str(miniforge / "envs" / "circrna" / "bin"),
+            str(miniforge / "envs" / "circrna"   / "bin"),
+            str(miniforge / "envs" / "ciriquant" / "bin"),
             str(miniforge / "bin"),
         ]
     path = env.get("PATH", "")
@@ -857,7 +899,8 @@ def _infer_stages_from_files(results_dir_str: str, stages: list,
 
     def mark_done(*ids):
         for sid in ids:
-            if sid in stage_map and stage_map[sid]["status"] in ("pending", "failed", "error"):
+            # "running" can also be upgraded: milestone file proves the step finished
+            if sid in stage_map and stage_map[sid]["status"] in ("pending", "failed", "error", "running"):
                 stage_map[sid].update({"status": "done", "started": 1, "done": 1})
 
     def mark_partial(sid: str, n_done: int, n_total: int):
@@ -1111,7 +1154,7 @@ def update():
 @app.route("/run_gse", methods=["POST"])
 def run_gse():
     gse_id = request.form.get("gse_id", "").strip().upper()
-    cores  = int(request.form.get("cores", 8))
+    cores  = max(1, min(int(request.form.get("cores", 8)), 24))
     if not gse_id:
         return redirect(url_for("index"))
 
@@ -1151,7 +1194,7 @@ def run_gse():
 @app.route("/run_manual", methods=["POST"])
 def run_manual():
     """Start pipeline from manual SRR list or uploaded CSV."""
-    cores      = int(request.form.get("cores", 8))
+    cores      = max(1, min(int(request.form.get("cores", 8)), 24))
     project_id = (request.form.get("project_id", "").strip().upper() or "CUSTOM")
     tumor_label  = request.form.get("tumor_label",  "tumor").strip()  or "tumor"
     normal_label = request.form.get("normal_label", "normal").strip() or "normal"
@@ -1294,7 +1337,7 @@ def run_local():
     project_id   = (request.form.get("project_id", "").strip().upper() or "LOCAL")
     tumor_label  = request.form.get("tumor_label",  "tumor").strip() or "tumor"
     normal_label = request.form.get("normal_label", "normal").strip() or "normal"
-    cores        = int(request.form.get("cores", 8))
+    cores        = max(1, min(int(request.form.get("cores", 8)), 24))
     samples_json = request.form.get("samples_json", "[]")
 
     try:
@@ -1310,6 +1353,10 @@ def run_local():
     raw_dir = Path(cfg["raw_dir"])
     raw_dir.mkdir(parents=True, exist_ok=True)
 
+    # Allowed root: parent of raw_dir (e.g. /home3/choukaihsuan/)
+    # Symlink targets must resolve under this prefix to prevent path traversal.
+    _fastq_allowed_root = Path(cfg.get("raw_dir", "")).resolve().parent
+
     rows: list = []
     for s in samples:
         name = (s.get("name") or "").strip()
@@ -1323,6 +1370,15 @@ def run_local():
             if link.exists() or link.is_symlink():
                 link.unlink()
             if target:
+                # Validate target resolves within allowed root (prevent symlink attack)
+                try:
+                    resolved = Path(target).resolve()
+                    if not str(resolved).startswith(str(_fastq_allowed_root)):
+                        app.logger.warning(
+                            f"run_local: rejected symlink target outside allowed root: {target}")
+                        continue
+                except Exception:
+                    continue
                 link.symlink_to(target)
         rows.append({"srr_id": name, "condition": cond})
 
@@ -1645,5 +1701,5 @@ if __name__ == "__main__":
     _worker.start()
     print("  [Queue Worker] started (FIFO, SQLite)", flush=True)
 
-    print(f"  circRNA Pipeline UI  →  http://{args.host}:{args.port}")
+    print(f"  CircDEX  →  http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, debug=False)

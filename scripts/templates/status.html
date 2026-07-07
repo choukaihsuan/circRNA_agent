@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="google" content="notranslate">
   <meta http-equiv="Content-Language" content="zh-TW">
-  <title>Pipeline 執行狀態</title>
+  <title>CircDEX — Pipeline 執行狀態</title>
   <style>
     :root { --primary:#2563eb; --success:#16a34a; --error:#dc2626;
-            --border:#e2e8f0; --bg:#f8fafc; --radius:12px; }
+            --border:#e2e8f0; --bg:#f8fafc; --radius:12px;
+            --midnight:#0F2137; --bsj:#00B4C6; }
     * { box-sizing:border-box; margin:0; padding:0; }
     body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
            background:var(--bg); color:#1e293b; }
@@ -114,19 +115,64 @@
     .btn-refresh { background:var(--primary); color:white; }
     .btn-report  { background:#16a34a; color:white; }
     .btn-qc      { background:#0891b2; color:white; }
+
+    /* ── CircDEX Site Header ── */
+    .cd-header { background:var(--midnight); padding:0 20px; display:flex;
+                 align-items:center; min-height:70px; position:relative; }
+    .cd-header::after { content:''; position:absolute; bottom:0; left:0; right:0; height:1px;
+                        background:linear-gradient(90deg,transparent,var(--bsj),transparent);
+                        opacity:.4; }
+    .cd-brand { display:flex; align-items:center; gap:12px; text-decoration:none; padding:10px 0; flex-shrink:0; }
+    .cd-meta { display:flex; flex-direction:column; }
+    .cd-wordmark { font-size:26px; line-height:1; }
+    .cd-circ { font-weight:300; color:rgba(255,255,255,.82); }
+    .cd-dex  { font-weight:800; letter-spacing:.07em; color:var(--bsj); }
+    .cd-sub  { font-size:14px; color:rgba(255,255,255,.52); margin-top:3px; }
+    .cd-nav  { margin-left:auto; display:flex; align-items:center; gap:2px; }
+    .cd-nav-link { font-size:12px; font-weight:500; color:rgba(255,255,255,.52);
+                   text-decoration:none; padding:5px 9px; border-radius:5px;
+                   transition:color .15s, background .15s; }
+    .cd-nav-link:hover { color:white; background:rgba(255,255,255,.07); }
+    .cd-nav-sep { width:1px; height:16px; background:rgba(255,255,255,.12); margin:0 3px; }
+    .cd-user { font-size:11px; color:rgba(255,255,255,.34); padding:0 4px; }
+    .cd-lang-pill { display:flex; gap:2px; background:rgba(255,255,255,.06);
+                    border-radius:5px; padding:3px; margin-left:6px; }
+    .cd-header .lang-btn { background:transparent; border:1px solid rgba(255,255,255,.18);
+                            color:rgba(255,255,255,.48); font-size:11px; padding:2px 8px;
+                            border-radius:3px; font-weight:600; cursor:pointer; transition:all .15s; }
+    .cd-header .lang-btn:hover { background:rgba(255,255,255,.10); color:white;
+                                  border-color:rgba(255,255,255,.35); }
+    .cd-header .lang-btn.active { background:var(--bsj); color:white; border-color:var(--bsj); }
   </style>
 </head>
 <body>
-<div class="container">
+<!-- CircDEX Site Header -->
+<header class="cd-header">
+  <a class="cd-brand" href="/">
+    <svg width="52" height="52" viewBox="0 0 38 38" fill="none" aria-hidden="true">
+      <circle cx="19" cy="19" r="15" stroke="rgba(0,180,198,.18)" stroke-width="1.5"/>
+      <path d="M19 4 A15 15 0 1 1 7.3 28" stroke="#00B4C6" stroke-width="2.6"
+            stroke-linecap="round" fill="none"/>
+      <circle cx="19" cy="4"   r="2.8" fill="#00B4C6"/>
+      <circle cx="7.3" cy="28" r="1.8" fill="#00B4C6" opacity=".55"/>
+    </svg>
+    <div class="cd-meta">
+      <div class="cd-wordmark"><span class="cd-circ">Circ</span><span class="cd-dex">DEX</span></div>
+      <div class="cd-sub">From reads to circRNA biomarkers</div>
+    </div>
+  </a>
+  <nav class="cd-nav">
+    <a href="/" class="cd-nav-link" data-en="← Settings">← 設定</a>
+    <div class="cd-nav-sep"></div>
+    <a href="/logout" class="cd-nav-link" data-en="Sign out">登出</a>
+    <div class="cd-lang-pill">
+      <button class="lang-btn active" data-lang="zh" onclick="switchLang('zh')">中文</button>
+      <button class="lang-btn"        data-lang="en" onclick="switchLang('en')">EN</button>
+    </div>
+  </nav>
+</header>
 
-  <div class="header">
-    <span style="font-size:28px">📊</span>
-    <h1 data-en="Pipeline Status">Pipeline 執行狀態</h1>
-    <a href="/" class="back-link" data-en="← Settings">← 回到設定</a>
-    <a href="/logout" style="font-size:12px;color:#94a3b8;text-decoration:none;margin-left:12px;"
-       data-en="Logout">登出</a>
-    <button class="lang-btn" id="lang-btn" onclick="switchLang()" style="margin-left:8px">EN</button>
-  </div>
+<div class="container">
 
   <!-- Job ID card -->
   {% if job %}
@@ -228,16 +274,18 @@
   let _LANG = localStorage.getItem('circrna_lang') || 'zh';
 
   /* ── Language switcher ── */
-  function switchLang() {
-    _LANG = _LANG === 'zh' ? 'en' : 'zh';
+  function switchLang(lang) {
+    if (lang) _LANG = lang;
+    else _LANG = _LANG === 'zh' ? 'en' : 'zh';
     localStorage.setItem('circrna_lang', _LANG);
     applyLang();
     refreshProgress(); // immediately re-render stage labels in new language
   }
 
   function applyLang() {
-    const btn = document.getElementById('lang-btn');
-    btn.textContent = _LANG === 'zh' ? 'EN' : '中文';
+    document.querySelectorAll('.lang-btn[data-lang]').forEach(b => {
+      b.classList.toggle('active', b.dataset.lang === _LANG);
+    });
     document.querySelectorAll('[data-en]').forEach(el => {
       if (_LANG === 'en') {
         if (!el.dataset.zh) el.dataset.zh = el.innerHTML;
