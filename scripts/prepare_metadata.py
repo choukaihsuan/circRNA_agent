@@ -124,13 +124,22 @@ def _detect_condition_by_suffix(name: str, case_label: str = "tumor",
 
     Patterns handled (case-insensitive, must appear at end of name):
       Tumor  : …T,  …_T,  …-T
-      Normal : …N,  …_N,  …-N,  …APN,  …CN
+      Normal : …N,  …_N,  …-N,  …APN,  …CN,  …WT (wildtype control)
+
+    The suffix token must be anchored to a DIGIT (the SRA sample-code
+    convention, e.g. M269T, 138T, 87APN, 6WT). This prevents free-text
+    metadata such as "Bioengineered construct" or "adjacent normal tissue"
+    from matching a bare trailing "t"/"n" and being mis-classified.
+
+    Control tokens (WT/APN/CN/N) are checked BEFORE the tumor `T` rule so that
+    "6WT" (wildtype control) is not mis-read as tumor via the trailing "T".
     """
     s = name.strip()
-    if re.search(r'(?<=[A-Za-z0-9])[-_]?T$', s, re.IGNORECASE):
-        return case_label
-    if re.search(r'(?<=[A-Za-z0-9])[-_]?(APN|CN|N)$', s, re.IGNORECASE):
+    # Explicit control suffixes first, each anchored to a preceding digit.
+    if re.search(r'(?<=[0-9])[-_]?(WT|APN|CN|N)$', s, re.IGNORECASE):
         return control_label
+    if re.search(r'(?<=[0-9])[-_]?T$', s, re.IGNORECASE):
+        return case_label
     return None
 
 
@@ -141,14 +150,25 @@ def _detect_condition(name: str, case_label: str = "tumor",
     result = _detect_condition_by_suffix(name, case_label, control_label)
     if result is not None:
         return result
-    # Priority 2: keyword search (GEO-style names)
-    name_lower = name.lower()
-    for kw in _CASE_KEYWORDS:
-        if re.search(kw, name_lower):
-            return case_label
-    for kw in _CONTROL_KEYWORDS:
-        if re.search(kw, name_lower):
+    # Priority 2: keyword search (GEO-style names).
+    # Use word-boundary matching (via the shared helpers) so short keywords like
+    # "oe"/"ko" don't match inside unrelated words ("Bioengineered", "Tokyo").
+    case_kw    = _match_case_kw(name)
+    control_kw = _match_control_kw(name)
+    if case_kw and control_kw:
+        # Both cue types present, e.g. "tumor-adjacent normal tissue".
+        # "adjacent"/"non-tumor"/"para-tumor" explicitly mark a normal control
+        # sample even though the word "tumor" appears — control wins here.
+        if re.search(r'\b(adjacent|non[-_ ]?tumou?r|para[-_ ]?tumou?r)\b',
+                     name.lower()):
             return control_label
+        # Genuinely ambiguous: leave blank so a human confirms, rather than
+        # silently picking the wrong side (old code always returned case).
+        return None
+    if case_kw:
+        return case_label
+    if control_kw:
+        return control_label
     return None
 
 

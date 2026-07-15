@@ -230,6 +230,47 @@ def _best_match(
     return best_bsj, best_dist
 
 
+def _cluster_coords(
+    coords: list[tuple[str, int, int]],
+    slop: int,
+    primary: CoordMap,
+) -> list[tuple[str, int, int]]:
+    """
+    Collapse coordinates lying within `slop` of one another (same chromosome)
+    into a single representative each.
+
+    Different detection tools use different aligners (CIRIquant: HISAT2/BWA,
+    DCC: STAR), so the *same* back-splice junction is frequently reported at
+    coordinates a few bp apart. Without this step, vote() would emit one row per
+    tool-specific coordinate for the same biological circRNA, inflating the
+    consensus count.
+
+    The representative for a cluster prefers a coordinate that exists in
+    `primary` (the CIRIquant map, always tool_maps[0] when present), because the
+    downstream count matrix keys on CIRIquant GTF coordinates via an exact-string
+    match — picking the CIRIquant coordinate keeps that join intact.
+    """
+    by_chr: dict[str, list[tuple[str, int, int]]] = {}
+    for c in coords:
+        by_chr.setdefault(c[0], []).append(c)
+
+    reps: list[tuple[str, int, int]] = []
+    for chrom, members in by_chr.items():
+        members.sort(key=lambda c: (c[1], c[2]))
+        clusters: list[list[tuple[str, int, int]]] = []
+        for c in members:
+            for cl in clusters:
+                anchor = cl[0]  # leftmost coord; members are start-sorted
+                if max(abs(c[1] - anchor[1]), abs(c[2] - anchor[2])) <= slop:
+                    cl.append(c)
+                    break
+            else:
+                clusters.append([c])
+        for cl in clusters:
+            reps.append(next((c for c in cl if c in primary), cl[0]))
+    return reps
+
+
 def vote(
     tool_maps: list[CoordMap],
     min_tools: int,
@@ -243,14 +284,21 @@ def vote(
     Denominator is the number of tools that actually support this circRNA,
     so the score reflects mean per-tool evidence rather than dilution by absent tools.
     Higher score = more expression + better coordinate agreement among supporting tools.
+
+    Near-duplicate coordinates (same junction reported a few bp apart by different
+    tools) are first clustered to a single representative, so each biological
+    circRNA is voted on — and emitted — exactly once.
     """
     all_coords: set[tuple[str, int, int]] = set()
     for m in tool_maps:
         all_coords.update(m.keys())
 
+    primary = tool_maps[0] if tool_maps else {}
+    canonical = _cluster_coords(sorted(all_coords), slop, primary)
+
     results: list[tuple[str, int, int, int, float]] = []
 
-    for coord in all_coords:
+    for coord in canonical:
         matches = [_best_match(coord, m, slop) for m in tool_maps]
         supporting = [(bsj, dist) for m in matches if m is not None for bsj, dist in [m]]
         n_tools = len(supporting)
