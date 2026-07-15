@@ -143,5 +143,59 @@ literature.
 
 ---
 
+---
+
+## Focused follow-up: hsa_circ_0000471 / N4BP2L2 (chr13:33091994|33101669)
+
+The most-recurrent candidate in the panel, and an instructive case for why recurrence
+alone is not enough — direction matters.
+
+**Our data (top-ranked in three independent cohorts, all Type_I):**
+
+| cohort | cancer | log2FC | direction | Type | score | rank |
+|---|---|---|---|---|---|---|
+| GSE133998 | breast | +6.65 | **up** | Type_I | 0.728 | 1 |
+| SRP156355 | breast (early IDC) | −6.89 | **down** | Type_I | 0.741 | 1 |
+| PRJNA553289 | SCLC | −8.71 | **down** | Type_I | 0.750 | 2 |
+
+**Host gene N4BP2L2 (a.k.a. PFAAP5):** a nuclear transcriptional regulator,
+phosphorylated on Ser199 in response to DNA damage (ATM/ATR), interacts with the Gfi1
+repressor and neutrophil elastase, and functions in hematopoietic stem-cell
+differentiation/proliferation; associated with congenital neutropenia
+([PMC2725743](https://pmc.ncbi.nlm.nih.gov/articles/PMC2725743/);
+[GeneCards](https://www.genecards.org/cgi-bin/carddisp.pl?gene=N4BP2L2);
+[OMIM 615788](https://omim.org/entry/615788)). It is **not** an established cancer gene —
+no TCGA/cohort survival association was found; the DNA-damage-response link is the only
+cancer-adjacent hook, and it is speculative.
+
+**circRNA literature:** hsa_circ_0000471 itself has **no** published cancer report —
+genuinely understudied / novel.
+
+**Assessment (honest):**
+- ✅ Strongest *recurrence* signal in the panel — a top-1/2 candidate in 3 independent
+  cohorts spanning 2 cancer types. Unlikely to be pure noise.
+- ⚠️ **Direction is unstable**: the two independent breast cohorts *disagree*
+  (GSE133998 up vs SRP156355 down). Because `edgeR_ciriquant` tests the BSJ/FSJ ratio,
+  the sign reflects a change in circularisation efficiency relative to the linear host
+  transcript, not absolute abundance — but a sign flip between two same-cancer cohorts is
+  still a red flag (subtype/stage difference, paired-vs-unpaired design, or a few outlier
+  samples).
+- ⚠️ No prior biological grounding for either the circRNA or the host gene in cancer.
+
+**Recommended before treating it as a biomarker:**
+1. Inspect the raw BSJ and FSJ matrices per cohort — is the sign driven by BSJ change or
+   by FSJ (linear) change? Is it a few outlier samples?
+2. Compare cohort composition (GSE133998 general breast / unpaired vs SRP156355 early IDC
+   / paired) to see whether the flip tracks a clinical variable.
+3. If it survives (1)–(2), it is a strong *novel* target for wet-lab validation
+   (qRT-PCR + RNase R); if the flip is an artefact, drop it. Do **not** present it as a
+   confident biomarker on recurrence alone.
+
+This candidate is the clearest example of why `cross_dataset_biomarkers.py` reports a
+`dir_consistent` flag: recurrence with consistent direction (e.g. SLC38A1) is support;
+recurrence with a sign flip is a lead that needs investigation, not a result.
+
+---
+
 *Generated as orthogonal validation for the biomarker ranking. Regenerate the recurrence
 table with `scripts/cross_dataset_biomarkers.py`; refresh citations before submission.*
