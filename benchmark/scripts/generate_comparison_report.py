@@ -481,6 +481,7 @@ _TOOL_COLORS = {
     "DCC_min":          ("#5dade2", "DCC"),
     "CIRCexplorer2_min":("#e67e22", "CIRCexplorer2"),
     "find_circ_min":    ("#27ae60", "find_circ"),
+    "DE_min":           ("#8e44ad", "DE analysis"),
 }
 
 
@@ -573,9 +574,20 @@ def _compute_cost_table_html(comp: pd.DataFrame) -> str:
   <td style="padding:8px 10px;font-size:11px;color:#555">{row.get("Source","")}</td>
 </tr>"""
 
+    has_de = "DE_min" in comp.columns and comp["DE_min"].apply(_fv).notna().any()
+    de_note = (
+        '<div style="font-size:11px;color:#888;margin-bottom:8px">'
+        '⚠ DE analysis (min) is benchmarked separately on GSE113230 (6-sample multi-sample '
+        'DE run) and summed into Total; detection steps above are benchmarked on the '
+        'single-sample SRR444655 ground-truth run. The two are not from the same end-to-end '
+        'invocation — Total therefore represents detection-cost-on-one-sample + '
+        'DE-cost-on-a-full-cohort, not a single reproducible pipeline run.</div>'
+    ) if has_de else ""
+
     dl_btn = '<button class="dl-btn no-print" onclick="dlCSV(\'tbl_compute\',\'compute_cost.csv\')">⬇ CSV</button>'
     return f"""<div class="tbl-header">{dl_btn}</div>
 <div style="font-size:12px;margin-bottom:8px;color:#555">{legend}</div>
+{de_note}
 <div class="tbl-wrap"><table id="tbl_compute" style="width:100%;border-collapse:collapse">
 <thead><tr>
   <th {th}>Pipeline</th>
@@ -1207,13 +1219,14 @@ def build_report(
     _SINGLE_TOOL_PIPE = {"circRNA-sponging", "CLEAR"}
     comp = comp[~comp["Pipeline"].isin(_SINGLE_TOOL_PIPE)].reset_index(drop=True)
     _per_tool_cols = ["CIRIquant_min", "STAR_min", "DCC_min",
-                      "CIRCexplorer2_min", "find_circ_min"]
+                      "CIRCexplorer2_min", "find_circ_min", "DE_min"]
     _rename_map = {
         "CIRIquant_min":    "CIRIquant (min)",
         "STAR_min":         "STAR×3 (min)",
         "DCC_min":          "DCC (min)",
         "CIRCexplorer2_min":"CIRCexplorer2 (min)",
         "find_circ_min":    "find_circ (min)",
+        "DE_min":           "DE analysis (min)",
         "Total_wall_min":   "Total (min)",
         "Peak_RAM_GB":      "Peak RAM (GB)",
         "Parallel_Peak_RAM_GB": "Parallel RAM (GB)",

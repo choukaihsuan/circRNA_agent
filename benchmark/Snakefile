@@ -766,6 +766,8 @@ rule compute_cost:
         circexplorer2_log    = f"logs/bench/time_circexplorer2_{TOTAL_SRR}.log",
         find_circ_map_log    = f"logs/bench/time_find_circ_map_{TOTAL_SRR}.log",
         find_circ_log        = f"logs/bench/time_find_circ_{TOTAL_SRR}.log",
+        de_edger_log         = "logs/bench/time_de_edger.log",
+        de_deseq2_log        = "logs/bench/time_de_deseq2.log",
     output:
         RESULTS + "/compute_cost.tsv",
     log: "logs/bench/compute_cost.log"
@@ -779,6 +781,8 @@ rule compute_cost:
             --nfcore-circexplorer2-log {input.circexplorer2_log} \
             --nfcore-find-circ-map-log {input.find_circ_map_log} \
             --nfcore-find-circ-log     {input.find_circ_log} \
+            --our-de-log             {input.de_edger_log} \
+            --nfcore-de-log          {input.de_deseq2_log} \
             --our-cores              8 \
             --output                 {output} \
             2>&1 | tee {log}
@@ -793,6 +797,12 @@ rule de_deseq2_baseline:
     """
     Run all 3 DE methods (DESeq2 primary + limma side-product) on GSE113230 BSJ counts.
     No FSJ matrix → edgeR_ciriquant is skipped; DESeq2 and limma-voom both run.
+
+    Invoked via run_de_timed.R (a thin CLI wrapper around the *unmodified*
+    scripts/analysis.R) so the whole call can be wrapped in `/usr/bin/time -v`
+    at the shell level, without touching analysis.R itself — it is live-read
+    by the production `de_analysis` Snakemake rule and must not be edited
+    while any dataset's real pipeline run might be executing that rule.
     """
     input:
         matrix = GS113["count_matrix"],
@@ -804,6 +814,7 @@ rule de_deseq2_baseline:
         volcano  = RESULTS + "/de/plots/nfcore_volcano.pdf",
         heatmap  = RESULTS + "/de/plots/nfcore_heatmap.pdf",
         pca      = RESULTS + "/de/plots/nfcore_pca.pdf",
+        time_log = "logs/bench/time_de_deseq2.log",
     params:
         de_method    = "deseq2",
         fdr          = DE_FDR,
@@ -811,8 +822,84 @@ rule de_deseq2_baseline:
         tumor_label  = DE_TUMOR_LABEL,
         normal_label = DE_NORMAL_LABEL,
     log: "logs/bench/de_deseq2_baseline.log"
-    script:
-        "../scripts/analysis.R"
+    shell:
+        """
+        /usr/bin/time -v -o {output.time_log} \
+        Rscript {AGENT_DIR}/benchmark/scripts/run_de_timed.R \
+            analysis_r={AGENT_DIR}/scripts/analysis.R \
+            matrix={input.matrix} \
+            groups={input.groups} \
+            de_method={params.de_method} \
+            fdr={params.fdr} \
+            lfc={params.lfc} \
+            tumor_label={params.tumor_label} \
+            normal_label={params.normal_label} \
+            out_de={output.de} \
+            out_de_edger={RESULTS}/de/nfcore_deseq2_edger_unused.tsv \
+            out_de_deseq={output.de_deseq} \
+            out_de_limma={output.de_limma} \
+            out_volcano={output.volcano} \
+            out_heatmap={output.heatmap} \
+            out_pca={output.pca} \
+            log={log} \
+            2>&1 | tee {log}
+        """
+
+
+rule de_edgeR_ciriquant_baseline:
+    """
+    Time our own primary DE method (edgeR_ciriquant) on the same GSE113230
+    cohort used by de_deseq2_baseline above, for a like-for-like DE-cost
+    comparison. analysis.R runs all 3 methods in one call regardless of
+    de_method (it just picks the "primary" de_results.tsv) — so this timing
+    represents edgeR_ciriquant + its DESeq2/limma side-products together,
+    not edgeR_ciriquant in isolation.
+    """
+    input:
+        matrix         = GS113["count_matrix"],
+        fsj_matrix     = GS113["fsj_matrix"],
+        groups         = GS113["groups"],
+        circbase_annot = GS113["circbase_annot"],
+    output:
+        de       = RESULTS + "/de/our_edger_results.tsv",
+        de_edger = RESULTS + "/de/our_edger_only.tsv",
+        de_deseq = RESULTS + "/de/our_edger_deseq_side.tsv",
+        de_limma = RESULTS + "/de/our_edger_limma_side.tsv",
+        volcano  = RESULTS + "/de/plots/our_edger_volcano.pdf",
+        heatmap  = RESULTS + "/de/plots/our_edger_heatmap.pdf",
+        pca      = RESULTS + "/de/plots/our_edger_pca.pdf",
+        time_log = "logs/bench/time_de_edger.log",
+    params:
+        de_method    = "edgeR_ciriquant",
+        fdr          = DE_FDR,
+        lfc          = DE_LFC,
+        tumor_label  = DE_TUMOR_LABEL,
+        normal_label = DE_NORMAL_LABEL,
+    log: "logs/bench/de_edger_baseline.log"
+    shell:
+        """
+        /usr/bin/time -v -o {output.time_log} \
+        Rscript {AGENT_DIR}/benchmark/scripts/run_de_timed.R \
+            analysis_r={AGENT_DIR}/scripts/analysis.R \
+            matrix={input.matrix} \
+            fsj_matrix={input.fsj_matrix} \
+            groups={input.groups} \
+            circbase_annot={input.circbase_annot} \
+            de_method={params.de_method} \
+            fdr={params.fdr} \
+            lfc={params.lfc} \
+            tumor_label={params.tumor_label} \
+            normal_label={params.normal_label} \
+            out_de={output.de} \
+            out_de_edger={output.de_edger} \
+            out_de_deseq={output.de_deseq} \
+            out_de_limma={output.de_limma} \
+            out_volcano={output.volcano} \
+            out_heatmap={output.heatmap} \
+            out_pca={output.pca} \
+            log={log} \
+            2>&1 | tee {log}
+        """
 
 
 rule de_quality_benchmark:

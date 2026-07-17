@@ -90,6 +90,13 @@ def main() -> None:
     parser.add_argument("--our-dcc-wall-min",    type=float, default=None,
                         help="DCC wall time in minutes (override)")
     parser.add_argument("--our-cores",           type=int, default=8)
+    parser.add_argument("--our-de-log",          default=None,
+                        help="/usr/bin/time -v log for our edgeR_ciriquant DE analysis "
+                             "(analysis.R run on GSE113230; separate multi-sample benchmark, "
+                             "not the same run as the single-sample detection steps above)")
+    parser.add_argument("--nfcore-de-log",       default=None,
+                        help="/usr/bin/time -v log for nf-core-style DESeq2 DE analysis "
+                             "(analysis.R run on GSE113230 without fsj_matrix)")
     # nf-core measured time logs (CIRIquant shared with Our pipeline)
     parser.add_argument("--nfcore-ciriquant-log",    default=None,
                         help="Same as --our-ciriquant-log (CIRIquant is shared)")
@@ -100,6 +107,12 @@ def main() -> None:
     parser.add_argument("--nfcore-find-circ-log",    default=None,
                         help="/usr/bin/time -v log for find_circ detection")
     args = parser.parse_args()
+
+    # ── DE analysis timing (separate multi-sample benchmark on GSE113230) ────────
+    our_de = _parse_time_log(args.our_de_log)
+    nfcore_de = _parse_time_log(args.nfcore_de_log)
+    our_de_wall    = our_de["wall_min"]
+    nfcore_de_wall = nfcore_de["wall_min"]
 
     # ── Our pipeline ──────────────────────────────────────────────────────────
     steps = {
@@ -157,6 +170,12 @@ def main() -> None:
         print("[compute_cost] No time logs found; using estimated values.",
               file=sys.stderr)
 
+    # Fold DE analysis wall time (edgeR_ciriquant, measured separately on
+    # GSE113230) into the total. Kept as its own column so the report can
+    # render/label it distinctly and flag the differing benchmark dataset.
+    if our_de_wall is not None:
+        total_wall += our_de_wall
+
     # Parallel execution peak RAM:
     # CIRIquant || STAR_paired || STAR_mate1 || STAR_mate2 run simultaneously
     _r = step_ram
@@ -174,6 +193,7 @@ def main() -> None:
         "DCC_min":              round(dcc_wall, 1),
         "CIRCexplorer2_min":    None,
         "find_circ_min":        None,
+        "DE_min":               round(our_de_wall, 1) if our_de_wall is not None else None,
         "Alignment_wall_min":   round(align_wall, 1),
         "Consensus_wall_min":   round(cons_wall, 1),
         "Total_wall_min":       round(total_wall, 1),
@@ -184,7 +204,11 @@ def main() -> None:
         "Source":               source_str,
         "Note": (
             "Adaptive consensus: slop=10 bp + BSJ/FSJ pseudo-circ QC; "
-            "single-sample benchmark (SRR444655, ~100 M read pairs)"
+            "detection benchmarked single-sample (SRR444655, ~100 M read pairs)"
+            + ("; DE analysis (edgeR_ciriquant, incl. DESeq2+limma side-products "
+               "computed in the same analysis.R call) benchmarked separately on "
+               "GSE113230 (6-sample multi-sample DE run)"
+               if our_de_wall is not None else "")
         ),
     }
 
@@ -248,6 +272,11 @@ def main() -> None:
         print("[compute_cost] No nf-core time logs found; using Digby-Bell 2023 literature values.",
               file=sys.stderr)
 
+    # Fold DE analysis wall time (DESeq2, measured separately on GSE113230,
+    # analysis.R run without fsj_matrix so edgeR_ciriquant is skipped) into total.
+    if nfcore_de_wall is not None:
+        nfcore_total = round(nfcore_total + nfcore_de_wall, 1)
+
     # Digby-Bell et al. (2023) BMC Bioinformatics 24:430
     # https://doi.org/10.1186/s12859-023-05509-y
     _nfc_ciriquant   = nfcore_times.get("ciriquant", 701.1) if nfcore_has_real else 139.0
@@ -263,6 +292,7 @@ def main() -> None:
         "DCC_min":              None,
         "CIRCexplorer2_min":    round(_nfc_ce2, 1) if _nfc_ce2 is not None else None,
         "find_circ_min":        round(_nfc_fc, 1)  if _nfc_fc  is not None else None,
+        "DE_min":               round(nfcore_de_wall, 1) if nfcore_de_wall is not None else None,
         "Alignment_wall_min":   nfcore_align,
         "Consensus_wall_min":   nfcore_cons,
         "Total_wall_min":       nfcore_total,
@@ -271,7 +301,12 @@ def main() -> None:
         "CPU_cores":            nfcore_cores,
         "CPU_hours":            round(nfcore_total / 60 * nfcore_cores, 1),
         "Source":               nfcore_source,
-        "Note":                 nfcore_note,
+        "Note": (
+            nfcore_note
+            + ("; DE analysis (DESeq2, no BSJ/FSJ ratio capability) benchmarked "
+               "separately on GSE113230 (6-sample multi-sample DE run)"
+               if nfcore_de_wall is not None else "")
+        ),
     }
 
 
