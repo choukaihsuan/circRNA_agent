@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，✅ 完成）；GSE121842（CRC 大腸直腸癌 tumor vs. normal，3 pairs，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -344,7 +344,7 @@ threads: 8
 | CPU | 96 cores |
 | RAM | 377 GB |
 | 磁碟 | /home3：345 GB 可用（2026-06-19；中間檔清理後）|
-| Conda env | `ciriquant`（CIRIquant 1.1.3, DCC 0.5.0, STAR, HISAT2, BWA, samtools, snakemake, **aria2c 1.36.0**） |
+| Conda env | `ciriquant`（CIRIquant 1.1.3, DCC 0.5.0, STAR 2.7.11a, HISAT2 2.2.1, BWA 0.7.18, samtools 1.18, snakemake 7.24.0, **aria2c 1.36.0**, sra-tools 2.11.0, pigz 2.8, FastQC 0.12.1, fastp 1.1.0, MultiQC 1.17） |
 | Java | `/usr/bin/java`（不在 conda env 內，ciriquant.yaml 必須指定此路徑） |
 
 **SRA 下載優先順序**（`workflow/rules/download.smk`）：
@@ -376,7 +376,7 @@ threads: 8
 
 **R packages（安裝在 conda env `ciriquant` 的 r-base 4.2.2）**：
 r-ggplot2, r-pheatmap, r-rcolorbrewer, r-dplyr, r-ggrepel, r-tibble, r-tidyr,
-bioconductor-edger, bioconductor-limma, r-statmod
+bioconductor-edger 3.40.0, bioconductor-deseq2 1.38.0, bioconductor-limma 3.54.0, bioconductor-qvalue 2.30.0, r-statmod
 
 **SSH 連線**：
 ```bash
@@ -959,6 +959,10 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | 報告語言切換後 MultiQC「（點擊折疊）」文字不更新 | MultiQC `<details>` 折疊 span 沒有 `data-en` 屬性；`<details>` toggle JS 用 `textContent=` 硬編中文字串覆寫，讓之後 `switchReportLang` 的 innerHTML 操作也失效（因 `textContent` 設定後 `dataset.zh` 未更新） | `generate_report.py`：span 加 `id="qc-collapse-lbl"` + `data-en="(click to collapse)"`；toggle JS 改為偵測 `_LANG`、同步更新 `dataset.en`/`dataset.zh`、再依語言設定 textContent（2026-07-07）|
 | Python mock 腳本 `exec(code)` 後 `build_report()` 未被呼叫 | `generate_report.py` 入口為 `if "snakemake" in dir():`；`dir()` 只看 local namespace，不含 builtins；`builtins.snakemake = sn` 設法讓 snakemake 不出現在 `dir()` → 條件永遠 False | 改用 `exec(code, {"snakemake": sn})`（傳入 globals dict）；另外 `output` 必須是 list（`sn.output = [path]`）支援 `output[0]`；`input` 屬性名稱需與 Snakemake rule 完全一致（`switching`/`isoform_groups`/`de_deseq`/`multiqc`）（2026-07-07）|
 | ENCORI RBP/miRNA Mapped 數量極少（原本僅 27%）| ENCORI 提供宿主基因全長的 CLIP-seq peaks（橫跨所有 exon + intron），但 `_map_to_circ_pos()` 只接受精確落在 circRNA exon 邊界內的 sites；大量 peaks 落在其他 exon 或 intron 而被丟棄；`exon_nums=[]`（intronic/intergenic circRNA）時全部 mapping 直接跳過 | `predict_interactions.py` 新增 `_parse_circ_id()` + `_genomic_to_spliced()` 兩個 helper 函式；在 exon-level mapping 失敗後，自動 fallback 到 **genomic-span proportional mapping**：若 hg19 liftover 座標落在 `[circ_start, circ_end]` 範圍內，以比例方式估算 spliced position（`cs_frac = (ov_s - circ_start) / span × total_exon_len`）；`_fetch_encori_mirna` 和 `_fetch_encori_rbp` 均新增 `circ_id` + `strand` 參數，`can_map` 條件改為 `exon_nums OR circ_coords` 任一有效即可嘗試；改善幅度：27% → 約 60–75% Mapped 覆蓋率（2026-07-07）|
+| `consensus_filter.py` 同一 circRNA 重複輸出多列 | `vote()` 用 slop 判斷「支持數」但未用來合併輸出：同一 junction 若在 slop 內被多個座標支持（跨工具或同工具內近重複），每個座標各自輸出一列 | 新增 `_cluster_coords()`，投票前先依 slop 做座標分群，每群僅留一個代表（優先選 CIRIquant/`tool_maps[0]` 座標，維持與 `merge_counts.py` 精確字串比對相容）；單樣本驗證去重 ~1.5%（2026-07-16，見 GSE113230 段落）|
+| 資料集間 DCC `-Nr` 門檻不一致，偵測數無法跨資料集比較 | `-Nr` 從 5 於 2026-06-08 commit `1b703d3` 改為 2，但當時已完成的資料集（GSE113230、GSE133998）DCC 輸出仍是 `-Nr 5`；用各資料集 `DCC/CircRNACount` 最小 junction count 判定實際門檻（≥5 或含 2/3/4）| 逐一重新下載 FASTQ + 重跑 STAR/DCC/consensus/DE 統一為 `-Nr 2`（CIRIquant GTF 可沿用舊檔，不受 `-Nr` 影響）；GSE113230 已完成（2026-07-17），GSE133998 進行中 |
+| DCC 0.5.0 在基因密集/剪接複雜區域（如 3p21.3 RBM5）duplicate-marking 近乎停滯 | `-Nr 2` 保留更多低 count junction，若某 locus 有大量 read 落在彼此相差幾 bp 的 chimeric junction 變異上，DCC 內部 duplicate 比對邏輯耗時劇增（單一 read 比對需 1.5+ 小時）；process 仍佔用 CPU，非死鎖，僅是極慢 | 定位卡住座標對應的基因（查 `genes.gtf`），確認該 exact junction 支持 read 數極少後，從該樣本 `Chimeric.out.junction`（paired + mate1 + mate2）過濾移除該 junction 再重跑 DCC；此樣本的 consensus 結果會缺這一個 back-splice junction，需在文件中註明；原始檔案備份為 `*.bak_pre_<原因>filter` |
+| Snakemake `--rerun-incomplete` 誤判手動產生的輸出為「未完成」，重啟時覆寫掉正確結果 | Snakemake 有兩套獨立追蹤機制：`.snakemake/metadata/`（code-hash，`--cleanup-metadata` 清這個）與 `.snakemake/incomplete/`（job 是否透過 Snakemake 自己的子行程乾淨結束，決定 `IncompleteFilesException`）；若手動在 Snakemake 外執行某 rule 對應的指令（如手動重跑 DCC），或先前該 job 被 kill 於 Snakemake 子行程執行中，`.snakemake/incomplete/` 會殘留該輸出的標記，之後只要仍帶 `--rerun-incomplete` 就會強制重跑並覆寫已存在的正確輸出，即使檔案已存在且新鮮 | `--cleanup-metadata <file>` **對此無效**（清的是不同資料庫）；正確做法：`.snakemake/incomplete/` 目錄下的檔名是 **base64 編碼的輸出絕對路徑**（`echo <filename> \| base64 -d` 可解碼確認），找到對應目標檔案的那一個並手動 `rm` 刪除，再重啟時**不要帶 `--rerun-incomplete`**（僅靠 `--rerun-triggers mtime` 判斷）|
 
 ---
 
@@ -1121,41 +1125,71 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-07-04 完成 GSE148036，共 12 個資料集全部完成）
+## 目前執行進度（2026-07-13 完成 GSE121842，共 13 個資料集完成）
 
 ### GSE113230（三陰性乳癌）
 
-**所有步驟已完成（含三方法 DE + 新版報告 + benchmark）。** 報告位置：`~/GSE113230_results/report.html`（server）
+**所有步驟已完成（含三方法 DE + 新版報告）。** 報告位置：`~/GSE113230_results/report.html`（server）
+
+**2026-07-17 全量重跑（`-Nr 2` 統一 + consensus 去重修正）**：原始分析用 DCC `-Nr 5`（見下方「歷史版本」），2026-06-08 commit `1b703d3` 起 pipeline 預設改為 `-Nr 2`；為讓所有資料集的 DCC 門檻一致，重新下載 6 個樣本並以 `-Nr 2` + 座標去重（[Item 2 修正](#already-fixed)，slop 內近重複 circRNA 只留一個代表）完整重跑 STAR→DCC→consensus→DE→report。CIRIquant GTF 沿用舊檔（不受 `-Nr` 影響，省下 6×11h）。
 
 | 步驟 | 狀態 |
 |------|------|
-| fastp QC/trim | ✅ 6/6 完成 |
-| FastQC raw | ✅ 6/6 完成 |
-| CIRIquant | ✅ 6/6 完成 |
-| STAR paired-end | ✅ 6/6 完成 |
-| STAR mate1 | ✅ 6/6 完成 |
-| STAR mate2 | ✅ 6/6 完成 |
-| DCC | ✅ 6/6 完成 |
+| fastp QC/trim（重新下載）| ✅ 6/6 完成 |
+| CIRIquant | ✅ 6/6 完成（沿用舊 GTF，未重跑） |
+| STAR paired-end / mate1 / mate2 | ✅ 6/6 完成（重跑，`-Nr 2` 需要新的 mate junction）|
+| DCC（`-Nr 2`）| ✅ 6/6 完成 |
+| consensus_filter（含去重）| ✅ 6/6 完成（7,653–17,036 circRNAs / sample，見下表） |
+| merge_counts | ✅ 完成（**40,493** consensus circRNAs；filterByExpr 後 **6,650** tested） |
+| DE analysis | ✅ 完成（三方法全跑：edgeR **240** / DESeq2 **547** / limma **2,781** significant）|
+| predict_interactions / isoform switching / rank_biomarkers / report | ✅ 完成 |
+
+**⚠️ SRR7012366 例外處理（DCC 效能瓶頸，需人工介入）**：`-Nr 2` 下 DCC 0.5.0 在 **RBM5 基因座**（chr3:50145502-50145738，3p21.3 基因密集、剪接複雜區域）的 duplicate-marking 邏輯陷入近乎病態的緩慢處理（單一 read 比對耗時 1.5+ 小時，總計 4+ 小時才跑完這一個樣本，其餘 5 個樣本均在正常時間內完成）。**處理方式**：確認該 junction 僅有 42 筆支持 read（paired 2 + mate1 28 + mate2 12，佔全檔 80 萬+ 行的極小部分），從 SRR7012366 的三個 Chimeric.out.junction 檔（paired/mate1/mate2）過濾移除後重跑 DCC，可在正常時間內完成且結果可重現（兩次獨立重跑皆為 21,461 circRNAs）。**已知限制**：此樣本的 consensus 結果不含 RBM5 這一個 back-splice junction（其餘 803,421+ 筆 junction 不受影響）；原始（未過濾）junction 檔已備份為 `*.bak_pre_rbm5filter`。若未來重跑此資料集或影響其他樣本，需留意 3p21.3 一帶的基因密集區可能有類似風險。
+
+**Snakemake 操作教訓（已記錄於已知問題）**：修復 DCC-366 過程中，因 Snakemake 的 `.snakemake/incomplete/` 標記（與 `--cleanup-metadata` 清理的 code-hash metadata 是**不同**的追蹤機制）誤判該 job 未完成，`--rerun-incomplete` 導致重啟時強制重跑並覆寫掉已完成的正確結果一次。修正方式：解碼 `.snakemake/incomplete/` 下 base64 檔名找到對應的標記檔並手動刪除，改為不帶 `--rerun-incomplete` 重啟。詳見下方已知問題表。
+
+**主要數值結果（`-Nr 2` 全量重跑）**：
+- 偵測：**40,493** consensus circRNAs（較 `-Nr 5` 版本的 9,349 大幅增加，符合預期——`-Nr 2` 保留更多低 count junction）→ filterByExpr 後 **6,650** tested
+- DE（edgeR_ciriquant）：**240** significant（nominal p < 0.05，|log2FC| > 1）；上調 237 / 下調 3；**212 Type_I (88.3%) / 28 Type_II (11.7%)**
+- DE（DESeq2）：547 significant；DE（limma-voom）：2,781 significant
+- Top 1 biomarker：**chr12:46622936|46648719（hsa_circ_0000397，SLC38A1）**；log2FC=7.17，199 miRNA，118 RBP binders，score=0.6744，Type_I，n_sig_methods=2 —— 與跨資料集重現分析（見 `docs/biomarker_orthogonal_support.md`）獨立找出的旗艦候選一致，交叉驗證了排序穩定性
+
+**GSE113230 各工具偵測數量（`-Nr 2`，2026-07-17）**：
+
+| SRR ID | 分組 | CIRIquant | DCC | 共識（去重後）|
+|--------|------|----------:|----:|-----:|
+| SRR7012366 | Tumor 1 | 16,016 | 15,936 | 11,152（RBM5 locus 已排除，見上）|
+| SRR7012367 | Tumor 2 | 18,414 | 17,401 | 13,310 |
+| SRR7012368 | Tumor 3 | 23,163 | 22,449 | 17,036 |
+| SRR7012369 | Normal 1 | 19,217 | 19,377 | 14,506 |
+| SRR7012370 | Normal 2 | 21,241 | 19,857 | 15,395 |
+| SRR7012371 | Normal 3 | 10,181 | 10,017 | 7,653 |
+
+<a id="already-fixed"></a>
+**Item 2 去重修正**：`consensus_filter.py` 的 `vote()` 先前只用 slop 判斷「支持數」，未用來合併輸出，導致同一 junction 若在 slop 內被多個座標支持會重複輸出多列。修正後在投票前先做座標分群，僅留一個代表（優先選 CIRIquant 座標，保持與 count_matrix 的精確字串比對相容）。單樣本驗證（SRR7012368，同參數）：6,539→6,439 列（~1.5% 去重）。
+
+---
+
+<details>
+<summary><b>歷史版本（`-Nr 5`，2026-05-27 前，僅供對照）</b></summary>
+
+| 步驟 | 狀態 |
+|------|------|
 | consensus_filter | ✅ 6/6 完成（1,594–3,728 circRNAs / sample） |
 | merge_counts | ✅ 完成（9,349 circRNAs；filterByExpr 後 4,630） |
-| assign_isoforms | ✅ 完成（含 strand / exon_span / region） |
-| annotate_circbase | ✅ 完成 |
 | DE analysis | ✅ 完成（三方法全跑：edgeR 482 / DESeq2 409 / limma 736 significant）|
-| predict_interactions | ✅ 完成（top 50；CircInteractome；interactions.json） |
-| isoform switching | ✅ 完成（66 events，within-gene FDR < 0.1） |
-| rank_biomarkers | ✅ 完成（482 candidates；**6D score**：sig+FC+conf+circbase+miRNA+RBP） |
-| report | ✅ 完成 v3（動態 DE 表格切換；Biomarker 分布圖 + 常態檢定；Venn diagram 修正；列印排版；**Venn 可點擊區域**；Heatmap tumor 在左；Circular Structure totalLen 修正）|
-| benchmark accuracy | ✅ 完成（circDEX vs CirComPara2_4tools vs nfcore_3tools；門檻掃描 AUC-PR；report.html 更新）|
-| benchmark compute cost | ✅ 完成（CIRIquant 實測 **11:50:25** on HPC NFS；2026-06-10 重跑確認；compute_cost.tsv + comparison_report.html 已更新）|
+| benchmark accuracy | ✅ 完成（circDEX vs CirComPara2_4tools vs nfcore_3tools；門檻掃描 AUC-PR）|
+| benchmark compute cost | ✅ 完成（CIRIquant 實測 **11:50:25** on HPC NFS；2026-06-10 重跑確認）|
 
-**主要數值結果**：
+**主要數值結果（舊版，`-Nr 5`）**：
 - 偵測：9,349 consensus circRNAs → filterByExpr 後 4,630 tested
 - DE（edgeR_ciriquant）：482 significant（nominal p < 0.05，|log2FC| > 1）；**409 Type_I (84.9%) / 73 Type_II (15.1%)**；min Storey q = 0.384（underpowered）
 - DE（DESeq2 baseline）：409 significant；DE（limma-voom）：736 significant
 - Isoform switching：66 events（within-gene FDR < 0.1，|ΔIUI| > 0.1）
-- Biomarker score：6D（sig, FC, confidence, circBase, #miRNA, #RBP），87 circRNAs 有 interaction data（interactions.json May 29 更新）
-- Top 1 biomarker：chr10:5836848|5842668（hsa_circ_0002665，GDI2；score=0.8202，83 miRNA，118 RBP binders，log2FC=7.48，Type_I）；interactions.json 於 May 29 重跑後更新，118 RBP binders 為資料集最大值（rbp_n=1.0）
-- Benchmark（門檻掃描 AUC-PR，三方法全部更新）：
+- Top 1 biomarker：chr10:5836848|5842668（hsa_circ_0002665，GDI2；score=0.8202，83 miRNA，118 RBP binders，log2FC=7.48，Type_I）
+- **⚠️ benchmark 表格與 GSE55872（ground truth）為獨立資料集，不受此次 GSE113230 `-Nr 2` 重跑影響，但 accuracy_benchmark 若曾用 GSE113230 作對照組需重新確認**
+
+Benchmark（門檻掃描 AUC-PR，三方法，舊版數據）：
 
 | Method | Precision | Recall | F1 | Specificity | AUC-PR（門檻掃描）|
 |--------|-----------|--------|----|-------------|-----------------|
@@ -1192,6 +1226,8 @@ score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) /
 | SRR7012369 | Normal 1 | 27,105 | 9,397 | 3,157 |
 | SRR7012370 | Normal 2 | 39,211 | 9,349 | 2,790 |
 | SRR7012371 | Normal 3 | 12,985 | 5,788 | 1,594 |
+
+</details>
 
 ---
 
@@ -1808,6 +1844,47 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 **Server config**（`config/projects/GSE148036.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE148036/raw`
 - `results_dir: /home3/choukaihsuan/GSE148036_results`
+
+---
+
+## GSE121842（CRC 大腸直腸癌，配對 tumor/normal，✅ 完成 2026-07-13）
+
+**✅ 完成（2026-07-13 18:11）。** 報告位置：`~/GSE121842_results/report.html`（server，13 MB）
+
+大腸直腸癌（colorectal cancer，CRC）手術切除組織，tumor vs. adjacent normal，3 對配對 T/N，6 samples（SRR8113703–SRR8113708）。TruSeq Stranded Total RNA + Ribo-Zero Gold，Illumina HiSeq X，150bp PE，~35–49M spots/sample。Wang et al. 2019（PMC6757124）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 6/6 完成（HTTPS prefetch fallback，S3 暫時不可用）|
+| fastp QC/trim | ✅ 6/6 完成 |
+| CIRIquant | ✅ 6/6 完成（SRR8113707 03:08 → SRR8113704 15:19）|
+| STAR paired+mate1+mate2 | ✅ 18/18 完成 |
+| DCC | ✅ 6/6 完成 |
+| consensus_filter / merge_counts | ✅ 完成（11,148 circRNAs）|
+| assign_isoforms / annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（edgeR 65 / DESeq2 / limma）|
+| predict_interactions（union mode）| ✅ 完成（227 circRNAs）|
+| isoform_switching | ✅ 完成 |
+| rank_biomarkers | ✅ 完成（65 candidates）|
+| report | ✅ 完成（13 MB，2026-07-13 18:11）|
+
+**主要數值結果**：
+- 偵測：**11,148 consensus circRNAs**；filterByExpr 後 **661 tested**
+- DE（edgeR_ciriquant）：**65 significant**（nominal p < 0.05，|log2FC| > 1）；配對設計（`~patient+condition`，3 pairs）
+- predict_interactions：227 circRNAs（三方法 top-50 union mode）
+- Top 1：**hsa_circ_0002483（PTK2）**，chr8:141874411|141900868，log2FC=+9.28，Type_II，score=0.8478，102 miRNA / 103 RBP
+- Top 2：**hsa_circ_0017586（GDI2）**，chr10:5815805|5842668，log2FC=+8.74，Type_I，score=0.66，112 miRNA / 150 RBP
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（3T + 3N）：SRR8113703（tumor-P454750）、SRR8113704（tumor-Pgzy）、SRR8113705（tumor-Pwzd）；SRR8113706（normal-P454750）、SRR8113707（normal-Pgzy）、SRR8113708（normal-Pwzd）
+- genome：hg19；配對設計（patient_id：P454750 / Pgzy / Pwzd）
+- Library：TruSeq Stranded Total RNA + Ribo-Zero Gold，150bp PE，Illumina HiSeq X
+- Condition CSV：`/mnt/c/Users/User/Desktop/GSE121842_condition.csv`
+
+**Server config**（`config/projects/GSE121842.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE121842/raw`
+- `results_dir: /home3/choukaihsuan/GSE121842_results`
 
 ---
 
