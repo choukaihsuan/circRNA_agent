@@ -1316,28 +1316,64 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 
 乳癌手術切除組織，cancer tissue vs. adjacent normal，150bp PE，Illumina HiSeq X Ten，各 6 replicates（H36–H42，共 12 samples）。
 
+**2026-07-18 全量重跑（`-Nr 2` 統一 + consensus 去重修正）**：與 GSE113230 相同原因（見該段落），原始分析用 DCC `-Nr 5`，重新下載 12 個樣本並以 `-Nr 2` + 座標去重完整重跑 STAR→DCC→consensus→DE→report；CIRIquant GTF 沿用舊檔。**這次未遇到 GSE113230 那樣的 DCC 基因密集區卡點**，全程順利完成，無需人工介入。
+
 | 步驟 | 狀態 |
 |------|------|
-| 下載 SRA | ✅ 12/12 完成（aria2c S3 + prefetch fallback） |
-| fastp QC/trim | ✅ 12/12 完成 |
-| CIRIquant | ✅ 12/12 完成 |
-| STAR paired-end | ✅ 12/12 完成 |
-| STAR mate1 | ✅ 12/12 完成 |
-| STAR mate2 | ✅ 12/12 完成 |
-| DCC | ✅ 12/12 完成 |
-| consensus_filter（--adaptive）| ✅ 完成（10,979 circRNAs 總計） |
-| merge_counts / assign_isoforms | ✅ 完成 |
-| DE analysis | ✅ 完成（edgeR 84 / DESeq2 194 / limma 674 significant）|
-| report | ✅ 完成 v3（Venn 可點擊區域；Heatmap tumor 在左；Circular Structure 修正；**Venn 方法欄修正**）|
+| fastp QC/trim（重新下載）| ✅ 12/12 完成 |
+| CIRIquant | ✅ 12/12 完成（沿用舊 GTF，未重跑） |
+| STAR paired-end / mate1 / mate2 | ✅ 12/12 完成 |
+| DCC（`-Nr 2`）| ✅ 12/12 完成 |
+| consensus_filter（含去重）| ✅ 12/12 完成（2,451–5,681 circRNAs / sample，見下表） |
+| merge_counts | ✅ 完成（**17,504** consensus circRNAs；filterByExpr 後 **650** tested） |
+| DE analysis | ✅ 完成（三方法全跑：edgeR **79** / DESeq2 **186** / limma **1,148** significant）|
+| predict_interactions / isoform switching / rank_biomarkers / report | ✅ 完成 |
 
-**主要數值結果**：
+**主要數值結果（`-Nr 2` 全量重跑）**：
+- 偵測：**17,504** consensus circRNAs（較 `-Nr 5` 版本的 10,979 增加）→ filterByExpr 後 **650** tested
+- DE（edgeR_ciriquant）：**79** significant（nominal p < 0.05，|log2FC| ≥ 1）；上調 33 / 下調 46；**77 Type_I (97.5%) / 2 Type_II (2.5%)**
+- DE（DESeq2）：186 significant；DE（limma-voom）：1,148 significant
+- Biomarker candidates：79 個
+- Top 1 biomarker：**chr13:33091994|33101669（hsa_circ_0000471，N4BP2L2）**；log2FC=6.65，55 miRNA，131 RBP binders，score=0.7271，Type_I —— 與跨資料集重現分析（`docs/biomarker_orthogonal_support.md`「N4BP2L2 focused follow-up」）記錄的候選一致，且方向（上調）與該次記錄相同
+
+**GSE133998 各工具偵測數量（`-Nr 2`，2026-07-18）**：
+
+| SRR ID | 條件 | CIRIquant | DCC | 共識（去重後）|
+|--------|------|----------:|----:|-----:|
+| SRR11600329 | normal | 4,347 | 4,146 | 3,320 |
+| SRR11600330 | tumor | 3,900 | 3,625 | 2,872 |
+| SRR11600331 | normal | 7,194 | 7,344 | 5,681 |
+| SRR11600332 | tumor | 3,652 | 3,390 | 2,711 |
+| SRR11600333 | normal | 4,079 | 3,887 | 3,080 |
+| SRR11600334 | tumor | 3,258 | 3,072 | 2,451 |
+| SRR11600335 | normal | 5,206 | 4,968 | 3,998 |
+| SRR11600336 | tumor | 4,222 | 3,977 | 3,195 |
+| SRR11600337 | normal | 3,952 | 3,769 | 2,963 |
+| SRR11600338 | tumor | 5,193 | 5,176 | 4,047 |
+| SRR11600339 | normal | 4,358 | 4,115 | 3,292 |
+| SRR11600340 | tumor | 3,779 | 3,629 | 2,834 |
+
+**注意**：
+- 配對設計（同患者 tumor+normal），嘗試加入 `design = ~patient + condition` 後：edgeR 變差（min padj=0.996，patient dummy 消耗 5 個 df，FSJ offset 已吸收個體差異）；limma 進步（51 padj<0.05）；**決定維持 unpaired 設計**，主要看 edgeR_ciriquant 結果。
+- `analysis.R` 已加入向後相容的配對設計支援：若 `sample_groups.csv` 含 `patient_id` 欄則自動啟用 `~patient+condition`，否則維持 `~condition`；`cond_coef=ncol(design)` 確保 condition 係數位置正確。
+- edgeR filterByExpr 後僅 650 circRNA（17,504 中）是因為 tumor/normal 樣本間表現量分佈差異較大。
+
+<details>
+<summary><b>歷史版本（`-Nr 5`，2026-07-18 前，僅供對照）</b></summary>
+
+| 步驟 | 狀態 |
+|------|------|
+| consensus_filter（--adaptive）| ✅ 完成（10,979 circRNAs 總計） |
+| DE analysis | ✅ 完成（edgeR 84 / DESeq2 194 / limma 674 significant）|
+
+**主要數值結果（舊版，`-Nr 5`）**：
 - 偵測：10,979 consensus circRNAs；filterByExpr 後 640 tested
 - DE（edgeR_ciriquant）：84 significant（nominal p < 0.05，|log2FC| ≥ 1）；上調 34 / 下調 50；**82 Type_I (97.6%) / 2 Type_II (2.4%)**
 - DE（DESeq2）：194 significant；DE（limma-voom）：674 significant
 - Isoform switching：8,624 rows（within-gene BH FDR 分析）
 - Biomarker candidates：84 個
 
-**各 sample 共識 circRNA 數量**：
+**各 sample 共識 circRNA 數量（舊版）**：
 
 | SRR ID | 條件 | 共識 circRNA |
 |--------|------|----------:|
@@ -1354,10 +1390,7 @@ SRR37484804,DMSO,GSM9564375,MDA-MB-436 DMSO rep3
 | SRR11600339 | normal | 3,307 |
 | SRR11600340 | tumor | 2,848 |
 
-**注意**：
-- 配對設計（同患者 tumor+normal），嘗試加入 `design = ~patient + condition` 後：edgeR 變差（min padj=0.996，patient dummy 消耗 5 個 df，FSJ offset 已吸收個體差異）；limma 進步（51 padj<0.05）；**決定維持 unpaired 設計**，主要看 edgeR_ciriquant 結果。
-- `analysis.R` 已加入向後相容的配對設計支援：若 `sample_groups.csv` 含 `patient_id` 欄則自動啟用 `~patient+condition`，否則維持 `~condition`；`cond_coef=ncol(design)` 確保 condition 係數位置正確。
-- edgeR filterByExpr 後僅 640 circRNA（10,979 中）是因為 tumor/normal 樣本間表現量分佈差異較大。
+</details>
 
 **Server config**（`config/projects/GSE133998.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE133998/raw`
