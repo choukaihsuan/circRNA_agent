@@ -94,13 +94,17 @@ rule bench_download:
         mem_gb = 2
     log: "logs/bench/download_{srr}.log"
     shell:
+        # --tries + --waitretry survive transient DNS failures and mid-transfer
+        # stalls (observed on this server against EBI FTP: a DNS resolution
+        # failure, and separately a ~2h stall before a bare wget silently gave
+        # up); -c resumes a partial download instead of restarting from zero.
         """
         mkdir -p {params.raw_dir}
-        wget -q \
+        wget -q --tries=5 --waitretry=30 --timeout=60 -c \
             -O {output.r1} \
             "{params.ebi_base}/{params.srr}_1.fastq.gz" \
             >> {log} 2>&1
-        wget -q \
+        wget -q --tries=5 --waitretry=30 --timeout=60 -c \
             -O {output.r2} \
             "{params.ebi_base}/{params.srr}_2.fastq.gz" \
             >> {log} 2>&1
