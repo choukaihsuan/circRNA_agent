@@ -554,20 +554,23 @@ rule bench_circexplorer2:
         mem_gb = 8
     log: "logs/bench/circexplorer2_{srr}.log"
     shell:
-        # {log} is a relative path (logs/bench/...), so the `>` redirect must
-        # stay OUTSIDE the cd'd subshell — same fix as the documented DCC log
-        # path bug (CLAUDE.md: "cd {outdir} 後 > {log} 的相對路徑從 outdir 解析").
+        # Both {log} and {output.time_log} are relative paths (logs/bench/...);
+        # `/usr/bin/time -o` and the outer `>` redirect must therefore be
+        # invoked BEFORE any `cd`, with the `cd` instead happening inside the
+        # timed sh -c so it only affects CIRCexplorer2's own execution — same
+        # structure already used safely by the DCC rule in this file (CLAUDE.md:
+        # "cd {outdir} 後 > {log} 的相對路徑從 outdir 解析").
         """
         (
             mkdir -p {params.outdir}
-            cd {params.outdir}
             /usr/bin/time -v -o {output.time_log} sh -c '
+            cd {params.outdir}
             CIRCexplorer2 parse -t STAR {input.junc} -b back_spliced_junction.bed
             CIRCexplorer2 annotate \
                 -r {params.ref_flat} \
                 -g {input.genome} \
                 -b back_spliced_junction.bed
-            mv {params.outdir}/circularRNA_known.txt {output.known} 2>/dev/null || true
+            mv circularRNA_known.txt {output.known} 2>/dev/null || true
             '
         ) > {log} 2>&1
         """
