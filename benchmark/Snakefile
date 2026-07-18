@@ -554,6 +554,9 @@ rule bench_circexplorer2:
         mem_gb = 8
     log: "logs/bench/circexplorer2_{srr}.log"
     shell:
+        # {log} is a relative path (logs/bench/...), so the `>` redirect must
+        # stay OUTSIDE the cd'd subshell — same fix as the documented DCC log
+        # path bug (CLAUDE.md: "cd {outdir} 後 > {log} 的相對路徑從 outdir 解析").
         """
         (
             mkdir -p {params.outdir}
@@ -565,8 +568,8 @@ rule bench_circexplorer2:
                 -g {input.genome} \
                 -b back_spliced_junction.bed
             mv {params.outdir}/circularRNA_known.txt {output.known} 2>/dev/null || true
-            ' > {log} 2>&1
-        )
+            '
+        ) > {log} 2>&1
         """
 
 
