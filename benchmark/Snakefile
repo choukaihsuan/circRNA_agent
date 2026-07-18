@@ -634,13 +634,29 @@ rule bench_find_circ:
         mem_gb = 8
     log: "logs/bench/find_circ_{srr}.log"
     shell:
+        # Two bugs fixed here (found when this rule silently "succeeded" with
+        # 0 reads processed, corrupting the accuracy benchmark's find_circ
+        # numbers without any visible error):
+        #   1. $$ inside the single-quoted `sh -c '...'` pipe was expanded by
+        #      that NEW inner shell (its own PID), not the outer shell that
+        #      actually created the FIFO with ITS PID — a filename mismatch,
+        #      so unmapped2anchors.py silently got a nonexistent path. Fixed
+        #      by switching to a double-quoted sh -c "..." so $TMPFIFO's
+        #      already-resolved value is substituted by the OUTER shell
+        #      before the inner shell ever sees it (no re-expansion).
+        #   2. No `pipefail`, so a crash in the first pipe stage
+        #      (unmapped2anchors.py) didn't make the overall command's exit
+        #      code non-zero as long as the last stage (find_circ.py) still
+        #      exited 0 on empty input — Snakemake had no way to detect the
+        #      failure. Added `set -o pipefail` inside the timed subshell.
         """
+        set -euo pipefail
         mkdir -p {params.outdir}
         TMPFIFO={params.outdir}/unmapped_concat_$$.fastq
-        mkfifo \$TMPFIFO
-        cat {input.unm_r1} {input.unm_r2} > \$TMPFIFO &
+        mkfifo "$TMPFIFO"
+        cat {input.unm_r1} {input.unm_r2} > "$TMPFIFO" &
         /usr/bin/time -v -o {output.time_log} \
-            sh -c 'python {params.find_circ_dir}/unmapped2anchors.py --fastq {params.outdir}/unmapped_concat_$$.fastq | \
+            sh -c "set -o pipefail; python {params.find_circ_dir}/unmapped2anchors.py --fastq $TMPFIFO | \
             bowtie2 -p {threads} --score-min=C,-15,0 --reorder \
                 -x {params.index} -U - | \
             python {params.find_circ_dir}/find_circ.py \
@@ -649,8 +665,8 @@ rule bench_find_circ:
                 --name={params.sample} \
                 --stats={params.outdir}/find_circ_stats.txt \
                 > {output.bed} \
-                2>> {log}'
-        rm -f \$TMPFIFO
+                2>> {log}"
+        rm -f "$TMPFIFO"
         """
 
 
