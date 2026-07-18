@@ -26,7 +26,12 @@ gse113230:
   fsj_matrix:     /home3/choukaihsuan/GSE113230_results/circRNA/fsj_count_matrix.tsv
   de_results:     /home3/choukaihsuan/GSE113230_results/de/de_results.tsv
   circbase_annot: /home3/choukaihsuan/GSE113230_results/circRNA/circbase_annotated.tsv
-  groups:         /home3/choukaihsuan/circRNA_agent/metadata/sample_groups.csv
+  # Project-specific metadata (NOT the global metadata/sample_groups.csv, which gets
+  # overwritten by whichever dataset the main pipeline most recently ran — see
+  # CLAUDE.md known issue "FULL_HEATMAP_DATA.conditions 全為灰色". This caused
+  # de_deseq2_baseline/de_edgeR_ciriquant_baseline to fail with "Fewer than 2 samples
+  # match" once GSE133998 became the active project (2026-07-18).
+  groups:         /home3/choukaihsuan/circRNA_agent/metadata/GSE113230/sample_groups.csv
 
 # ── Reference genome (hg19) ───────────────────────────────────────────────────
 genome:

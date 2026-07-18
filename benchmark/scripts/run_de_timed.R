@@ -35,12 +35,18 @@ req <- function(name, default = NULL) {
 setClass("Snakemake", representation(input = "list", output = "list",
                                       params = "list", log = "list"))
 
-# fsj_matrix is optional: omitting it (or passing fsj_matrix=) makes
-# analysis.R fall back to deseq2/limma-only, matching how the existing
-# de_deseq2_baseline benchmark rule simulates a tool with no BSJ/FSJ
-# ratio capability (see CLAUDE.md's documented analysis.R fallback).
-fsj_raw <- args["fsj_matrix"]
-fsj_val <- if (!is.na(fsj_raw) && nzchar(fsj_raw)) fsj_raw else NULL
+# fsj_matrix and circbase_annot are both optional, matching analysis.R's own
+# tryCatch(..., error = function(e) NULL) handling for each (it only needs
+# fsj_matrix to attempt edgeR_ciriquant, and circbase_annot purely for
+# optional circBase-known-gene annotation of the output). de_deseq2_baseline
+# never supplies either (simulating a tool with neither capability); omitting
+# them here must not be a hard error.
+.opt <- function(name) {
+  raw <- args[name]
+  if (!is.na(raw) && nzchar(raw)) raw else NULL
+}
+fsj_val      <- .opt("fsj_matrix")
+circbase_val <- .opt("circbase_annot")
 
 snakemake <- new(
   "Snakemake",
@@ -48,7 +54,7 @@ snakemake <- new(
     matrix         = req("matrix"),
     fsj_matrix     = fsj_val,
     groups         = req("groups"),
-    circbase_annot = req("circbase_annot")
+    circbase_annot = circbase_val
   ),
   output = list(
     de       = req("out_de"),
