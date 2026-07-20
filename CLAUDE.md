@@ -711,9 +711,9 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - 二元偵測（每個 circRNA 只有 detected/not detected，無連續分數）直接套用 `sklearn.average_precision_score` 會嚴重虛高 AUC-PR。
 - **根本原因**：circDEX 偵測到的 circRNA 全部 score=1，未偵測的全部 score=0；ground truth 中 87.8% 的 TP 在 score=0 的大池（即 FN）；樂觀排序（label=1 排在 label=0 前面）把大量 FN 全部排在 TN 前面，產生長段假精確度（AUC-PR 虛高）。
 - **正確方法**：門檻掃描（threshold sweep）。對 CIRI2 output 和 DCC `CircRNACount` 各取 `min_bsj` 門檻（1–50），重新建立共識 → 計算每個門檻下的 (Precision, Recall) → 繪製真實 PR 曲線 → trapezoid AUC。
-- **實測結果（門檻掃描，三方法均已更新）**：circDEX AUC-PR = **0.120**；CirComPara2_4tools = **0.349**；nfcore_3tools = **0.337**（見下方完整表格）。
-- **新增 CLI 參數**：`accuracy_benchmark.py --ciri2-file <CIRI2 output> --dcc-count-file <CircRNACount> --output-pr-curve <pr_curve.tsv>`；`generate_comparison_report.py --pr-curve <pr_curve.tsv>`（在報告中插入 SVG PR 曲線圖）。
-- **SRR444655 無 CIRIquant GTF**：benchmark total RNA 樣本（SRR444655）只有 RNase R replicates 才有 CIRIquant GTF；門檻掃描改用 `SRR444655.ciri2` + `DCC/CircRNACount`（CIRI2 輸出 col 4 = BSJ count，DCC CircRNACount col 3 = junction count）。
+- **實測結果（門檻掃描，三方法，2026-07-20 `-Nr 2` 重新確認）**：circDEX AUC-PR = **0.174**；CirComPara2_4tools = **0.391**；nfcore_3tools = **0.377**（見 GSE113230 段落「Benchmark 門檻掃描 AUC-PR 重新確認」完整表格；`-Nr 5` 時代舊值 0.120/0.349/0.337 保留於歷史版本區塊）。
+- **新增 CLI 參數**：`accuracy_benchmark.py --ciri2-file <CIRI2 output> --dcc-count-file <CircRNACount> --circexplorer2-file <known_circ.txt> --find-circ-file <splice_sites.bed> --output-pr-curve <pr_curve.tsv>`（四個工具檔案缺一個，該工具的門檻掃描會靜默塌陷為全 0 或與另一方法完全重複，不會報錯，需檢查 log 的 `CE2=`/`find_circ=` 計數）；`generate_comparison_report.py --pr-curve <pr_curve.tsv>`（在報告中插入 SVG PR 曲線圖）。
+- **`SRR444655.ciri2`**：CIRI2 的原始輸出格式（非 GTF），門檻掃描專用；位於 CIRIquant 內部工作目錄 `CIRI2/{srr}.ciri2`（col 4 = BSJ count）；`DCC/CircRNACount` col 3 = junction count。
 
 **分層分析**：依 Total RNA 中的 BSJ count 分三層：
 - Low：1–4 RPM
@@ -931,7 +931,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `analysis.R` `coef=2` 在配對設計下指向 patient 係數而非 condition | `model.matrix(~patient+condition)` 有多個 patient dummy；`coef=2` 指向第一個 patient，非 condition | 改為 `cond_coef = ncol(design)`（condition 永遠在最後一列）；`glmQLFTest(fit, coef=cond_coef)`、`topTable(fit, coef=cond_coef)` |
 | `download.smk` Python 3.7 不支援 `unlink(missing_ok=True)` | `missing_ok` 參數在 Python 3.8 才加入；CentOS 7 server 的 conda Python 3.7 執行時 TypeError | 改用 `try: lock.unlink() except OSError: pass` 相容寫法 |
 | Type II DE circRNA 幾乎全為零 | 兩個根本原因：(1) `abs(logFC_fsj) >= 0.5` 閾值過嚴；(2) offset approach 造成 log2FC 與 logFC_fsj **反向相關**，`sign(log2FC)==sign(logFC_fsj)` 幾乎從不成立（73 sig_fsj 中只有 1 個同方向） | 移除方向一致性檢查，改為 `sig_bsj & sig_fsj`（BSJ ratio 顯著 AND FSJ 獨立顯著）；結果：GSE113230 從 0 → 73 Type_II（15.1%），GSE58135 → 2（13.3%），GSE133998 → 2（2.4%） |
-| benchmark AUC-PR 虛高（二元偵測假象）| `sklearn.average_precision_score` 對 score ∈ {0,1} 做樂觀排序，ground truth 中大量 FN 排在 TN 前，產生假精確度長段，AUC-PR 嚴重虛高 | 改用**門檻掃描**（threshold sweep）：對 CIRI2 + DCC CircRNACount 各取 min_bsj ∈ {1,2,3,...,50}，每個門檻計算真實 (Precision, Recall)，trapezoid AUC；三方法均以此計算：circDEX=**0.120**、CirComPara2_4tools=**0.349**、nfcore_3tools=**0.337**；新增 `--ciri2-file / --dcc-count-file / --output-pr-curve` CLI 參數至 `accuracy_benchmark.py`，`--pr-curve` 至 `generate_comparison_report.py` |
+| benchmark AUC-PR 虛高（二元偵測假象）| `sklearn.average_precision_score` 對 score ∈ {0,1} 做樂觀排序，ground truth 中大量 FN 排在 TN 前，產生假精確度長段，AUC-PR 嚴重虛高 | 改用**門檻掃描**（threshold sweep）：對 CIRI2 + DCC CircRNACount 各取 min_bsj ∈ {1,2,3,...,50}，每個門檻計算真實 (Precision, Recall)，trapezoid AUC；`-Nr 5` 時代首次測得：circDEX=0.120、CirComPara2_4tools=0.349、nfcore_3tools=0.337；`-Nr 2` 重跑後最新值見 GSE113230 段落「Benchmark 門檻掃描 AUC-PR 重新確認」；新增 `--ciri2-file / --dcc-count-file / --output-pr-curve` CLI 參數至 `accuracy_benchmark.py`，`--pr-curve` 至 `generate_comparison_report.py` |
 | CirComPara2 工具數誤標（5→4 工具）| `generate_comparison_report.py` 的說明文字列出 CIRI2 + CIRIquant + DCC + find_circ + CIRCexplorer2 = 5 工具；但 CIRIquant 內部已呼叫 CIRI2 做 BSJ 偵測，兩者是同一演算法 | 修正為 4 工具（CIRIquant + DCC + find_circ + CIRCexplorer2）；Consensus 門檻改為「≥2/4 tools」；報告說明文字同步更新 |
 | DESeq2 `every gene contains at least one zero, cannot compute log geometric means`（SRP156355）| sparse count matrix（14,697 circRNAs × 12 samples）有大量零值，`DESeq(dds)` 預設幾何平均 size factor 估算失敗 | `analysis.R` 在 `DESeq(dds)` 前加 `dds <- estimateSizeFactors(dds, type = "poscounts")`；poscounts 用非零值估算，避開全零問題；DESeq2 偵測到 sizeFactors 已設定後不再重新估算 |
 | `predict_interactions` 僅覆蓋 edgeR top-100，切換 DESeq2/limma 時 Biomarker Score 偏低 | interactions.json 只查詢 edgeR top 50 up + 50 down；DESeq2/limma 顯著集合有許多 circRNA 不在此範圍，mirna_norm = rbp_norm = 0 → score 壓縮 | `predict_interactions.py` 新增 `--de-edger`、`--de-deseq2`、`--de-limma` 三個選填參數；提供時取三方法 top-N 聯集（~150–250 circRNA）查詢；metadata 改從 `iso` + `circbase` 讀取（不受 filterByExpr 限制）；`de.smk` 同步更新傳入三個 input |
@@ -1176,6 +1176,16 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 <a id="already-fixed"></a>
 **Item 2 去重修正**：`consensus_filter.py` 的 `vote()` 先前只用 slop 判斷「支持數」，未用來合併輸出，導致同一 junction 若在 slop 內被多個座標支持會重複輸出多列。修正後在投票前先做座標分群，僅留一個代表（優先選 CIRIquant 座標，保持與 count_matrix 的精確字串比對相容）。單樣本驗證（SRR7012368，同參數）：6,539→6,439 列（~1.5% 去重）。
+
+**Benchmark 門檻掃描 AUC-PR 重新確認（2026-07-20）**：舊版「歷史版本」表格中的 accuracy benchmark 數字用的是 `-Nr 5` 時代的 GSE55872 consensus 結果；`-Nr 2` 統一後，GSE55872（SRR444655 + 兩個 RNase-R replicates）也已用 `-Nr 2` + dedup 修正重新跑過 CIRIquant/DCC/CIRCexplorer2/find_circ，門檻掃描（`accuracy_benchmark.py --ciri2-file --dcc-count-file --circexplorer2-file --find-circ-file --output-pr-curve`）重新確認：
+
+| Method | Precision | Recall | F1 | Specificity | AUC-PR（門檻掃描）|
+|--------|-----------|--------|----|-------------|-----------------|
+| **circDEX**（本研究，Our_adaptive）| 0.899 | 0.173 | 0.290 | **0.962** | **0.174** |
+| **CirComPara2_4tools** | 0.878 | **0.248** | **0.386** | 0.933 | **0.391** |
+| nfcore_3tools | 0.897 | 0.183 | 0.305 | 0.959 | 0.377 |
+
+三方法 AUC-PR 均較 `-Nr 5` 版本（circDEX 0.120 / CirComPara2_4tools 0.349 / nfcore_3tools 0.337）提升，相對排名不變（CirComPara2_4tools > nfcore_3tools > circDEX）——`-Nr 2` 保留更多低 count junction，讓所有方法召回率同步提升，符合預期。**重跑教訓**：`accuracy_benchmark.py` 的門檻掃描需要 `--circexplorer2-file`/`--find-circ-file` 兩個參數才會納入 CIRCexplorer2 和 find_circ 的資料；漏掉這兩個參數時腳本仍會「成功」執行並輸出數字，但 `nfcore_3tools`（3 工具都需要，其中 2 個工具資料是 0）的門檻掃描 AUC-PR 會靜默塌陷為 0.0000，且 `circDEX` 與 `CirComPara2_4tools` 的掃描曲線會因為兩者都退化成只剩 CIRIquant+DCC 而變成完全相同——這種「跑出數字但數字是錯的」情況比腳本直接報錯更難發現，跑門檻掃描時務必確認 log 裡的 `CE2=`/`find_circ=` 計數都是非零值。
 
 ---
 
