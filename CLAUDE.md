@@ -769,7 +769,7 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - CIRCexplorer2：0:05.99（6 秒，0.13 GB RAM）
 - find_circ_map：3:44:29（3.54 GB RAM）
 - find_circ detect：2:41:05（5.14 GB RAM）
-- CIRIquant：**11:50:25（49.1 GB RAM）** ← NFS I/O 瓶頸（HISAT2 5h8m + BWA-MEM 3h3m + CIRI2 + de novo quant）；2026-06-10 重跑確認值（disk-full 期間仍完成）
+- CIRIquant：**11:50:25（49.1 GB RAM）** ← NFS I/O 瓶頸（HISAT2 5h8m + BWA-MEM 3h3m + CIRI2 + de novo quant）；2026-06-10 重跑確認值（disk-full 期間仍完成）；2026-07-20 全量重跑（`-Nr 2` + dedup 修正後）確認值 **695.2 min（11h35m）**，同一數量級
 
 **CIRIquant 步驟分解**（NFS 環境，SAM/BAM 寫入放大效應）：
 - HISAT2 genome alignment：00:01 → 05:09（5h 8min；unmapped.sam 124 GB 寫入 NFS）
@@ -779,6 +779,12 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - Build circular index：09:21 → 09:29（8 min）
 - De novo HISAT2 alignment：09:29 → 10:13（44 min）
 - BSJ/FSJ detection & quantification：10:13 → 11:50（97 min，含 disk-full 延遲）
+
+**DE 分析時間**（2026-07-20 新增，`run_de_timed.R` 包裝 `/usr/bin/time -v` 計時，不修改 `analysis.R` 本身）：
+- `de_edgeR_ciriquant_baseline` rule：Our pipeline 的 DE 耗時（edgeR_ciriquant 主方法，同一次 `analysis.R` 呼叫內副產出 DESeq2/limma）→ `compute_cost.tsv` 的 `DE_min` 欄
+- `de_deseq2_baseline` rule：nf-core 模擬對照組（DESeq2，無 FSJ offset）
+- **實測值**（GSE113230，6-sample，`-Nr 2` 全量重跑後的 count matrix）：Our pipeline DE_min = **1.1 min**；nf-core DE_min = **0.9 min**
+- **重要 caveat**：偵測步驟（CIRIquant/STAR/DCC/CIRCexplorer2/find_circ）用單樣本 SRR444655（GSE55872 ground truth）計時；DE 分析另外用 GSE113230 六樣本計時。兩者不是同一次端到端執行，`compute_cost.tsv` 的 Total 因此代表「單樣本偵測成本 + 多樣本 DE 成本」的組合，而非單一可重現的完整 pipeline run。`comparison_report.html` 的 Compute Cost 表格上方會顯示此 caveat 說明文字（`has_de` 判斷式）。
 
 ### 輸出報告
 
@@ -963,6 +969,9 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | 資料集間 DCC `-Nr` 門檻不一致，偵測數無法跨資料集比較 | `-Nr` 從 5 於 2026-06-08 commit `1b703d3` 改為 2，但當時已完成的資料集（GSE113230、GSE133998）DCC 輸出仍是 `-Nr 5`；用各資料集 `DCC/CircRNACount` 最小 junction count 判定實際門檻（≥5 或含 2/3/4）| 逐一重新下載 FASTQ + 重跑 STAR/DCC/consensus/DE 統一為 `-Nr 2`（CIRIquant GTF 可沿用舊檔，不受 `-Nr` 影響）；GSE113230 已完成（2026-07-17），GSE133998 進行中 |
 | DCC 0.5.0 在基因密集/剪接複雜區域（如 3p21.3 RBM5）duplicate-marking 近乎停滯 | `-Nr 2` 保留更多低 count junction，若某 locus 有大量 read 落在彼此相差幾 bp 的 chimeric junction 變異上，DCC 內部 duplicate 比對邏輯耗時劇增（單一 read 比對需 1.5+ 小時）；process 仍佔用 CPU，非死鎖，僅是極慢 | 定位卡住座標對應的基因（查 `genes.gtf`），確認該 exact junction 支持 read 數極少後，從該樣本 `Chimeric.out.junction`（paired + mate1 + mate2）過濾移除該 junction 再重跑 DCC；此樣本的 consensus 結果會缺這一個 back-splice junction，需在文件中註明；原始檔案備份為 `*.bak_pre_<原因>filter` |
 | Snakemake `--rerun-incomplete` 誤判手動產生的輸出為「未完成」，重啟時覆寫掉正確結果 | Snakemake 有兩套獨立追蹤機制：`.snakemake/metadata/`（code-hash，`--cleanup-metadata` 清這個）與 `.snakemake/incomplete/`（job 是否透過 Snakemake 自己的子行程乾淨結束，決定 `IncompleteFilesException`）；若手動在 Snakemake 外執行某 rule 對應的指令（如手動重跑 DCC），或先前該 job 被 kill 於 Snakemake 子行程執行中，`.snakemake/incomplete/` 會殘留該輸出的標記，之後只要仍帶 `--rerun-incomplete` 就會強制重跑並覆寫已存在的正確輸出，即使檔案已存在且新鮮 | `--cleanup-metadata <file>` **對此無效**（清的是不同資料庫）；正確做法：`.snakemake/incomplete/` 目錄下的檔名是 **base64 編碼的輸出絕對路徑**（`echo <filename> \| base64 -d` 可解碼確認），找到對應目標檔案的那一個並手動 `rm` 刪除，再重啟時**不要帶 `--rerun-incomplete`**（僅靠 `--rerun-triggers mtime` 判斷）|
+| benchmark 重跑 SRR444655 時 Snakemake 主行程與 CIRIquant 無聲消失（無錯誤訊息、`dmesg` 查無 OOM）| 一開始誤判為 systemd session 結束時的 `KillUserProcesses` 把整組行程清掉（`nohup` 防得住 SIGHUP，防不住 session 被清）；改用 `setsid` 重啟後又在 8 小時後死掉一次，這次才在 log 裡翻到清楚的 `OSError: [Errno 28] No space left on device`——**真正原因是磁碟被灌到 100% 滿**，CIRIquant 自己的中間檔案（BWA-mem 輸出的 `circ/*.sam` 分片檔）在單一樣本就能吃到 ~220GB，連 Snakemake 想記錄 job 失敗的 log 都寫不進去，因此看起來像「行程被外力砍掉、無錯誤訊息」 | 診斷時除了查行程是否存活，**務必同時查 `df -h`**；清理已完成資料集的 raw/trimmed/BAM/mate1/mate2（GSE113230、GSE121842 均已完成報告，可安全清除）騰出約 600GB 後用 `setsid nohup` 重啟即可正常跑完；教訓：CIRIquant 對單一 total-RNA 樣本的峰值磁碟用量（circ/+align/+find_circ 暫存）可達 200GB+，排程長 job 前應預留至少 300GB 空間 |
+| Snakemake 目標檔案路徑格式不完全匹配時，靜默 fallback 到預設 `all` target，DAG 範圍比預期大很多 | `snakemake ... {某個 rule 的 output 絕對路徑}` 有時仍會把 `Job stats` 表列出全部 18 個 job（含 ground_truth、accuracy_benchmark 等不相關項目），而非只跑目標檔案所需的最小子集；重跑 SRR444655 CIRIquant 時發生過一次，後來改成直接指定 `comparison_report.html`（`rule all` 的 output）反而正確辨識出只需 6 個 job（已完成的 8 個被跳過）| 若懷疑 DAG 範圍不對，直接比對 `Job stats` 表的 job 數與預期；本專案這次的教訓是：與其猜測目標檔案路徑的匹配規則，不如直接指定 `rule all` 的最終 output（`comparison_report.html`），讓 Snakemake 自行決定最小需要重跑的子集，比手動指定中間 rule 的 output 更可靠 |
+| Monitor 輪詢腳本誤判「檔案存在」＝「這次執行剛產生的新檔案」| 用 `[ -f "$REPORT" ]` 判斷 benchmark 是否跑完，但 `comparison_report.html` 是舊有輸出（上次成功執行留下的），只要檔案存在就會誤觸發「完成」警報，即使這次執行才剛啟動 1 分鐘 | 改用 `stat -c %Y "$REPORT"` 取得檔案 mtime，與本次啟動時間（epoch）比較，只有 mtime 晚於啟動時間才算「這次執行產生的新檔案」；任何長跑背景監控只要目標是「某個可能已存在的輸出檔」，都應該用時間戳比對而非單純存在性檢查 |
 
 ---
 
