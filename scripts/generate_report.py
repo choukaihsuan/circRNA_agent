@@ -1206,7 +1206,7 @@ def _compute_bm_table_data(
     bm_lookup: dict,
     sig_sets_all: Optional[dict] = None,
 ) -> Optional[dict]:
-    """Compute top-30 biomarker rows for one DE method (stored in ALL_DE_METHODS[m].bm_table)."""
+    """Compute all significant biomarker rows for one DE method (stored in ALL_DE_METHODS[m].bm_table); JS slices to displayed N."""
     if p_col not in de.columns or "log2FC" not in de.columns or "circ_id" not in de.columns:
         return None
     mask = de[p_col].notna() & (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
@@ -1244,7 +1244,7 @@ def _compute_bm_table_data(
         )
     else:
         sig["_n_sig"] = 1
-    sig_top = sig.sort_values("_score", ascending=False).head(30).reset_index(drop=True)
+    sig_top = sig.sort_values("_score", ascending=False).reset_index(drop=True)
     cols = ["rank", "circ_id", "log2FC", "n_mirna", "n_rbp",
             "biomarker_score", "n_sig_methods", "in_circbase", "circbase_id", "circbase_gene", "Type"]
     rows = []
@@ -1538,10 +1538,22 @@ def _biomarker_section(biomarker_file: Optional[str],
             dist_section += dist_html or norm_html
 
     return f"""
-  <h2>Biomarker Candidates (top {min(n_total, 30)} by composite score)</h2>
+  <h2 id="biomarker-section-title">Biomarker Candidates (top 30 by composite score)</h2>
   <p style="font-size:13px;color:#555;margin-bottom:8px;">{score_desc}</p>
   {dist_section}
-  <h3 style="font-size:14px;color:#444;margin:20px 0 4px">Top {min(n_total, 30)} Biomarker Candidates</h3>
+  <div style="display:flex;align-items:center;gap:10px;margin:20px 0 4px;flex-wrap:wrap">
+    <h3 style="font-size:14px;color:#444;margin:0">Biomarker Candidates</h3>
+    <div style="display:flex;align-items:center;gap:6px;background:#f4f8ff;padding:6px 12px;border-radius:6px;border:1px solid #d0e4f7">
+      <span style="font-size:13px" data-en="Show top">顯示前</span>
+      <input type="number" id="bm-n-input" value="30" min="1" max="{n_total}"
+             style="width:64px;padding:3px 6px;border:1px solid #bbb;border-radius:4px;font-size:13px"
+             onkeydown="if(event.key==='Enter')updateBiomarkerN()">
+      <button onclick="updateBiomarkerN()"
+              style="background:#2c6fad;color:white;border:none;border-radius:4px;padding:4px 14px;cursor:pointer;font-size:13px"
+              data-en="Update">更新</button>
+      <span id="bm-n-status" style="font-size:12px;color:#888"></span>
+    </div>
+  </div>
   <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_id</strong> to view exon diagram, miRNA and RBP binding sites.</p>
   {filter_ui}
   {table_html}
@@ -1994,6 +2006,74 @@ def build_report(
             import sys as _sys
             print(f"[report] FULL_HEATMAP_DATA build failed: {_hm_exc}", file=_sys.stderr)
 
+    # Build CLUST_HEATMAP_DATA: all significant circRNAs (primary method), hierarchically clustered rows
+    clust_heatmap_data_js = "null"
+    if not de.empty and not matrix.empty:
+        try:
+            _sig_all = de[sig_mask].copy() if "log2FC" in de.columns else de.copy()
+            _cids_all = [c for c in _sig_all["circ_id"].tolist() if c in matrix.index]
+            if len(_cids_all) >= 3:
+                _sub_c = matrix.loc[_cids_all].astype(float)
+                _log_c = (_sub_c + 1).apply(lambda col: col.apply(lambda v: math.log2(v) if v > 0 else 0.0))
+                # Use same normal-sample mean centering as main heatmap
+                _rcols_c = [c for c in _samps if _cmap_hm.get(c, "") == normal_label] if "_samps" in dir() and "_cmap_hm" in dir() else _log_c.columns.tolist()
+                if not _rcols_c:
+                    _rcols_c = _log_c.columns.tolist()
+                _rmean_c = _log_c[_rcols_c].mean(axis=1)
+                _rstd_c  = _log_c.std(axis=1).clip(lower=0.1)
+                _z_c     = _log_c.sub(_rmean_c, axis=0).div(_rstd_c, axis=0)
+                # Apply same sample column order (tumor first, then normal)
+                _samps_c = _samps if "_samps" in dir() and set(_samps).issubset(set(_z_c.columns)) else _z_c.columns.tolist()
+                _z_c = _z_c[_samps_c]
+                # Hierarchical clustering on rows (ward linkage, euclidean distance)
+                from scipy.cluster.hierarchy import linkage, leaves_list, dendrogram as _scipy_dendro
+                _Z_mat = _z_c.fillna(0).values
+                _link  = linkage(_Z_mat, method="ward", metric="euclidean")
+                _order = leaves_list(_link).tolist()
+                _cids_ord = [_cids_all[i] for i in _order]
+                # Compute dendrogram segment coordinates for JS rendering
+                _dend = _scipy_dendro(_link, no_plot=True)
+                _max_dist = float(max(max(d) for d in _dend['dcoord']))
+                # Drop all segments whose merge distance >= 80% of max_dist.
+                # Near-root U-shapes span huge y-gaps and create detached "stray" arms.
+                _clip_d = _max_dist * 0.80
+                _pairs = [(ic, dc) for ic, dc in zip(_dend['icoord'], _dend['dcoord'])
+                          if max(dc) < _clip_d]
+                _dendro_icoord = [p[0] for p in _pairs]
+                _dendro_dcoord = [p[1] for p in _pairs]
+                # Build label map
+                _cb_map_c = {}
+                if "circbase_id" in de.columns and "in_circbase" in de.columns:
+                    _known = de[de["in_circbase"] == 1].dropna(subset=["circbase_id"])
+                    _cb_map_c = dict(zip(_known["circ_id"].astype(str), _known["circbase_id"].astype(str)))
+                _lfc_map_c = dict(zip(de["circ_id"].astype(str), de["log2FC"]))
+                _pval_map_c = dict(zip(de["circ_id"].astype(str), de[p_col]))
+                _rows_c = {}
+                for _cid in _cids_ord:
+                    _cb = _cb_map_c.get(_cid, "")
+                    _lbl = _cb if _cb and _cb not in ("", "novel") else _cid
+                    _rows_c[_cid] = {
+                        "z":      [round(float(v), 3) for v in _z_c.loc[_cid].tolist()],
+                        "lfc":    round(float(_lfc_map_c.get(_cid, 0.0)), 2),
+                        "pval":   float(_pval_map_c.get(_cid, 1.0)),
+                        "label":  _lbl,
+                    }
+                clust_heatmap_data_js = _json.dumps({
+                    "samples":    _samps_c,
+                    "conditions": _cmap_hm if "_cmap_hm" in dir() else {},
+                    "order":      _cids_ord,
+                    "rows":       _rows_c,
+                    "n_total":    len(_cids_ord),
+                    "dendro": {
+                        "icoord":    _dendro_icoord,
+                        "dcoord":    _dendro_dcoord,
+                        "max_dist":  _max_dist,
+                    },
+                }, ensure_ascii=False)
+        except Exception as _clust_exc:
+            import sys as _sys
+            print(f"[report] CLUST_HEATMAP_DATA build failed: {_clust_exc}", file=_sys.stderr)
+
     # Compute heatmap top IDs for volcano annotation
     heatmap_ids: set = set()
     if p_col in de.columns and "log2FC" in de.columns and "circ_id" in de.columns:
@@ -2214,9 +2294,10 @@ def build_report(
 
     _modal_js = f"""
 <script>
-const CIRC_DATA         = {interactions_js};
-const VOLCANO_DATA      = {volcano_data_js};
+const CIRC_DATA          = {interactions_js};
+const VOLCANO_DATA       = {volcano_data_js};
 const FULL_HEATMAP_DATA  = {full_heatmap_data_js};
+const CLUST_HEATMAP_DATA = {clust_heatmap_data_js};
 const ALL_DE_METHODS     = {all_de_methods_js};
 const _FDR = {_fdr_js};
 let _HEATMAP_DATA_CACHE  = FULL_HEATMAP_DATA;
@@ -3310,6 +3391,24 @@ function updateMainHeatmap() {{
   if(statusEl){{statusEl.dataset.n=validIds.length;statusEl.dataset.u=maxUp;statusEl.dataset.d=maxDn;statusEl.textContent=_LS[_LANG||'zh'].hmStatus(validIds.length,maxUp,maxDn);}}
 }}
 
+// ── Biomarker top-N update ────────────────────────────────────────────────────
+function updateBiomarkerN() {{
+  const inp = document.getElementById('bm-n-input');
+  if (!inp) return;
+  const v = Math.max(1, parseInt(inp.value) || 30);
+  inp.value = v;
+  // Find the currently active DE method
+  let curMethod = '{de_method}';
+  document.querySelectorAll('.msw-btn').forEach(b => {{
+    if (b.classList.contains('active')) {{
+      const m = (b.getAttribute('onclick') || '').match(/'([^']+)'/);
+      if (m) curMethod = m[1];
+    }}
+  }});
+  const md = ALL_DE_METHODS && ALL_DE_METHODS[curMethod];
+  _renderBiomarkerTable(curMethod, md);
+}}
+
 // ── DE method switcher ────────────────────────────────────────────────────────
 function switchDEMethod(method) {{
   const md=ALL_DE_METHODS&&ALL_DE_METHODS[method];
@@ -3502,7 +3601,18 @@ function _renderBiomarkerTable(method, md) {{
   }}
   const cols = bt.cols || [];
   const mLabels = {{'edgeR_ciriquant':'edgeR (FSJ offset)','deseq2':'DESeq2','limma':'limma-voom'}};
-  tbody.innerHTML = bt.rows.map(row => {{
+  // Respect top-N input
+  const _bmInp = document.getElementById('bm-n-input');
+  const _bmN = _bmInp ? Math.max(1, parseInt(_bmInp.value) || 30) : 30;
+  const displayRows = bt.rows.slice(0, _bmN);
+  // Renumber rank column (index 0 = 'rank')
+  const rankIdx = cols.indexOf('rank');
+  const rows = displayRows.map((row, i) => {{
+    const r = [...row];
+    if (rankIdx >= 0) r[rankIdx] = i + 1;
+    return r;
+  }});
+  tbody.innerHTML = rows.map(row => {{
     const nsigIdx = cols.indexOf('n_sig_methods');
     const nsig = nsigIdx >= 0 ? (parseInt(row[nsigIdx]) || 1) : 1;
     const fw = nsig >= 3 ? 'font-weight:bold;' : '';
@@ -3531,9 +3641,11 @@ function _renderBiomarkerTable(method, md) {{
     else if (i === 1) b.textContent = _LS[_LANG||'zh'].bm2(n2);
     else if (i === 2) b.textContent = _LS[_LANG||'zh'].bm3(n3);
   }});
-  // Update section heading
-  const bm_h2 = document.querySelector('#biomarker-section h2');
+  // Update section headings
+  const bm_h2 = document.getElementById('biomarker-section-title');
   if (bm_h2) bm_h2.textContent = `Biomarker Candidates (top ${{n_all}} by composite score) [${{mLabels[method]||method}}]`;
+  const bmStatus = document.getElementById('bm-n-status');
+  if (bmStatus) {{ const tot=bt.rows.length; bmStatus.textContent=n_all<tot?`${{n_all}} / ${{tot}} shown`:''; }}
   // Re-attach sort listeners (tbody was rebuilt)
   _makeSortable('tbl_biomarker');
 }}
@@ -3563,6 +3675,182 @@ _makeSortable('tbl_biomarker');
     switchDEMethod(initMethod);
   }}
 }})();
+
+// ── Clustering Heatmap ───────────────────────────────────────────────────────
+(function() {{
+  const sec = document.getElementById('clust-heatmap-section');
+  if (!sec || !CLUST_HEATMAP_DATA || typeof Plotly === 'undefined') return;
+  let rendered = false;
+  sec.addEventListener('toggle', function() {{
+    if (sec.open && !rendered) {{ rendered = true; _drawClustHeatmap(); }}
+    // Update collapse label
+    const lbl = document.getElementById('clust-hm-collapse-lbl');
+    if (lbl) lbl.textContent = sec.open
+      ? (_LANG==='en' ? '(click to collapse)' : '（點擊折疊）')
+      : (_LANG==='en' ? '(click to expand)'   : '（點擊展開）');
+  }});
+}})();
+
+function _drawClustHeatmap() {{
+  const cd = CLUST_HEATMAP_DATA;
+  if (!cd || typeof Plotly === 'undefined') return;
+  const div = document.getElementById('clust-heatmap-plot');
+  if (!div) return;
+  const order = cd.order || [];
+  const samps = cd.samples || [];
+  const rows  = cd.rows   || {{}};
+  const conds = cd.conditions || {{}};
+  const n = order.length;
+  if (n === 0 || samps.length === 0) return;
+
+  // Scipy leaf convention: row i sits at y = 10*i+5 (5,15,25,...)
+  const y_positions = order.map((_, i) => 10 * i + 5);
+  const ylbls       = order.map(id => rows[id] ? rows[id].label || id : id);
+
+  const fontSz = n > 200 ? 4 : n > 100 ? 6 : n > 50 ? 8 : 10;
+  const rowH   = n > 200 ? 4 : n > 100 ? 6 : n > 50 ? 8 : 12;
+  const plotH  = Math.min(700, Math.max(300, n * rowH + 140));
+
+  const TUMOR_COL='#d62728', NORMAL_COL='#2CA02C';
+  const grps=[]; let cur=null;
+  samps.forEach((s,i) => {{
+    const c = conds[s] || '';
+    const col = c==='{tumor_label}' ? TUMOR_COL : c==='{normal_label}' ? NORMAL_COL : '#888';
+    if (!cur || cur.c !== c) {{ cur={{c,col,s:i,e:i}}; grps.push(cur); }} else cur.e = i;
+  }});
+  const groupShapes = grps.map(g => ({{
+    type:'rect', xref:'x2', yref:'paper',
+    x0:g.s-0.45, x1:g.e+0.45, y0:1.02, y1:1.07,
+    fillcolor:g.col, line:{{width:0}}
+  }}));
+  const groupAnno = grps.map(g => ({{
+    xref:'x2', yref:'paper', x:(g.s+g.e)/2, y:1.045,
+    yanchor:'middle', xanchor:'center', text:g.c, showarrow:false,
+    font:{{size:11, color:'white', family:'sans-serif'}}
+  }}));
+
+  const z = order.map(id => rows[id] ? rows[id].z : samps.map(() => 0));
+  // customdata MUST be 2D [n_rows × n_cols] for heatmap hovertemplate to work
+  const customdata = order.map((id, i) =>
+    samps.map(() => [
+      rows[id] ? rows[id].lfc  : 0,
+      rows[id] ? rows[id].pval : 1,
+      ylbls[i],
+    ])
+  );
+
+  const traces = [];
+
+  // ── Dendrogram traces (left panel, xaxis) ──
+  const hasDendro = !!(cd.dendro && cd.dendro.icoord && cd.dendro.icoord.length);
+  const maxD = hasDendro ? (cd.dendro.max_dist || 1) : 1;
+  if (hasDendro) {{
+    cd.dendro.icoord.forEach((ic, k) => {{
+      traces.push({{
+        type: 'scatter',
+        x: cd.dendro.dcoord[k].map(v => -v),   // negate: root far-left, leaves near 0
+        y: ic,
+        mode: 'lines',
+        line: {{color:'#555', width: n > 150 ? 0.5 : 0.8}},
+        showlegend: false,
+        hoverinfo: 'none',
+        xaxis: 'x',
+        yaxis: 'y',
+      }});
+    }});
+  }}
+
+  // ── Heatmap trace (main panel, xaxis2) ──
+  // Colorbar sits on the LEFT (in margin.l) to avoid overlap with right-side ID labels
+  traces.push({{
+    type: 'heatmap',
+    z: z,
+    x: samps,
+    y: y_positions,
+    colorscale: [[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']],
+    zmid: 0,
+    colorbar: {{
+      title: {{text:'z-score', side:'right', font:{{size:10}}}},
+      thickness: 10, len: 0.4,
+      x: 0.0, xanchor: 'right',   // left of the dendrogram panel
+      y: 0.5, yanchor: 'middle',
+    }},
+    customdata: customdata,
+    hovertemplate: '<b>%{{customdata[2]}}</b><br>Sample: %{{x}}<br>z-score: %{{z:.2f}}<br>log2FC: %{{customdata[0]:.2f}}<br>p-value: %{{customdata[1]:.3g}}<extra></extra>',
+    xaxis: 'x2',
+    yaxis: 'y',
+  }});
+
+  const dendroFrac = hasDendro ? 0.13 : 0;
+  const gapFrac    = hasDendro ? 0.01  : 0;
+  // Right margin: accommodate circRNA ID labels on the right
+  const maxLblLen = Math.max(...ylbls.map(s => s.length));
+  const rMargin   = Math.min(300, Math.max(130, maxLblLen * fontSz * 0.65));
+
+  Plotly.newPlot(div, traces, {{
+    height: plotH,
+    plot_bgcolor: 'white',
+    paper_bgcolor: 'white',
+    margin: {{t:60, l:72, r:rMargin, b:60}},   // l:72 reserves space for the left-side colorbar
+    shapes: groupShapes,
+    annotations: groupAnno,
+    dragmode: 'zoom',
+    // ── Dendrogram axis (left narrow panel) ──
+    xaxis: {{
+      domain: [0, dendroFrac],
+      anchor: 'y',
+      range: [-(maxD * 0.82), maxD * 0.05],   // clip near-root arms (matches Python 80% filter)
+      showticklabels: false,
+      showgrid: false,
+      zeroline: false,
+      fixedrange: false,
+    }},
+    // ── Heatmap axis (main right panel) ──
+    xaxis2: {{
+      domain: [dendroFrac + gapFrac, 1.0],
+      anchor: 'y',
+      showgrid: false,
+      zeroline: false,
+      showline: false,
+      fixedrange: false,
+    }},
+    // ── Shared y-axis: labels appear on the RIGHT of the heatmap ──
+    yaxis: {{
+      anchor: 'x2',     // anchor to heatmap's right edge
+      side:   'right',  // labels to the right of the heatmap panel
+      tickmode: 'array',
+      tickvals: y_positions,
+      ticktext: ylbls,
+      tickfont: {{size: fontSz}},
+      autorange: 'reversed',
+      fixedrange: false,
+      showgrid: false,
+      zeroline: false,   // hide y=0 line (appears above row-1 in reversed axis)
+      showline: false,
+    }},
+  }}, {{
+    responsive: true,
+    displayModeBar: true,
+    scrollZoom: true,                              // mouse-wheel / pinch to zoom
+    modeBarButtonsToRemove: ['select2d','lasso2d'],
+  }});
+  // ── Zoom: dynamically scale y-axis tick labels as row height changes ──
+  let _chBusy = false;
+  div.on('plotly_relayout', function(ev) {{
+    if (_chBusy) return;
+    const yl = div._fullLayout && div._fullLayout.yaxis;
+    if (!yl || !yl.range) return;
+    const span = Math.abs(yl.range[1] - yl.range[0]);
+    const vis  = Math.max(1, Math.round(span / 10));   // number of visible rows
+    const newSz = vis > 120 ? 4 : vis > 60 ? 6 : vis > 30 ? 8 : vis > 15 ? 10 : vis > 6 ? 12 : 14;
+    const curSz = (yl.tickfont && yl.tickfont.size) || 0;
+    if (newSz === curSz) return;
+    _chBusy = true;
+    Plotly.relayout(div, {{'yaxis.tickfont.size': newSz}})
+      .then( () => {{ _chBusy = false; }} )
+      .catch( () => {{ _chBusy = false; }} );
+  }});
+}}
 </script>"""
 
     _modal_html = """
@@ -3733,7 +4021,8 @@ _makeSortable('tbl_biomarker');
 
   {multiqc_section}
 
-  <h2>Summary</h2>
+  <!-- ① Summary stat boxes + DE method switcher -->
+  <h2 data-en="Summary">摘要</h2>
   {_msw_html}
   <div>
     <div class="stat-box"><div class="num">{n_sample}</div><div class="lbl">Samples</div></div>
@@ -3743,32 +4032,16 @@ _makeSortable('tbl_biomarker');
     <div class="stat-box"><div class="num" id="stat-n-dn">{n_dn}</div><div class="lbl">Down-regulated</div></div>
   </div>
 
-  {type_html}
+  <!-- ② PCA — sample quality and clustering -->
+  <h2 data-en="PCA">PCA（樣本群聚分析）</h2>
+  {pca_html}
 
-  <div id="biomarker-section">
-  {biomarker_html}
-  </div>
-
-  <div id="isoform-section">
-  {isoform_html}
-  <p style="font-size:11px;color:#999;margin:-4px 0 8px" data-en="&#8505; Isoform switching is based on IUI; not affected by DE method switching.">&#8505; Isoform switching 依據 IUI 計算，不受 DE 方法切換影響。</p>
-  </div>
-
-  {"<h2 data-en='3-Method DE Venn Diagram'>三方法 DE 結果 Venn Diagram</h2><p style='font-size:13px;color:#555' data-en='Compares significant DE circRNAs across three methods (edgeR FSJ offset, DESeq2, limma-voom) at the same threshold.'>比較三種方法（edgeR FSJ offset、DESeq2、limma-voom）在相同閾值下的顯著 DE circRNA 交集。</p>" + venn_html if venn_html else ""}
-
-  <div id="de-tables-section">
-  <h2 id="de-tables-heading">Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
-  <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_position</strong> to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>
-  {_de_split_tables(top_table, tumor_label=tumor_label, normal_label=normal_label, interactions=interactions)}
-  </div>
-
-  <h2>Volcano Plot</h2>
+  <!-- ③ Volcano — overall DE landscape -->
+  <h2 data-en="Volcano Plot">Volcano Plot（全局差異表現）</h2>
   <p style="font-size:12px;color:#888">&#9711; Heatmap top {heatmap_top_n} up + {heatmap_top_n} down markers: use the toggle button in the chart to show/hide.</p>
   {volcano_html}
 
-  <h2>PCA</h2>
-  {pca_html}
-
+  <!-- ④ Heatmap — expression patterns of top DE circRNAs -->
   <h2 id="heatmap-section-title">Heatmap (top {heatmap_top_n} significant up + {heatmap_top_n} significant down DE circRNAs)</h2>
   <div style="display:flex;align-items:center;gap:10px;margin:8px 0 12px;background:#f4f8ff;padding:10px 16px;border-radius:6px;border:1px solid #d0e4f7;flex-wrap:wrap">
     <span style="font-size:13px" data-en="Show top">每方向顯示 top</span>
@@ -3781,6 +4054,46 @@ _makeSortable('tbl_biomarker');
     <span id="heatmap-status" style="font-size:12px;color:#888"></span>
   </div>
   {heatmap_html}
+
+  <!-- ── Clustering Heatmap (hierarchical row clustering, all sig circRNAs) ── -->
+  <details id="clust-heatmap-section" style="margin-top:32px">
+    <summary style="cursor:pointer;font-size:18px;font-weight:600;color:#2c3e50;
+                    padding:8px 0;border-bottom:2px solid #e0e8f0;user-select:none"
+             data-en="Clustering Heatmap (all significant DE circRNAs, hierarchical row clustering)">
+      聚類熱圖（全部顯著 DE circRNA，階層式 row 聚類）
+      <span style="font-size:12px;font-weight:400;color:#888;margin-left:8px" data-en="(click to expand / collapse)"
+            id="clust-hm-collapse-lbl">（點擊展開 / 折疊）</span>
+    </summary>
+    <p style="font-size:12px;color:#888;margin:6px 0 2px"
+       data-en="Shows all significant DE circRNAs (primary method: {de_method}) ordered by hierarchical clustering (Ward linkage). Use Plotly zoom tools or click-drag to inspect regions of interest. Double-click to reset zoom.">
+      顯示全部顯著 DE circRNA（主方法：{de_method}），依階層聚類（Ward linkage）排列。可用 Plotly 工具列或拖曳放大感興趣區域，雙擊還原。
+    </p>
+    <div id="clust-heatmap-plot" style="width:100%"></div>
+  </details>
+
+  <!-- ⑤ Top DE tables — up / down circRNAs -->
+  <div id="de-tables-section">
+  <h2 id="de-tables-heading">Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
+  <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_position</strong> to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>
+  {_de_split_tables(top_table, tumor_label=tumor_label, normal_label=normal_label, interactions=interactions)}
+  </div>
+
+  <!-- ⑥ Type I / II proportion -->
+  {type_html}
+
+  <!-- ⑦ 3-method Venn — method agreement -->
+  {"<h2 data-en='3-Method DE Venn Diagram'>三方法 DE 結果 Venn Diagram</h2><p style='font-size:13px;color:#555' data-en='Compares significant DE circRNAs across three methods (edgeR FSJ offset, DESeq2, limma-voom) at the same threshold.'>比較三種方法（edgeR FSJ offset、DESeq2、limma-voom）在相同閾值下的顯著 DE circRNA 交集。</p>" + venn_html if venn_html else ""}
+
+  <!-- ⑧ Biomarker candidates — final ranked list -->
+  <div id="biomarker-section">
+  {biomarker_html}
+  </div>
+
+  <!-- ⑨ Isoform switching -->
+  <div id="isoform-section">
+  {isoform_html}
+  <p style="font-size:11px;color:#999;margin:-4px 0 8px" data-en="&#8505; Isoform switching is based on IUI; not affected by DE method switching.">&#8505; Isoform switching 依據 IUI 計算，不受 DE 方法切換影響。</p>
+  </div>
 
 {_modal_html}
 {_modal_js}
