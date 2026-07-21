@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-TW" translate="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="google" content="notranslate">
+  <meta http-equiv="Content-Language" content="zh-TW">
+  <title>CircDEX — 跨資料集分析</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    :root {
+      --primary:#2563eb; --success:#16a34a; --warn:#d97706;
+      --border:#e2e8f0; --bg:#f8fafc; --radius:12px;
+      --midnight:#0F2137; --bsj:#00B4C6;
+      --up:#d62728; --dn:#2ca02c; --mixed:#7f7f7f; --nil:#e8edf2;
+    }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+           background:var(--bg); color:#1e293b; }
+
+    /* ── Nav ── */
+    nav { background:var(--midnight); color:#fff; padding:0 24px;
+          display:flex; align-items:center; gap:0; height:56px; }
+    .nav-brand { font-weight:800; font-size:17px; letter-spacing:.5px;
+                 color:#fff; text-decoration:none; margin-right:32px; }
+    .nav-brand span { color:var(--bsj); }
+    .nav-link { color:#94a3b8; font-size:14px; text-decoration:none;
+                padding:18px 14px; display:block; transition:color 0.15s; }
+    .nav-link:hover, .nav-link.active { color:#fff; }
+    .nav-spacer { flex:1; }
+    .lang-btn { font-size:12px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.2);
+                border-radius:6px; padding:4px 12px; cursor:pointer; color:#cbd5e1;
+                font-weight:600; transition:all 0.15s; }
+    .lang-btn:hover { background:rgba(255,255,255,.2); color:#fff; }
+
+    /* ── Layout ── */
+    .container { max-width:1200px; margin:0 auto; padding:32px 20px 80px; }
+    .page-title { font-size:22px; font-weight:800; margin-bottom:6px; }
+    .page-sub   { font-size:14px; color:#64748b; margin-bottom:28px; }
+
+    /* ── Stat cards ── */
+    .stat-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+                gap:16px; margin-bottom:28px; }
+    .stat-card { background:#fff; border:1px solid var(--border); border-radius:var(--radius);
+                 padding:18px 20px; }
+    .stat-val  { font-size:30px; font-weight:800; color:var(--primary); line-height:1.1; }
+    .stat-lbl  { font-size:12px; color:#64748b; margin-top:4px; }
+
+    /* ── Section ── */
+    .section { background:#fff; border:1px solid var(--border); border-radius:var(--radius);
+               padding:22px 24px; margin-bottom:24px; }
+    .section-title { font-size:15px; font-weight:700; margin-bottom:16px;
+                     display:flex; align-items:center; gap:8px; }
+    .badge { display:inline-block; font-size:11px; font-weight:700;
+             padding:2px 8px; border-radius:20px; background:#e0f2fe; color:#0369a1; }
+
+    /* ── Dataset overview table ── */
+    .ds-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .ds-table th { background:#f1f5f9; font-weight:600; padding:8px 12px;
+                   text-align:left; border-bottom:2px solid var(--border); white-space:nowrap; }
+    .ds-table td { padding:8px 12px; border-bottom:1px solid var(--border); }
+    .ds-table tr:hover td { background:#f8fafc; }
+    .organ-chip { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px;
+                  border-radius:20px; background:#f0fdf4; color:#15803d; }
+    .n-sig { font-weight:700; color:var(--primary); }
+    .arr-up   { color:var(--up);   font-weight:700; }
+    .arr-dn   { color:var(--dn);   font-weight:700; }
+    .arr-mix  { color:var(--mixed);font-weight:700; }
+    .dir-dot-up   { display:inline-block; width:8px; height:8px; border-radius:50%;
+                    background:var(--up); }
+    .dir-dot-dn   { display:inline-block; width:8px; height:8px; border-radius:50%;
+                    background:var(--dn); }
+    .dir-dot-mix  { display:inline-block; width:8px; height:8px; border-radius:50%;
+                    background:var(--mixed); }
+    .dir-dot-nil  { display:inline-block; width:8px; height:8px; border-radius:50%;
+                    background:var(--nil); border:1px solid #cbd5e1; }
+
+    /* ── Heatmap filter bar ── */
+    .filter-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+                  margin-bottom:14px; }
+    .filter-bar label { font-size:13px; color:#475569; }
+    .filter-bar select, .filter-bar input[type=number] {
+      font-size:13px; padding:5px 10px; border:1px solid var(--border);
+      border-radius:6px; background:#fff; }
+
+    /* ── Recurrent table ── */
+    .rec-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .rec-table th { background:#f1f5f9; font-weight:600; padding:8px 10px;
+                    text-align:left; border-bottom:2px solid var(--border);
+                    cursor:pointer; user-select:none; white-space:nowrap; }
+    .rec-table th:hover { background:#e2e8f0; }
+    .rec-table td { padding:7px 10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+    .rec-table tr:hover td { background:#f8fafc; }
+    .rank-col { width:36px; color:#94a3b8; font-size:12px; text-align:center; }
+    .circ-id  { font-family:monospace; font-size:12px; color:#334155; }
+    .cb-id    { font-size:11px; color:#0369a1; font-style:italic; }
+    .n-badge  { display:inline-block; padding:2px 9px; border-radius:20px;
+                font-size:12px; font-weight:700; background:#eff6ff; color:#1d4ed8; }
+    .organ-list { font-size:11px; color:#64748b; }
+
+    /* Mini direction cells inside the "datasets" column */
+    .ds-mini-grid { display:flex; gap:3px; flex-wrap:wrap; }
+    .ds-mini { display:inline-flex; align-items:center; gap:3px;
+               font-size:11px; padding:2px 6px; border-radius:4px;
+               white-space:nowrap; }
+    .ds-mini.up   { background:#fee2e2; color:#991b1b; }
+    .ds-mini.dn   { background:#dcfce7; color:#166534; }
+    .ds-mini.mix  { background:#f3f4f6; color:#374151; }
+
+    /* ── Sort indicator ── */
+    th.sort-asc::after  { content:" ▲"; font-size:10px; }
+    th.sort-desc::after { content:" ▼"; font-size:10px; }
+
+    /* ── Export button ── */
+    .btn-sm { font-size:12px; padding:5px 12px; border-radius:6px; border:1px solid var(--border);
+              background:#fff; cursor:pointer; color:#475569; transition:all 0.15s; }
+    .btn-sm:hover { background:#f1f5f9; border-color:#94a3b8; }
+
+    /* ── Empty state ── */
+    .empty { text-align:center; padding:60px 20px; color:#94a3b8; font-size:15px; }
+    .empty-icon { font-size:48px; display:block; margin-bottom:12px; }
+  </style>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav>
+  <a href="/" class="nav-brand">Circ<span>DEX</span></a>
+  <a href="/" class="nav-link" data-en="Settings">設定</a>
+  <a href="/queue" class="nav-link" data-en="Queue">工作佇列</a>
+  <a href="/cross_dataset" class="nav-link active" data-en="Cross-Dataset">跨資料集</a>
+  <div class="nav-spacer"></div>
+  <button class="lang-btn" onclick="switchLang()">EN</button>
+</nav>
+
+<div class="container">
+  <h1 class="page-title" data-en="Cross-Dataset circRNA Analysis">跨資料集 circRNA 分析</h1>
+  <p class="page-sub" data-en="Recurrent differentially expressed circRNAs across all completed datasets (edgeR primary method, nominal p < threshold, |log2FC| > threshold)">
+    整合所有已完成資料集的差異表現 circRNA（edgeR 主方法，nominal p-value 篩選）
+  </p>
+
+  {% if total_datasets == 0 %}
+  <div class="empty">
+    <span class="empty-icon">📂</span>
+    <span data-en="No completed datasets found. Run analyses first.">尚未找到已完成的資料集，請先執行 pipeline 分析。</span>
+  </div>
+  {% else %}
+
+  <!-- ── Stat cards ── -->
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-val">{{ total_datasets }}</div>
+      <div class="stat-lbl" data-en="Datasets analyzed">已分析資料集</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val">{{ total_recurrent }}</div>
+      <div class="stat-lbl" data-en="Recurrent circRNAs (≥2 datasets)">跨 2+ 資料集重現</div>
+    </div>
+    <div class="stat-card">
+      {%- set n3 = namespace(count=0) -%}
+      {%- for r in recurrent %}{% if r.n_datasets >= 3 %}{% set n3.count = n3.count + 1 %}{% endif %}{% endfor %}
+      <div class="stat-val">{{ n3.count }}</div>
+      <div class="stat-lbl" data-en="High-confidence (≥3 datasets)">高可信 (≥3 資料集)</div>
+    </div>
+    <div class="stat-card">
+      {%- set ncons = namespace(count=0) -%}
+      {%- for r in recurrent %}{% if r.direction != 'mixed' %}{% set ncons.count = ncons.count + 1 %}{% endif %}{% endfor %}
+      <div class="stat-val">{{ ncons.count }}</div>
+      <div class="stat-lbl" data-en="Consistent direction">方向一致</div>
+    </div>
+    <div class="stat-card">
+      {%- set nkn = namespace(count=0) -%}
+      {%- for r in recurrent %}{% if r.circbase_id != 'novel' %}{% set nkn.count = nkn.count + 1 %}{% endif %}{% endfor %}
+      <div class="stat-val">{{ nkn.count }}</div>
+      <div class="stat-lbl" data-en="In circBase">已收錄 circBase</div>
+    </div>
+  </div>
+
+  <!-- ── Dataset overview ── -->
+  <div class="section">
+    <div class="section-title">
+      📊 <span data-en="Dataset Overview">資料集概覽</span>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="ds-table">
+      <thead>
+        <tr>
+          <th data-en="Dataset">資料集</th>
+          <th data-en="Cancer Type">癌症類型</th>
+          <th data-en="Organ">器官</th>
+          <th data-en="Pairs">配對數</th>
+          <th data-en="Tested">Tested</th>
+          <th data-en="Sig. DECs">顯著 DEC</th>
+          <th data-en="Up">上調</th>
+          <th data-en="Down">下調</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for gse_id in dataset_order %}
+        {% set res = datasets[gse_id] %}
+        {% set meta = dataset_meta.get(gse_id, {}) %}
+        <tr>
+          <td><strong>{{ gse_id }}</strong></td>
+          <td>
+            <span data-en="{{ meta.get('cancer', gse_id) }}">{{ meta.get('cancer_zh', meta.get('cancer', gse_id)) }}</span>
+          </td>
+          <td><span class="organ-chip">{{ meta.get('organ', '—') }}</span></td>
+          <td style="text-align:center">{{ meta.get('n_pairs', '—') }}</td>
+          <td style="text-align:right; color:#64748b">{{ res.n_tested }}</td>
+          <td style="text-align:right"><span class="n-sig">{{ res.n_sig }}</span></td>
+          <td style="text-align:right" class="arr-up">↑ {{ res.n_up }}</td>
+          <td style="text-align:right" class="arr-dn">↓ {{ res.n_down }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- ── Cross-dataset heatmap ── -->
+  <div class="section">
+    <div class="section-title">
+      🗺 <span data-en="Cross-Dataset Heatmap (log2FC, top 60 recurrent)">跨資料集 Heatmap（log2FC，前 60 個重現 circRNA）</span>
+    </div>
+    <p style="font-size:12px;color:#64748b;margin-bottom:12px" data-en="Red = upregulated, Green = downregulated, White = not significant in that dataset.">
+      紅色 = 上調；綠色 = 下調；白色 = 該資料集未顯著偵測到。
+    </p>
+    <div id="cross-heatmap" style="width:100%;min-height:400px"></div>
+  </div>
+
+  <!-- ── Recurrent targets table ── -->
+  <div class="section">
+    <div class="section-title" style="justify-content:space-between">
+      <span>🎯 <span data-en="Recurrent Target List">重現 circRNA 清單</span></span>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        {% if organ_groups %}
+        <label style="font-size:13px;color:#64748b" data-en="Compare within:">比較範圍：</label>
+        <select id="organ-filter-sel" onchange="filterTable()" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+          <option value="" data-en="All datasets">全部資料集</option>
+          {% for organ, ids in organ_groups.items() %}
+          <option value="{{ organ }}">{{ organ }}（{{ ids|length }} 個資料集）</option>
+          {% endfor %}
+        </select>
+        {% endif %}
+        <label style="font-size:13px;color:#64748b" data-en="Min datasets:">最少資料集數：</label>
+        <select id="min-ds-sel" onchange="filterTable()" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+          <option value="2">≥ 2</option>
+          <option value="3">≥ 3</option>
+          <option value="4">≥ 4</option>
+        </select>
+        <button class="btn-sm" onclick="exportCSV()">⬇ CSV</button>
+      </div>
+    </div>
+    <div id="rec-table-wrap" style="overflow-x:auto">
+    <table class="rec-table" id="rec-table">
+      <thead>
+        <tr>
+          <th class="rank-col">#</th>
+          <th onclick="sortTable('circ_id')"      data-col="circ_id">circRNA ID</th>
+          <th onclick="sortTable('gene_name')"    data-col="gene_name" data-en="Host Gene">宿主基因</th>
+          <th onclick="sortTable('circbase_id')"  data-col="circbase_id">circBase ID</th>
+          <th onclick="sortTable('n_datasets')"   data-col="n_datasets" data-en="# Datasets">資料集數</th>
+          <th onclick="sortTable('avg_abs_lfc')"  data-col="avg_abs_lfc" data-en="Avg |log2FC|">平均 |log2FC|</th>
+          <th data-en="Direction">方向</th>
+          <th data-en="Detected in Datasets">出現於資料集</th>
+        </tr>
+      </thead>
+      <tbody id="rec-tbody">
+      {% for r in recurrent %}
+      <tr data-n="{{ r.n_datasets }}"
+          data-circ="{{ r.circ_id }}"
+          data-gene="{{ r.gene_name }}"
+          data-cb="{{ r.circbase_id }}"
+          data-nds="{{ r.n_datasets }}"
+          data-lfc="{{ r.avg_abs_lfc }}"
+          data-dir="{{ r.direction }}"
+          data-ds="{{ r.appearances.keys()|join(',') }}">
+        <td class="rank-col">{{ loop.index }}</td>
+        <td><span class="circ-id">{{ r.circ_id }}</span></td>
+        <td>{{ r.gene_name }}</td>
+        <td>
+          {% if r.circbase_id != 'novel' %}
+            <span class="cb-id">{{ r.circbase_id }}</span>
+          {% else %}
+            <span style="color:#94a3b8;font-size:11px">novel</span>
+          {% endif %}
+        </td>
+        <td style="text-align:center">
+          <span class="n-badge">{{ r.n_datasets }}</span>
+        </td>
+        <td style="text-align:right">{{ r.avg_abs_lfc }}</td>
+        <td style="text-align:center">
+          {% if r.direction == 'up' %}
+            <span class="arr-up">↑</span>
+          {% elif r.direction == 'down' %}
+            <span class="arr-dn">↓</span>
+          {% else %}
+            <span class="arr-mix">↕</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="ds-mini-grid">
+          {% for gse_id, info in r.appearances.items() %}
+            {% set cls = 'up' if info.lfc > 0 else 'dn' %}
+            <span class="ds-mini {{ cls }}">
+              {{ gse_id }}
+              {% if info.lfc > 0 %}↑{% else %}↓{% endif %}
+              {{ "%.1f"|format(info.lfc|abs) }}
+            </span>
+          {% endfor %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p id="rec-count" style="font-size:12px;color:#94a3b8;margin-top:8px"></p>
+  </div>
+
+  {% endif %}
+</div>
+
+<script>
+// ── Heatmap ──────────────────────────────────────────────────────────────────
+const HEATMAP = {{ heatmap_json | safe }};
+const ORGAN_GROUPS = {{ organ_groups_json | safe }};
+
+function _drawHeatmap(dsNames, circIds, geneNames, cbIds, matrixRows) {
+  if (!window.Plotly) return;
+  const n = circIds.length;
+  const el = document.getElementById('cross-heatmap');
+  if (n === 0) { if (el) el.innerHTML = '<p style="color:#94a3b8;font-size:13px;padding:20px 0">此範圍內沒有跨資料集重現的 circRNA。</p>'; return; }
+
+  const ylbls = circIds.map((id, i) => {
+    const g = geneNames[i];
+    const cb = cbIds[i];
+    if (cb && cb !== 'novel') return cb;
+    if (g && g !== '—') return `${g} (${id.split(':')[0]})`;
+    return id;
+  });
+
+  // Replace null with NaN so Plotly renders them as grey (not-detected)
+  const z = matrixRows.map(row => row.map(v => (v === null || v === undefined) ? NaN : v));
+
+  const fontSz = n > 40 ? 8 : n > 25 ? 9 : 10;
+  const rowH   = n > 40 ? 10 : n > 25 ? 12 : 14;
+  const plotH  = Math.min(800, Math.max(300, n * rowH + 120));
+
+  Plotly.newPlot('cross-heatmap', [{
+    type: 'heatmap',
+    z: z,
+    x: dsNames,
+    y: ylbls,
+    colorscale: [[0, '#2ca02c'], [0.5, 'white'], [1, '#d62728']],
+    zmid: 0,
+    zmin: -8, zmax: 8,
+    colorbar: {title: 'log2FC', thickness: 12, len: 0.5},
+    hoverongaps: false,
+    hovertemplate: '<b>%{y}</b><br>%{x}<br>log2FC: %{z:.2f}<extra></extra>',
+  }], {
+    height: plotH,
+    plot_bgcolor: 'white',
+    paper_bgcolor: 'white',
+    margin: {t: 30, l: Math.min(240, 80 + Math.max(...ylbls.map(s => s.length)) * 5), r: 80, b: 80},
+    xaxis: {tickangle: -35, tickfont: {size: 12}},
+    yaxis: {tickfont: {size: fontSz}, autorange: 'reversed'},
+    dragmode: 'zoom',
+  }, {responsive: true, displayModeBar: true,
+      modeBarButtonsToRemove: ['select2d', 'lasso2d']});
+}
+
+// Rebuild the heatmap scoped to a subset of datasets (organ/cancer-type comparison).
+// Recomputes which pooled circ_ids are recurrent (>=2 non-null) within just those columns.
+function _updateHeatmapForOrgan(organ) {
+  if (!HEATMAP || !HEATMAP.circ_ids.length) return;
+  if (!organ) {
+    _drawHeatmap(HEATMAP.datasets, HEATMAP.circ_ids, HEATMAP.gene_names, HEATMAP.cb_ids, HEATMAP.matrix);
+    return;
+  }
+  const dsIds = ORGAN_GROUPS[organ] || [];
+  const colIdx = dsIds.map(id => HEATMAP.datasets.indexOf(id)).filter(i => i >= 0);
+  const circIds = [], geneNames = [], cbIds = [], rows = [];
+  HEATMAP.matrix.forEach((row, i) => {
+    const sub = colIdx.map(ci => row[ci]);
+    const nHit = sub.filter(v => v !== null && v !== undefined).length;
+    if (nHit >= 2) {
+      circIds.push(HEATMAP.circ_ids[i]);
+      geneNames.push(HEATMAP.gene_names[i]);
+      cbIds.push(HEATMAP.cb_ids[i]);
+      rows.push(sub);
+    }
+  });
+  _drawHeatmap(dsIds, circIds, geneNames, cbIds, rows);
+}
+
+if (HEATMAP && window.Plotly) {
+  _drawHeatmap(HEATMAP.datasets, HEATMAP.circ_ids, HEATMAP.gene_names, HEATMAP.cb_ids, HEATMAP.matrix);
+}
+
+// ── Table filter ─────────────────────────────────────────────────────────────
+// When an organ/cancer-type group is selected, "n datasets" is recomputed as
+// the count of THAT circRNA's appearances restricted to the group's own
+// datasets, so e.g. GSE229705+GSE148036 (both LUAD) can be compared to each
+// other even if a circRNA never reaches the global >=2 threshold elsewhere.
+function filterTable() {
+  const minDsSel = document.getElementById('min-ds-sel');
+  if (!minDsSel) return;
+  const minN = parseInt(minDsSel.value) || 2;
+  const organSel = document.getElementById('organ-filter-sel');
+  const organ = organSel ? organSel.value : '';
+  const scopeIds = organ ? new Set(ORGAN_GROUPS[organ] || []) : null;
+
+  let vis = 0;
+  let rank = 1;
+  document.querySelectorAll('#rec-tbody tr').forEach(tr => {
+    let n;
+    if (scopeIds) {
+      const dsList = (tr.dataset.ds || '').split(',').filter(Boolean);
+      n = dsList.filter(id => scopeIds.has(id)).length;
+    } else {
+      n = parseInt(tr.dataset.n) || 0;
+    }
+    if (n >= minN) {
+      tr.style.display = '';
+      tr.cells[0].textContent = rank++;
+      vis++;
+    } else {
+      tr.style.display = 'none';
+    }
+  });
+  const el = document.getElementById('rec-count');
+  if (el) el.textContent = organ
+    ? `${organ} 範圍內顯示 ${vis} 個 circRNA（共 ${(ORGAN_GROUPS[organ]||[]).length} 個資料集）`
+    : `顯示 ${vis} 個 circRNA`;
+
+  _updateHeatmapForOrgan(organ);
+}
+
+// ── Table sort ───────────────────────────────────────────────────────────────
+let _sortCol = 'n_datasets', _sortAsc = false;
+function sortTable(col) {
+  if (!document.getElementById('rec-tbody')) return;
+  if (_sortCol === col) _sortAsc = !_sortAsc;
+  else { _sortCol = col; _sortAsc = false; }
+
+  document.querySelectorAll('#rec-table th[data-col]').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.col === col)
+      th.classList.add(_sortAsc ? 'sort-asc' : 'sort-desc');
+  });
+
+  const tbody = document.getElementById('rec-tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    let va = a.dataset[col === 'avg_abs_lfc' ? 'lfc' : col === 'n_datasets' ? 'nds' : col] || '';
+    let vb = b.dataset[col === 'avg_abs_lfc' ? 'lfc' : col === 'n_datasets' ? 'nds' : col] || '';
+    const na = parseFloat(va), nb = parseFloat(vb);
+    let cmp = isNaN(na) ? va.localeCompare(vb) : na - nb;
+    return _sortAsc ? cmp : -cmp;
+  });
+  rows.forEach((r, i) => { tbody.appendChild(r); r.cells[0].textContent = i + 1; });
+}
+
+// ── CSV export ───────────────────────────────────────────────────────────────
+function exportCSV() {
+  const minN = parseInt(document.getElementById('min-ds-sel').value) || 2;
+  const header = ['circ_id','gene_name','circbase_id','n_datasets','avg_abs_lfc','direction'];
+  const rows = [header.join(',')];
+  document.querySelectorAll('#rec-tbody tr').forEach(tr => {
+    if (parseInt(tr.dataset.n) < minN) return;
+    rows.push([
+      tr.dataset.circ, tr.dataset.gene, tr.dataset.cb,
+      tr.dataset.nds, tr.dataset.lfc, tr.dataset.dir
+    ].map(v => `"${(v||'').replace(/"/g,'""')}"`).join(','));
+  });
+  const blob = new Blob([rows.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'cross_dataset_recurrent.csv'; a.click();
+}
+
+// ── Lang switcher ─────────────────────────────────────────────────────────────
+let _LANG = localStorage.getItem('circrna_lang') || 'zh';
+function switchLang() {
+  _LANG = _LANG === 'zh' ? 'en' : 'zh';
+  localStorage.setItem('circrna_lang', _LANG);
+  applyLang();
+}
+function applyLang() {
+  const btn = document.querySelector('.lang-btn');
+  if (btn) btn.textContent = _LANG === 'zh' ? 'EN' : '中文';
+  document.querySelectorAll('[data-en]').forEach(el => {
+    if (!el.dataset.zh) el.dataset.zh = el.textContent.trim();
+    el.textContent = _LANG === 'en' ? el.dataset.en : el.dataset.zh;
+  });
+}
+applyLang();
+
+// Initial filter count
+filterTable();
+// Default sort by n_datasets desc
+sortTable('n_datasets');
+</script>
+</body>
+</html>

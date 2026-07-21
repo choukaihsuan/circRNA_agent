@@ -1687,6 +1687,240 @@ def serve_qc(job_id: str):
                      as_attachment=False, download_name=f"{gse_id}_multiqc_report.html")
 
 
+# ── Cross-dataset analysis ────────────────────────────────────────────────────
+
+# Known metadata for each dataset (cancer type, comparison, etc.)
+_DATASET_META = {
+    "GSE113230":  {"cancer": "Triple-Negative Breast Cancer",  "cancer_zh": "三陰性乳癌",    "organ": "Breast",    "n_pairs": 3},
+    "GSE58135":   {"cancer": "Breast Cancer",                   "cancer_zh": "乳癌",          "organ": "Breast",    "n_pairs": 5},
+    "GSE323364":  {"cancer": "TNBC Cell Line (EZH2i)",          "cancer_zh": "TNBC 細胞株",   "organ": "Cell Line", "n_pairs": 3},
+    "GSE133998":  {"cancer": "Breast Cancer",                   "cancer_zh": "乳癌",          "organ": "Breast",    "n_pairs": 6},
+    "SRP156355":  {"cancer": "Early-stage IDC Breast Cancer",   "cancer_zh": "早期乳癌 IDC",  "organ": "Breast",    "n_pairs": 6},
+    "GSE77509":   {"cancer": "Hepatocellular Carcinoma",        "cancer_zh": "肝癌 HCC",      "organ": "Liver",     "n_pairs": 6},
+    "GSE130078":  {"cancer": "Esophageal Squamous Carcinoma",   "cancer_zh": "食道鱗狀癌 ESCC","organ": "Esophagus","n_pairs": 6},
+    "GSE248612":  {"cancer": "Gastric Cancer",                  "cancer_zh": "胃癌",          "organ": "Stomach",   "n_pairs": 6},
+    "GSE221107":  {"cancer": "Prostate Cancer",                 "cancer_zh": "攝護腺癌",      "organ": "Prostate",  "n_pairs": 4},
+    "PRJNA553289":{"cancer": "Small Cell Lung Cancer",          "cancer_zh": "小細胞肺癌 SCLC","organ": "Lung",     "n_pairs": 6},
+    "GSE229705":  {"cancer": "Lung Adenocarcinoma",             "cancer_zh": "肺腺癌 LUAD",   "organ": "Lung",      "n_pairs": 6},
+    "GSE148036":  {"cancer": "Lung Adenocarcinoma",             "cancer_zh": "肺腺癌 LUAD",   "organ": "Lung",      "n_pairs": 5},
+    "GSE121842":  {"cancer": "Colorectal Cancer",               "cancer_zh": "大腸直腸癌 CRC","organ": "Colon",     "n_pairs": 3},
+}
+
+
+def _load_cross_dataset_data() -> dict:
+    """Read all completed project configs and their DE/annotation results."""
+    import pandas as pd
+
+    projects_dir = BASE_DIR / "config" / "projects"
+    results = {}
+
+    for yaml_file in sorted(projects_dir.glob("*.yaml")):
+        gse_id = yaml_file.stem
+        try:
+            with open(yaml_file) as f:
+                cfg = yaml.safe_load(f) or {}
+        except Exception:
+            continue
+
+        results_dir = cfg.get("results_dir", "")
+        if not results_dir:
+            continue
+
+        de_file = Path(results_dir) / "de" / "de_results.tsv"
+        if not de_file.exists():
+            continue
+
+        try:
+            import pandas as pd
+            df = pd.read_csv(de_file, sep="\t", low_memory=False)
+            if "circ_id" not in df.columns:
+                continue
+
+            de_cfg  = cfg.get("de", {})
+            fdr     = float(de_cfg.get("fdr_cutoff", 0.05))
+            lfc_thr = float(de_cfg.get("log2fc_cutoff", 1.0))
+            sig_by  = de_cfg.get("de_sig_by", "pvalue")
+            # de_results.tsv uses lowercase columns: pvalue / padj
+            # Older runs may use PValue / FDR_bsj — try both casings
+            p_col_candidates = (
+                ["pvalue", "PValue"]   if sig_by == "pvalue"
+                else ["padj", "FDR_bsj", "PValue"]
+            )
+            p_col = next((c for c in p_col_candidates if c in df.columns), None)
+            if not p_col or "log2FC" not in df.columns:
+                continue
+
+            df["circ_id"] = df["circ_id"].astype(str)
+            sig_mask = (df[p_col] < fdr) & (df["log2FC"].abs() > lfc_thr)
+            sig = df[sig_mask].copy()
+
+            # Gene names from isoform_groups.tsv
+            gene_map: dict = {}
+            iso_file = Path(results_dir) / "circRNA" / "isoform_groups.tsv"
+            if iso_file.exists():
+                try:
+                    iso = pd.read_csv(iso_file, sep="\t", low_memory=False)
+                    if "circ_id" in iso.columns and "gene_name" in iso.columns:
+                        gene_map = dict(zip(iso["circ_id"].astype(str),
+                                            iso["gene_name"].astype(str)))
+                except Exception:
+                    pass
+
+            # CircBase IDs from circbase_annotated.tsv
+            cb_map: dict = {}
+            cb_file = Path(results_dir) / "circRNA" / "circbase_annotated.tsv"
+            if cb_file.exists():
+                try:
+                    cb = pd.read_csv(cb_file, sep="\t", low_memory=False)
+                    if "circ_id" in cb.columns and "circbase_id" in cb.columns:
+                        known = cb[cb.get("in_circbase", pd.Series(dtype=int)) == 1] if "in_circbase" in cb.columns else cb[cb["circbase_id"] != "novel"]
+                        cb_map = dict(zip(known["circ_id"].astype(str),
+                                          known["circbase_id"].astype(str)))
+                except Exception:
+                    pass
+
+            results[gse_id] = {
+                "n_tested":    int(len(df)),
+                "n_sig":       int(len(sig)),
+                "n_up":        int((sig["log2FC"] > 0).sum()),
+                "n_down":      int((sig["log2FC"] < 0).sum()),
+                "sig_ids":     set(sig["circ_id"].tolist()),
+                "lfc_map":     dict(zip(sig["circ_id"].tolist(),
+                                        sig["log2FC"].round(3).tolist())),
+                "pval_map":    dict(zip(sig["circ_id"].tolist(),
+                                        sig[p_col].tolist())),
+                "type_map":    dict(zip(df["circ_id"].tolist(),
+                                        df.get("Type", df.get("type_", "")).tolist()))
+                                if "Type" in df.columns else {},
+                "gene_map":    gene_map,
+                "cb_map":      cb_map,
+                "study_title": cfg.get("study_title", ""),
+                "tumor_label": de_cfg.get("tumor_label", "tumor"),
+                "normal_label": de_cfg.get("normal_label", "normal"),
+            }
+        except Exception as exc:
+            print(f"[cross_dataset] Error loading {gse_id}: {exc}", file=_sys.stderr)
+
+    return results
+
+
+@app.route("/cross_dataset")
+def cross_dataset():
+    dataset_results = _load_cross_dataset_data()
+
+    if not dataset_results:
+        return render_template("cross_dataset.html",
+                               datasets={}, dataset_order=[],
+                               recurrent=[], heatmap_json="null",
+                               organ_groups={}, organ_groups_json="{}",
+                               dataset_meta=_DATASET_META,
+                               total_datasets=0, total_recurrent=0)
+
+    # Canonical dataset order: tissue first, then by n_sig descending
+    def _sort_key(gse_id: str) -> tuple:
+        meta = _DATASET_META.get(gse_id, {})
+        is_cell_line = 1 if "cell" in meta.get("organ", "").lower() else 0
+        return (is_cell_line, -dataset_results[gse_id].get("n_sig", 0))
+
+    dataset_order = sorted(dataset_results.keys(), key=_sort_key)
+
+    # Count how many datasets each circRNA appears in
+    from collections import Counter
+    id_counter: Counter = Counter()
+    for res in dataset_results.values():
+        for cid in res["sig_ids"]:
+            id_counter[cid] += 1
+
+    # Build recurrent list (≥2 datasets)
+    recurrent = []
+    for cid, n_ds in id_counter.most_common():
+        if n_ds < 2:
+            break
+
+        appearances: dict = {}
+        for gse_id in dataset_order:
+            res = dataset_results.get(gse_id, {})
+            if cid in res.get("sig_ids", set()):
+                appearances[gse_id] = {
+                    "lfc":  res["lfc_map"].get(cid, 0.0),
+                    "pval": res["pval_map"].get(cid, 1.0),
+                }
+
+        # Prefer gene_name / cb_id from datasets where available
+        gene_name = next((dataset_results[g]["gene_map"].get(cid, "")
+                          for g in dataset_order if cid in dataset_results.get(g, {}).get("gene_map", {})),
+                         "")
+        cb_id = next((dataset_results[g]["cb_map"].get(cid, "")
+                      for g in dataset_order if cid in dataset_results.get(g, {}).get("cb_map", {})),
+                     "")
+
+        lfcs = [v["lfc"] for v in appearances.values()]
+        all_up = all(l > 0 for l in lfcs)
+        all_dn = all(l < 0 for l in lfcs)
+        direction = "up" if all_up else ("down" if all_dn else "mixed")
+
+        # Cancer type labels for the datasets where this circRNA is significant
+        organs = sorted({_DATASET_META.get(g, {}).get("organ", g)
+                         for g in appearances})
+
+        recurrent.append({
+            "circ_id":     cid,
+            "gene_name":   gene_name or "—",
+            "circbase_id": cb_id or "novel",
+            "n_datasets":  n_ds,
+            "appearances": appearances,
+            "direction":   direction,
+            "avg_abs_lfc": round(sum(abs(l) for l in lfcs) / len(lfcs), 2),
+            "organs":      organs,
+        })
+
+    # Sort: n_datasets desc → avg_abs_lfc desc
+    recurrent.sort(key=lambda x: (-x["n_datasets"], -x["avg_abs_lfc"]))
+
+    # Build heatmap JSON: top 60 recurrent circRNAs × all datasets
+    import json as _json
+    top_n = 60
+    top_r = recurrent[:top_n]
+    heatmap_payload = {
+        "circ_ids":  [r["circ_id"]    for r in top_r],
+        "gene_names":[r["gene_name"]  for r in top_r],
+        "cb_ids":    [r["circbase_id"] for r in top_r],
+        "datasets":  dataset_order,
+        "matrix":    [
+            [r["appearances"].get(gse_id, {}).get("lfc", None)
+             for gse_id in dataset_order]
+            for r in top_r
+        ],
+    }
+    heatmap_json = _json.dumps(heatmap_payload, ensure_ascii=False)
+
+    # Group datasets that share the same organ/cancer type, so datasets of the
+    # same cancer (e.g. GSE229705 + GSE148036, both LUAD) can be compared
+    # against each other rather than only against the full heterogeneous set.
+    # A distinct "Cell Line" organ value naturally keeps cell-line datasets
+    # (e.g. GSE323364) out of tissue-level comparisons.
+    from collections import defaultdict as _defaultdict
+    _organ_map: dict = _defaultdict(list)
+    for gse_id in dataset_order:
+        organ = _DATASET_META.get(gse_id, {}).get("organ", "Other")
+        _organ_map[organ].append(gse_id)
+    organ_groups = {organ: ids for organ, ids in _organ_map.items() if len(ids) >= 2}
+    organ_groups_json = _json.dumps(organ_groups, ensure_ascii=False)
+
+    return render_template(
+        "cross_dataset.html",
+        datasets=dataset_results,
+        dataset_order=dataset_order,
+        dataset_meta=_DATASET_META,
+        recurrent=recurrent,
+        heatmap_json=heatmap_json,
+        organ_groups=organ_groups,
+        organ_groups_json=organ_groups_json,
+        total_datasets=len(dataset_results),
+        total_recurrent=len(recurrent),
+    )
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
