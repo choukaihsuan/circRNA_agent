@@ -371,6 +371,13 @@ def main() -> None:
                      step_times.get("star_mate1", 34.6) +
                      step_times.get("star_mate2", 47.2))
     _c4_dcc_only  = step_times.get("dcc", 17.9)
+    # CirComPara2 (Gaffo et al. 2022) conventionally pairs its detection output
+    # with DESeq2 for differential expression. Rather than re-benchmark DESeq2
+    # on a separate count matrix, reuse nf-core_row's DESeq2 timing directly:
+    # both rows' DE step runs the identical algorithm on the identical
+    # GSE113230 count matrix (see de_deseq2_baseline rule), so the wall time
+    # is the same measurement, not an independent one.
+    _c4_total_with_de = _c4_total + (nfcore_de_wall if nfcore_de_wall is not None else 0)
     circompara2_4tools_row = {
         "Pipeline":          "CirComPara2_4tools",
         "Tool_combination":  "CIRIquant + STAR×3+DCC + CIRCexplorer2 + find_circ (≥2/4 consensus, slop=10)",
@@ -379,15 +386,24 @@ def main() -> None:
         "DCC_min":           round(_c4_dcc_only, 1),
         "CIRCexplorer2_min": round(_c4_ce2, 1),
         "find_circ_min":     round(_c4_find_circ, 1),
+        "DE_min":               round(nfcore_de_wall, 1) if nfcore_de_wall is not None else None,
         "Alignment_wall_min":   round(_c4_total, 1),
         "Consensus_wall_min":   0.0,
-        "Total_wall_min":       round(_c4_total, 1),
+        "Total_wall_min":       round(_c4_total_with_de, 1),
         "Peak_RAM_GB":          _c4_ram,
         "Parallel_Peak_RAM_GB": _c4_parallel_ram,
         "CPU_cores":            _c4_cores,
-        "CPU_hours":            round(_c4_total / 60 * _c4_cores, 1),
+        "CPU_hours":            round(_c4_total_with_de / 60 * _c4_cores, 1),
         "Source": "This study (measured with /usr/bin/time -v, SRR444655)",
-        "Note": "slop=10 bp, no BSJ/FSJ pseudo-circ QC",
+        "Note": (
+            "slop=10 bp, no BSJ/FSJ pseudo-circ QC"
+            + ("; DE analysis reuses the nf-core/circrna row's DESeq2 timing "
+               "(same algorithm on the same GSE113230 count matrix) since "
+               "CirComPara2 conventionally pairs its detection output with "
+               "DESeq2 (Gaffo et al. 2022 Brief Bioinform 23(1):bbab418), "
+               "not an independently benchmarked run"
+               if nfcore_de_wall is not None else "")
+        ),
     }
 
     circompara2_row = {
