@@ -459,7 +459,11 @@ function sortTable(col) {
     let cmp = isNaN(na) ? va.localeCompare(vb) : na - nb;
     return _sortAsc ? cmp : -cmp;
   });
-  rows.forEach((r, i) => { tbody.appendChild(r); r.cells[0].textContent = i + 1; });
+  let rank = 1;
+  rows.forEach(r => {
+    tbody.appendChild(r);
+    if (r.style.display !== 'none') r.cells[0].textContent = rank++;
+  });
 }
 
 // ── CSV export ───────────────────────────────────────────────────────────────
