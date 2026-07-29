@@ -2347,13 +2347,13 @@ function showCircDetail(circId) {{
     _drawCircleRNA(circId, circEl);
     const _mirnaEl = document.getElementById('cm-mirna');
     _mirnaEl.innerHTML = _buildInteractionTable(
-      d.mirna||[], ['_priority','miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source','in_circ'],
-      ['Priority','miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'mirna');
+      d.mirna||[], ['_priority','miRNAName','siteType','circ_pos','_seq_logo','clipExpNum','cellType','source'],
+      ['Priority','miRNA','Site Type','Chr Position','Binding Seq','CLIP Exp.','Cell Type','Source'], circId, 'mirna');
     _applyLangToContainer(_mirnaEl);
     const _rbpEl = document.getElementById('cm-rbp');
     _rbpEl.innerHTML = _buildInteractionTable(
-      d.rbp||[], ['_priority','RBPName','bindingSites','_mapped','circ_pos','_seq_logo','location','clipExpNum','cellType','source','in_circ'],
-      ['Priority','RBP','Sites','Mapped','Site Positions (hg19)','Binding Seq','Location','CLIP Exp.','Cell Type','Source','In circRNA'], circId, 'rbp');
+      d.rbp||[], ['_priority','RBPName','bindingSites','_mapped','circ_pos','_seq_logo','location','clipExpNum','cellType','source'],
+      ['Priority','RBP','Sites','Mapped','Site Positions (hg19)','Binding Seq','Location','CLIP Exp.','Cell Type','Source'], circId, 'rbp');
     _applyLangToContainer(_rbpEl);
     _fetchSeqsInTable('cm-mirna');
     _fetchSeqsInTable('cm-rbp');
@@ -2940,6 +2940,11 @@ function _sortITable(th) {{
 function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
   if(!rows||!rows.length) return '<p class="no-data">No data available (novel circRNA or source returned no results).</p>';
 
+  // Drop entries that failed to liftover onto this circRNA (in_circ === false)
+  // rather than showing an unusable/unverifiable row.
+  rows=rows.filter(r=>{{const ic=r.in_circ; return ic===undefined||ic===true||ic==='true';}});
+  if(!rows.length) return '<p class="no-data">No data available (no binding sites could be mapped onto this circRNA).</p>';
+
   // compute priority and pre-sort descending
   rows=rows.map(r=>Object.assign({{}},r,{{_priority:_calcPriority(r,tableType||'mirna')}}));
   rows.sort((a,b)=>b._priority-a._priority);
@@ -3120,13 +3125,6 @@ function _buildInteractionTable(rows, keys, headers, circId, tableType) {{
         }} else {{ v='—'; }}
       }}
       if(k==='source') v=_srcBadge(String(r[k]||''));
-      if(k==='in_circ'){{
-        const ic=r[k];
-        if(ic===undefined||ic===true||ic==='true')
-          v='<span style="color:#2ca02c;font-weight:bold">✓</span>';
-        else
-          v='<span style="color:#aaa">✗</span>';
-      }}
       html+='<td>'+v+'</td>';
     }});
     html+='</tr>';
