@@ -2282,11 +2282,8 @@ def build_report(
     # Interactive Plotly charts; fall back to static PDF embeds when unavailable
     p_volcano = _plotly_volcano(de, fdr, lfc, de_method, p_col=p_col, sig_thr=sig_thr,
                                 p_label=_sig_label_str, heatmap_ids=heatmap_ids)
-    p_heatmap = _plotly_heatmap(de, matrix, top_n=heatmap_top_n, p_col=p_col,
-                                groups_file=groups_file, normal_label=normal_label)
     p_pca     = _plotly_pca(matrix, groups_file)
     volcano_html = p_volcano if p_volcano else _embed_pdf(volcano_pdf)
-    heatmap_html = p_heatmap if p_heatmap else _embed_pdf(heatmap_pdf)
     pca_html     = p_pca     if p_pca     else _embed_pdf(pca_pdf)
 
     n_ixn = len(interactions)
@@ -2806,21 +2803,29 @@ function _buildMiniHeatmap(circId) {{
   const el=document.getElementById('cm-heatmap');
   if(!el)return;
   if(typeof Plotly==='undefined'){{el.innerHTML='<p class="no-data">Plotly not available.</p>';return;}}
-  const _hmd=_HEATMAP_DATA_CACHE||FULL_HEATMAP_DATA;
-  if(!_hmd||!_hmd.rows||Object.keys(_hmd.rows).length===0){{
-    el.innerHTML='<p class="no-data">Heatmap data not available.</p>';return;
+  const cd=CLUST_HEATMAP_DATA;
+  if(!cd||!cd.order||!cd.order.length){{
+    el.innerHTML='<p class="no-data">Clustering heatmap data not available.</p>';return;
   }}
-  const _inTop=_hmd.rows[circId]!=null;
-  // Limit mini-heatmap to top 10 up + 10 down; always include current circId
-  const _upIds=(_hmd.up_order||[]).slice(0,10);
-  const _dnIds=(_hmd.dn_order||[]).slice(0,10);
-  let allIds=[..._upIds,..._dnIds].filter(id=>_hmd.rows[id]);
-  if(_hmd.rows[circId]&&!allIds.includes(circId))allIds.push(circId);
-  const tIdx=allIds.indexOf(circId);
-  const samps=_hmd.samples||[];
-  const zMatrix=allIds.map(id=>_hmd.rows[id].z);
-  const yLabels=allIds.map(id=>_hmd.rows[id].label||id);
-  const conds=_hmd.conditions||{{}};
+  const order=cd.order, rows=cd.rows||{{}}, samps=cd.samples||[];
+  const idx=order.indexOf(circId);
+  if(idx<0){{
+    el.innerHTML=`<p class="no-data">${{circId}} is not in the primary method's significant set (not clustered).</p>`;
+    return;
+  }}
+  // Zoom to a window of ~20 neighboring rows in cluster order (Ward-linkage
+  // neighbors = similar expression pattern), target centered, clamped/shifted
+  // at array bounds so the window always has up to N rows.
+  const N=20, HALF=Math.floor(N/2);
+  let lo=idx-HALF, hi=idx+(N-HALF);
+  if(lo<0){{hi+=(-lo);lo=0;}}
+  if(hi>order.length){{lo-=(hi-order.length);hi=order.length;}}
+  lo=Math.max(0,lo);
+  const winIds=order.slice(lo,hi);
+  const tIdx=winIds.indexOf(circId);
+  const zMatrix=winIds.map(id=>rows[id].z);
+  const yLabels=winIds.map(id=>rows[id].label||id);
+  const conds=cd.conditions||{{}};
   const TUMOR_COL='#d62728', NORMAL_COL='#2CA02C';
   // merge consecutive samples of same condition into one labelled bar
   const grps=[];let cur=null;
@@ -2845,7 +2850,7 @@ function _buildMiniHeatmap(circId) {{
     type:'rect',x0:-0.5,x1:samps.length-0.5,y0:tIdx-0.5,y1:tIdx+0.5,
     line:{{color:'#ff8c00',width:2.5}},fillcolor:'rgba(255,140,0,0.07)'
   }}]:[];
-  const titleText=_inTop?`${{circId}} ← highlighted`:`Top DE Heatmap (${{circId}} not in top set)`;
+  const titleText=`${{circId}} ← clustering neighborhood (${{winIds.length}} of ${{order.length}})`;
   Plotly.newPlot(el,[{{
     type:'heatmap',z:zMatrix,x:samps,y:yLabels,
     colorscale:[[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']],
@@ -2853,7 +2858,7 @@ function _buildMiniHeatmap(circId) {{
     colorbar:{{title:'z-score',titlefont:{{size:10}}}},
     hovertemplate:'<b>%{{y}}</b><br>%{{x}}<br>z: %{{z:.2f}}<extra></extra>',
   }}],{{
-    height:Math.max(300,allIds.length*20+120),
+    height:Math.max(300,winIds.length*20+120),
     margin:{{t:65,b:60,l:180,r:80}},
     title:{{text:titleText,font:{{size:11}}}},
     xaxis:{{tickangle:-35,tickfont:{{size:9}}}},
@@ -3341,10 +3346,14 @@ function _toggleAll(type, show, container) {{
 
 // ── Main heatmap dynamic update ───────────────────────────────────────────────
 function updateMainHeatmap() {{
+  // Top-N heatmap section was removed from the report; this is now only
+  // called (harmlessly) from switchDEMethod(). No-op if its DOM is gone.
+  const nInput=document.getElementById('heatmap-n-input');
+  if(!nInput)return;
   const _hmData=_HEATMAP_DATA_CACHE||FULL_HEATMAP_DATA;
   if(!_hmData||typeof Plotly==='undefined')return;
-  const n=Math.max(1,Math.min(50,parseInt(document.getElementById('heatmap-n-input').value)||10));
-  document.getElementById('heatmap-n-input').value=n;
+  const n=Math.max(1,Math.min(50,parseInt(nInput.value)||10));
+  nInput.value=n;
   const upIds=(_hmData.up_order||[]).slice(0,n);
   const dnIds=(_hmData.dn_order||[]).slice(0,n);
   const allIds=[...upIds,...dnIds];
@@ -4041,20 +4050,6 @@ function _drawClustHeatmap() {{
   <p style="font-size:12px;color:#888">&#9711; Heatmap top {heatmap_top_n} up + {heatmap_top_n} down markers: use the toggle button in the chart to show/hide.</p>
   {volcano_html}
 
-  <!-- ④ Heatmap — expression patterns of top DE circRNAs -->
-  <h2 id="heatmap-section-title">Heatmap (top {heatmap_top_n} significant up + {heatmap_top_n} significant down DE circRNAs)</h2>
-  <div style="display:flex;align-items:center;gap:10px;margin:8px 0 12px;background:#f4f8ff;padding:10px 16px;border-radius:6px;border:1px solid #d0e4f7;flex-wrap:wrap">
-    <span style="font-size:13px" data-en="Show top">每方向顯示 top</span>
-    <input type="number" id="heatmap-n-input" value="{heatmap_top_n}" min="1" max="50"
-           style="width:60px;padding:3px 6px;border:1px solid #bbb;border-radius:4px;font-size:13px"
-           onkeydown="if(event.key==='Enter')updateMainHeatmap()">
-    <span style="font-size:13px">up + down</span>
-    <button onclick="updateMainHeatmap()"
-            style="background:#2c6fad;color:white;border:none;border-radius:4px;padding:5px 16px;cursor:pointer;font-size:13px" data-en="Update Heatmap">更新 Heatmap</button>
-    <span id="heatmap-status" style="font-size:12px;color:#888"></span>
-  </div>
-  {heatmap_html}
-
   <!-- ── Clustering Heatmap (hierarchical row clustering, all sig circRNAs) ── -->
   <details id="clust-heatmap-section" style="margin-top:32px">
     <summary style="cursor:pointer;font-size:18px;font-weight:600;color:#2c3e50;
@@ -4071,25 +4066,25 @@ function _drawClustHeatmap() {{
     <div id="clust-heatmap-plot" style="width:100%"></div>
   </details>
 
-  <!-- ⑤ Top DE tables — up / down circRNAs -->
+  <!-- ④ Top DE tables — up / down circRNAs -->
   <div id="de-tables-section">
   <h2 id="de-tables-heading">Top Differentially Expressed circRNAs ({sig_label}, |log2FC| &gt; {lfc})</h2>
   <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_position</strong> to view exon diagram, miRNA sponge sites, and RBP binding sites.</p>
   {_de_split_tables(top_table, tumor_label=tumor_label, normal_label=normal_label, interactions=interactions)}
   </div>
 
-  <!-- ⑥ Type I / II proportion -->
+  <!-- ⑤ Type I / II proportion -->
   {type_html}
 
-  <!-- ⑦ 3-method Venn — method agreement -->
+  <!-- ⑥ 3-method Venn — method agreement -->
   {"<h2 data-en='3-Method DE Venn Diagram'>三方法 DE 結果 Venn Diagram</h2><p style='font-size:13px;color:#555' data-en='Compares significant DE circRNAs across three methods (edgeR FSJ offset, DESeq2, limma-voom) at the same threshold.'>比較三種方法（edgeR FSJ offset、DESeq2、limma-voom）在相同閾值下的顯著 DE circRNA 交集。</p>" + venn_html if venn_html else ""}
 
-  <!-- ⑧ Biomarker candidates — final ranked list -->
+  <!-- ⑦ Biomarker candidates — final ranked list -->
   <div id="biomarker-section">
   {biomarker_html}
   </div>
 
-  <!-- ⑨ Isoform switching -->
+  <!-- ⑧ Isoform switching -->
   <div id="isoform-section">
   {isoform_html}
   <p style="font-size:11px;color:#999;margin:-4px 0 8px" data-en="&#8505; Isoform switching is based on IUI; not affected by DE method switching.">&#8505; Isoform switching 依據 IUI 計算，不受 DE 方法切換影響。</p>
