@@ -57,10 +57,10 @@ def _dl_wrap(table_html: str, table_id: str, csv_filename: str) -> str:
     return btn + html
 
 
-def _df_to_html(df: pd.DataFrame, max_rows: int = 50) -> str:
+def _df_to_html(df: pd.DataFrame, max_rows: int = 50, escape: bool = True) -> str:
     return (
         _fmt_floats(df.head(max_rows))
-          .to_html(index=False, classes="table", border=0, na_rep="—")
+          .to_html(index=False, classes="table", border=0, na_rep="—", escape=escape)
     )
 
 
@@ -1132,8 +1132,11 @@ def _isoform_section(switching_file: Optional[str],
                   iui_control_col, iui_case_col, "delta_iui", "p_value"]
                  if c in sig.columns]
     sort_keys = [c for c in ["gene_name", "p_value"] if c in sig.columns]
+    disp = sig.sort_values(sort_keys)[show_cols].copy()
+    if "circbase_id" in disp.columns:
+        disp["circbase_id"] = disp["circbase_id"].apply(_cb_link)
     table_html = (
-        _dl_wrap(_df_to_html(sig.sort_values(sort_keys)[show_cols], max_rows=40),
+        _dl_wrap(_df_to_html(disp, max_rows=40, escape=False),
                  "tbl_isoform", "isoform_switching.csv")
         if show_cols and sort_keys else ""
     )
