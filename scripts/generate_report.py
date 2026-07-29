@@ -285,7 +285,7 @@ function showVennRegion(region) {{
   d.circs.forEach((c, i) => {{
     const tr = document.createElement('tr');
     const cb = (c.cb && c.cb !== 'novel') ?
-      `<span style="color:#e07b39;font-weight:bold">${{c.cb}}</span>` : 'novel';
+      `<span style="color:#e07b39;font-weight:bold">${{_cbLink(c.cb)}}</span>` : 'novel';
     tr.innerHTML = `<td>${{i+1}}</td>
       <td><a class="circ-link" onclick="showCircDetail('${{c.id}}')" title="View detail">${{c.id}}</a></td>
       <td>${{c.gene||'—'}}</td>
@@ -447,6 +447,20 @@ def _load_interactions(json_file: Optional[str]) -> dict:
         return {}
 
 
+_CIRCBASE_URL = "https://www.circbase.org/cgi-bin/singlerecord.cgi?id="
+
+
+def _cb_link(cb_id) -> str:
+    """Render a circbase_id value as a link to its circBase record page, or
+    a plain '—'/'novel' fallback for missing/non-circBase entries."""
+    v = str(cb_id or "").strip()
+    if not v or v.lower() in ("nan", "novel", "none", "—"):
+        return v if v else "—"
+    from urllib.parse import quote as _urlquote
+    return (f'<a href="{_CIRCBASE_URL}{_urlquote(v)}" target="_blank" '
+            f'rel="noopener" class="cb-link">{v}</a>')
+
+
 def _de_table_clickable(df: pd.DataFrame, interactions: dict) -> str:
     """Render DE table with circ_position column as clickable links."""
     if df.empty:
@@ -460,6 +474,8 @@ def _de_table_clickable(df: pd.DataFrame, interactions: dict) -> str:
             return (f'<a class="circ-link" onclick="showCircDetail(\'{v}\')" '
                     f'title="{tip}">{v}</a>')
         disp[id_col] = disp[id_col].astype(str).apply(_link)
+    if "circbase_id" in disp.columns:
+        disp["circbase_id"] = disp["circbase_id"].apply(_cb_link)
     disp = _fmt_floats(disp)
     return disp.head(50).to_html(index=False, classes="table", border=0,
                                   na_rep="—", escape=False)
@@ -758,6 +774,13 @@ function _refreshBMHistLang() {
   if (saved === 'en') switchReportLang('en');
 })();
 
+function _cbLink(cb) {
+  // Render a circbase_id value as a link to its circBase record page.
+  var v = (cb == null ? '' : String(cb)).trim();
+  if (!v || v.toLowerCase() === 'nan' || v.toLowerCase() === 'novel' || v === '—') return v || '—';
+  return '<a href="https://www.circbase.org/cgi-bin/singlerecord.cgi?id=' + encodeURIComponent(v) +
+         '" target="_blank" rel="noopener" class="cb-link">' + v + '</a>';
+}
 function _parseGenCoord(s) {
   // Parse chrN:start|end → {c: chrNum, p: startPos} for genomic sort
   var m = s.match(/^chr([0-9]+|[XYMxym])[:|\s](\d+)/i);
@@ -1472,6 +1495,8 @@ def _biomarker_section(biomarker_file: Optional[str],
             return (f'<a class="circ-link" onclick="showCircDetail(\'{v}\')" '
                     f'title="{tip}">{v}</a>')
         disp["circ_id"] = disp["circ_id"].astype(str).apply(_link)
+    if "circbase_id" in disp.columns:
+        disp["circbase_id"] = disp["circbase_id"].apply(_cb_link)
 
     raw_html = disp.to_html(index=False, classes="table", border=0, na_rep="—", escape=False)
     # Inject data-nsig into body <tr> tags.
@@ -3416,8 +3441,8 @@ function switchDEMethod(method) {{
         marker:{{color:'#2CA02C',size:6,opacity:0.8}}}},
     ],{{
       title:{{text:'Volcano Plot ['+(mLabels[method]||method)+']',font:{{size:14}}}},
-      xaxis_title:'log₂ Fold Change (Tumor / Normal)',
-      yaxis_title:'−log₁₀('+_SIG_LABEL+')',
+      xaxis:{{title:'log₂ Fold Change (Tumor / Normal)',showgrid:true,gridcolor:'#f0f0f0',zeroline:false}},
+      yaxis:{{title:'−log₁₀('+_SIG_LABEL+')',showgrid:true,gridcolor:'#f0f0f0',zeroline:false}},
       height:500,plot_bgcolor:'white',paper_bgcolor:'white',
       legend:{{title:'',orientation:'h',y:1.02,x:0}},
       margin:{{t:60}},
@@ -3473,6 +3498,8 @@ function _renderDETables(method, md) {{
         const col=cols[i]||'';
         if(col==='circ_id'&&v){{
           html+=`<td><a class="circ-link" onclick="showCircDetail('${{v}}')">${{v}}</a></td>`;
+        }} else if(col==='circbase_id'){{
+          html+=`<td>${{_cbLink(v)}}</td>`;
         }} else if(col==='log2FC'&&v!=null){{
           html+=`<td>${{(+v).toFixed(3)}}</td>`;
         }} else if(col==='p-value'&&v!=null){{
@@ -3595,6 +3622,7 @@ function _renderBiomarkerTable(method, md) {{
       }}
       if (col === 'log2FC' && v != null) return `<td>${{(+v).toFixed(2)}}</td>`;
       if (col === 'biomarker_score' && v != null) return `<td>${{(+v).toFixed(3)}}</td>`;
+      if (col === 'circbase_id') return `<td>${{_cbLink(v)}}</td>`;
       if (v === '' || v == null) return '<td>—</td>';
       return `<td>${{v}}</td>`;
     }}).join('');

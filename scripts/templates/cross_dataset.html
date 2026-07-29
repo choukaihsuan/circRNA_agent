@@ -219,11 +219,13 @@
 
   <!-- ── Cross-dataset heatmap ── -->
   <div class="section">
-    <div class="section-title">
-      🗺 <span data-en="Cross-Dataset Heatmap (log2FC, top 60 recurrent)">跨資料集 Heatmap（log2FC，前 60 個重現 circRNA）</span>
+    <div class="section-title" style="justify-content:space-between">
+      <span>🗺 <span data-en="Cross-Dataset Heatmap (log2FC, top 60 recurrent)">跨資料集 Heatmap（log2FC，前 60 個重現 circRNA）</span></span>
+      <button id="dend-toggle-btn" class="btn-sm" onclick="toggleDendrogram()"
+              data-en="🌲 Hide Dendrogram" style="font-size:12px">🌲 隱藏樹狀圖</button>
     </div>
-    <p style="font-size:12px;color:#64748b;margin-bottom:12px" data-en="Red = upregulated, Green = downregulated, White = not significant in that dataset.">
-      紅色 = 上調；綠色 = 下調；白色 = 該資料集未顯著偵測到。
+    <p style="font-size:12px;color:#64748b;margin-bottom:12px" data-en="Red = upregulated, Green = downregulated, Grey = not detected. Row dendrogram clusters circRNAs by log2FC pattern.">
+      紅色 = 上調；綠色 = 下調；灰色 = 未偵測。左側樹狀圖依 log2FC 模式對 circRNA 進行分群。
     </p>
     <div id="cross-heatmap" style="width:100%;min-height:400px"></div>
   </div>
@@ -280,7 +282,8 @@
         <td>{{ r.gene_name }}</td>
         <td>
           {% if r.circbase_id != 'novel' %}
-            <span class="cb-id">{{ r.circbase_id }}</span>
+            <a class="cb-id" href="https://www.circbase.org/cgi-bin/singlerecord.cgi?id={{ r.circbase_id }}"
+               target="_blank" rel="noopener">{{ r.circbase_id }}</a>
           {% else %}
             <span style="color:#94a3b8;font-size:11px">novel</span>
           {% endif %}
@@ -326,6 +329,96 @@
 const HEATMAP = {{ heatmap_json | safe }};
 const ORGAN_GROUPS = {{ organ_groups_json | safe }};
 
+// ── Hierarchical clustering (average-linkage, Euclidean) ─────────────────────
+let _showDendrogram = true;
+
+function _hclust(z) {
+  const N = z.length;
+  if (N <= 1) return { order: Array.from({length: N}, (_, i) => i), segsX: [], segsY: [] };
+
+  // Pairwise Euclidean distance (treat NaN as 0)
+  const D = Array.from({length: N}, (_, i) =>
+    Array.from({length: N}, (_, j) => {
+      if (i === j) return 0;
+      let s = 0;
+      for (let k = 0; k < z[i].length; k++) {
+        const a = Number.isFinite(z[i][k]) ? z[i][k] : 0;
+        const b = Number.isFinite(z[j][k]) ? z[j][k] : 0;
+        s += (a - b) * (a - b);
+      }
+      return Math.sqrt(s);
+    })
+  );
+
+  // Average-linkage agglomerative clustering
+  const sz  = Array.from({length: N}, () => 1);
+  const ht  = Array.from({length: N}, () => 0);
+  const nd  = D.map(r => [...r]);
+  const merges = [];
+  const alive = Array.from({length: N}, (_, i) => i);
+
+  while (alive.length > 1) {
+    let best = Infinity, ai = -1, bi = -1;
+    for (let i = 0; i < alive.length - 1; i++)
+      for (let j = i + 1; j < alive.length; j++)
+        if (nd[alive[i]][alive[j]] < best) {
+          best = nd[alive[i]][alive[j]]; ai = alive[i]; bi = alive[j];
+        }
+    const ni = sz.length;
+    sz.push(sz[ai] + sz[bi]);
+    ht.push(best);
+    merges.push({left: ai, right: bi, h: best, idx: ni});
+    const newRow = new Array(ni + 1).fill(0);
+    for (const c of alive) {
+      if (c === ai || c === bi) continue;
+      newRow[c] = (nd[ai][c] * sz[ai] + nd[bi][c] * sz[bi]) / sz[ni];
+    }
+    nd.forEach((r, i) => r.push(newRow[i] ?? 0));
+    nd.push(newRow);
+    alive.splice(alive.indexOf(bi), 1);
+    alive.splice(alive.indexOf(ai), 1);
+    alive.push(ni);
+  }
+
+  // DFS to determine leaf order and y-positions
+  const yPos  = new Array(sz.length).fill(0);
+  const order = [];
+  const mergeByIdx = new Map(merges.map(m => [m.idx, m]));
+  function dfs(idx) {
+    const m = mergeByIdx.get(idx);
+    if (!m) { yPos[idx] = order.length; order.push(idx); return; }
+    dfs(m.left); dfs(m.right);
+    yPos[idx] = (yPos[m.left] + yPos[m.right]) / 2;
+  }
+  const root = merges.length > 0 ? merges[merges.length - 1].idx : 0;
+  dfs(root);
+
+  // Build line segments: x = height (distance), y = leaf position
+  const segsX = [], segsY = [];
+  for (const m of merges) {
+    const yL = yPos[m.left], yR = yPos[m.right];
+    const hL = ht[m.left],   hR = ht[m.right], h = m.h;
+    segsX.push(hL, h, null); segsY.push(yL, yL, null); // left arm
+    segsX.push(hR, h, null); segsY.push(yR, yR, null); // right arm
+    segsX.push(h,  h, null); segsY.push(yL, yR, null); // vertical bar
+  }
+  return { order, segsX, segsY };
+}
+
+function toggleDendrogram() {
+  _showDendrogram = !_showDendrogram;
+  const btn = document.getElementById('dend-toggle-btn');
+  if (btn) {
+    const zhTxt = _showDendrogram ? '🌲 隱藏樹狀圖' : '🌲 顯示樹狀圖';
+    const enTxt = _showDendrogram ? '🌲 Hide Dendrogram' : '🌲 Show Dendrogram';
+    btn.dataset.zh = zhTxt; btn.dataset.en = enTxt;
+    btn.textContent = (_LANG || 'zh') === 'zh' ? zhTxt : enTxt;
+  }
+  const sel = document.getElementById('organ-filter-sel');
+  const organ = sel ? sel.value : '';
+  _updateHeatmapForOrgan(organ);
+}
+
 function _drawHeatmap(dsNames, circIds, geneNames, cbIds, matrixRows) {
   if (!window.Plotly) return;
   const n = circIds.length;
@@ -340,29 +433,72 @@ function _drawHeatmap(dsNames, circIds, geneNames, cbIds, matrixRows) {
     return id;
   });
 
-  // Replace null with NaN so Plotly renders them as grey (not-detected)
+  // Replace null/undefined with NaN so Plotly renders them as grey (not-detected)
   const z = matrixRows.map(row => row.map(v => (v === null || v === undefined) ? NaN : v));
 
   const fontSz = n > 40 ? 8 : n > 25 ? 9 : 10;
   const rowH   = n > 40 ? 10 : n > 25 ? 12 : 14;
   const plotH  = Math.min(800, Math.max(300, n * rowH + 120));
+  const lblW   = Math.min(240, 80 + Math.max(...ylbls.map(s => s.length)) * 5);
 
+  // ── Clustered mode ───────────────────────────────────────────────────────────
+  if (_showDendrogram && n >= 2) {
+    const { order, segsX, segsY } = _hclust(z);
+    const orderedZ    = order.map(i => z[i]);
+    const orderedLbls = order.map(i => ylbls[i]);
+    const numericY    = Array.from({length: n}, (_, i) => i);
+
+    const hmTrace = {
+      type: 'heatmap',
+      z: orderedZ,
+      x: dsNames,
+      y: numericY,
+      text: orderedLbls.map(lbl => dsNames.map(() => lbl)),
+      colorscale: [[0, '#2ca02c'], [0.5, 'white'], [1, '#d62728']],
+      zmid: 0, zmin: -8, zmax: 8,
+      colorbar: {title: 'log2FC', thickness: 12, len: 0.5},
+      hoverongaps: false,
+      hovertemplate: '<b>%{text}</b><br>%{x}<br>log2FC: %{z:.2f}<extra></extra>',
+      xaxis: 'x2', yaxis: 'y',
+    };
+    const dendTrace = {
+      type: 'scatter', mode: 'lines',
+      x: segsX, y: segsY,
+      line: {color: '#475569', width: 1.5},
+      xaxis: 'x', yaxis: 'y',
+      showlegend: false, hoverinfo: 'skip',
+    };
+    Plotly.newPlot('cross-heatmap', [dendTrace, hmTrace], {
+      height: plotH, plot_bgcolor: 'white', paper_bgcolor: 'white',
+      margin: {t: 30, l: lblW, r: 80, b: 80},
+      xaxis: {
+        domain: [0, 0.15], autorange: 'reversed',
+        showticklabels: false, showgrid: false, zeroline: false, showline: false,
+      },
+      xaxis2: {domain: [0.16, 1.0], tickangle: -35, tickfont: {size: 12}},
+      yaxis: {
+        tickmode: 'array', tickvals: numericY, ticktext: orderedLbls,
+        tickfont: {size: fontSz}, autorange: 'reversed',
+        showgrid: false, zeroline: false, showline: false,
+      },
+      dragmode: 'zoom',
+    }, {responsive: true, displayModeBar: true,
+        modeBarButtonsToRemove: ['select2d', 'lasso2d']});
+    return;
+  }
+
+  // ── Plain mode (no dendrogram) ───────────────────────────────────────────────
   Plotly.newPlot('cross-heatmap', [{
     type: 'heatmap',
-    z: z,
-    x: dsNames,
-    y: ylbls,
+    z: z, x: dsNames, y: ylbls,
     colorscale: [[0, '#2ca02c'], [0.5, 'white'], [1, '#d62728']],
-    zmid: 0,
-    zmin: -8, zmax: 8,
+    zmid: 0, zmin: -8, zmax: 8,
     colorbar: {title: 'log2FC', thickness: 12, len: 0.5},
     hoverongaps: false,
     hovertemplate: '<b>%{y}</b><br>%{x}<br>log2FC: %{z:.2f}<extra></extra>',
   }], {
-    height: plotH,
-    plot_bgcolor: 'white',
-    paper_bgcolor: 'white',
-    margin: {t: 30, l: Math.min(240, 80 + Math.max(...ylbls.map(s => s.length)) * 5), r: 80, b: 80},
+    height: plotH, plot_bgcolor: 'white', paper_bgcolor: 'white',
+    margin: {t: 30, l: lblW, r: 80, b: 80},
     xaxis: {tickangle: -35, tickfont: {size: 12}},
     yaxis: {tickfont: {size: fontSz}, autorange: 'reversed'},
     dragmode: 'zoom',
