@@ -2823,50 +2823,11 @@ function _buildMiniHeatmap(circId) {{
   lo=Math.max(0,lo);
   const winIds=order.slice(lo,hi);
   const tIdx=winIds.indexOf(circId);
-  const zMatrix=winIds.map(id=>rows[id].z);
-  const yLabels=winIds.map(id=>rows[id].label||id);
-  const conds=cd.conditions||{{}};
-  const TUMOR_COL='#d62728', NORMAL_COL='#2CA02C';
-  // merge consecutive samples of same condition into one labelled bar
-  const grps=[];let cur=null;
-  samps.forEach((s,i)=>{{
-    const c=conds[s]||'';
-    const col=c==='{tumor_label}'?TUMOR_COL:c==='{normal_label}'?NORMAL_COL:'#888';
-    if(!cur||cur.c!==c){{cur={{c,col,s:i,e:i}};grps.push(cur);}}
-    else cur.e=i;
-  }});
-  const groupShapes=grps.map(g=>{{
-    return{{type:'rect',xref:'x',yref:'paper',
-      x0:g.s-0.45,x1:g.e+0.45,y0:1.02,y1:1.055,
-      fillcolor:g.col,line:{{width:0}}}};
-  }});
-  const groupAnno=grps.map(g=>{{
-    return{{xref:'x',yref:'paper',x:(g.s+g.e)/2,y:1.0375,
-      yanchor:'middle',xanchor:'center',
-      text:g.c,showarrow:false,
-      font:{{size:9,color:'white',family:'sans-serif'}}}};
-  }});
-  const hlShape=tIdx>=0?[{{
-    type:'rect',x0:-0.5,x1:samps.length-0.5,y0:tIdx-0.5,y1:tIdx+0.5,
-    line:{{color:'#ff8c00',width:2.5}},fillcolor:'rgba(255,140,0,0.07)'
-  }}]:[];
-  const titleText=`${{circId}} ← clustering neighborhood (${{winIds.length}} of ${{order.length}})`;
-  Plotly.newPlot(el,[{{
-    type:'heatmap',z:zMatrix,x:samps,y:yLabels,
-    colorscale:[[0,'#2ca02c'],[0.5,'white'],[1,'#d62728']],
-    zmid:0,showscale:true,
-    colorbar:{{title:'z-score',titlefont:{{size:10}}}},
-    hovertemplate:'<b>%{{y}}</b><br>%{{x}}<br>z: %{{z:.2f}}<extra></extra>',
-  }}],{{
-    height:Math.max(300,winIds.length*20+120),
-    margin:{{t:65,b:60,l:180,r:80}},
-    title:{{text:titleText,font:{{size:11}}}},
-    xaxis:{{tickangle:-35,tickfont:{{size:9}}}},
-    yaxis:{{tickfont:{{size:9}},autorange:'reversed'}},
-    shapes:[...groupShapes,...hlShape],
-    annotations:groupAnno,
-    plot_bgcolor:'white',paper_bgcolor:'white',
-  }},{{responsive:true,displayModeBar:false}});
+  const winRows={{}}; winIds.forEach(id=>{{winRows[id]=rows[id];}});
+  const winDendro=_sliceDendro(cd.dendro, lo, hi);
+  const titleText=`${{circId}} — clustering neighborhood (${{winIds.length}} of ${{order.length}})`;
+  _renderClustPanel(el, winIds, winRows, samps, cd.conditions||{{}}, winDendro,
+                     {{highlightIdx: tIdx>=0?tIdx:null, title: titleText}});
   el._plotlyLoaded=true;
 }}
 
@@ -3685,30 +3646,25 @@ _makeSortable('tbl_biomarker');
   }}
 }})();
 
-// ── Clustering Heatmap ───────────────────────────────────────────────────────
+// ── Clustering Heatmap (always expanded, renders immediately) ────────────────
 (function() {{
   const sec = document.getElementById('clust-heatmap-section');
   if (!sec || !CLUST_HEATMAP_DATA || typeof Plotly === 'undefined') return;
-  let rendered = false;
-  sec.addEventListener('toggle', function() {{
-    if (sec.open && !rendered) {{ rendered = true; _drawClustHeatmap(); }}
-    // Update collapse label
-    const lbl = document.getElementById('clust-hm-collapse-lbl');
-    if (lbl) lbl.textContent = sec.open
-      ? (_LANG==='en' ? '(click to collapse)' : '（點擊折疊）')
-      : (_LANG==='en' ? '(click to expand)'   : '（點擊展開）');
-  }});
+  _drawClustHeatmap();
 }})();
 
-function _drawClustHeatmap() {{
-  const cd = CLUST_HEATMAP_DATA;
-  if (!cd || typeof Plotly === 'undefined') return;
-  const div = document.getElementById('clust-heatmap-plot');
-  if (!div) return;
-  const order = cd.order || [];
-  const samps = cd.samples || [];
-  const rows  = cd.rows   || {{}};
-  const conds = cd.conditions || {{}};
+// Shared renderer: dendrogram (left) + heatmap (right) two-panel layout.
+// Used by both the full-report clustering heatmap and the per-circRNA
+// modal's windowed "clustering neighborhood" mini-heatmap.
+//   order/rows/samps/conds: same shape as CLUST_HEATMAP_DATA fields, but
+//     order/rows may be a windowed subset (mini-heatmap use case).
+//   dendro: {{icoord, dcoord, max_dist}} already local to `order` (x=0 is
+//     the first row, x=10*(order.length) the last) -- see _sliceDendro().
+//   opts.highlightIdx: index into `order` to draw an orange highlight box
+//     around (mini-heatmap's clicked circRNA); null/undefined = no box.
+//   opts.title: optional Plotly chart title.
+function _renderClustPanel(div, order, rows, samps, conds, dendro, opts) {{
+  opts = opts || {{}};
   const n = order.length;
   if (n === 0 || samps.length === 0) return;
 
@@ -3716,9 +3672,9 @@ function _drawClustHeatmap() {{
   const y_positions = order.map((_, i) => 10 * i + 5);
   const ylbls       = order.map(id => rows[id] ? rows[id].label || id : id);
 
-  const fontSz = n > 200 ? 4 : n > 100 ? 6 : n > 50 ? 8 : 10;
-  const rowH   = n > 200 ? 4 : n > 100 ? 6 : n > 50 ? 8 : 12;
-  const plotH  = Math.min(700, Math.max(300, n * rowH + 140));
+  const fontSz = n > 200 ? 4 : n > 100 ? 6 : n > 50 ? 8 : n > 25 ? 9 : 10;
+  const rowH   = n > 200 ? 4 : n > 100 ? 6 : n > 50 ? 8 : n > 25 ? 14 : 20;
+  const plotH  = opts.height || Math.min(700, Math.max(280, n * rowH + 140));
 
   const TUMOR_COL='#d62728', NORMAL_COL='#2CA02C';
   const grps=[]; let cur=null;
@@ -3751,13 +3707,13 @@ function _drawClustHeatmap() {{
   const traces = [];
 
   // ── Dendrogram traces (left panel, xaxis) ──
-  const hasDendro = !!(cd.dendro && cd.dendro.icoord && cd.dendro.icoord.length);
-  const maxD = hasDendro ? (cd.dendro.max_dist || 1) : 1;
+  const hasDendro = !!(dendro && dendro.icoord && dendro.icoord.length);
+  const maxD = hasDendro ? (dendro.max_dist || 1) : 1;
   if (hasDendro) {{
-    cd.dendro.icoord.forEach((ic, k) => {{
+    dendro.icoord.forEach((ic, k) => {{
       traces.push({{
         type: 'scatter',
-        x: cd.dendro.dcoord[k].map(v => -v),   // negate: root far-left, leaves near 0
+        x: dendro.dcoord[k].map(v => -v),   // negate: root far-left, leaves near 0
         y: ic,
         mode: 'lines',
         line: {{color:'#555', width: n > 150 ? 0.5 : 0.8}},
@@ -3796,12 +3752,20 @@ function _drawClustHeatmap() {{
   const maxLblLen = Math.max(...ylbls.map(s => s.length));
   const rMargin   = Math.min(300, Math.max(130, maxLblLen * fontSz * 0.65));
 
+  const hlShape = (opts.highlightIdx != null) ? [{{
+    type:'rect', xref:'x2', yref:'y',
+    x0:-0.5, x1:samps.length-0.5,
+    y0:10*opts.highlightIdx, y1:10*opts.highlightIdx+10,
+    line:{{color:'#ff8c00', width:2.5}}, fillcolor:'rgba(255,140,0,0.07)'
+  }}] : [];
+
   Plotly.newPlot(div, traces, {{
     height: plotH,
+    title: opts.title ? {{text: opts.title, font:{{size:11}}}} : undefined,
     plot_bgcolor: 'white',
     paper_bgcolor: 'white',
-    margin: {{t:60, l:72, r:rMargin, b:60}},   // l:72 reserves space for the left-side colorbar
-    shapes: groupShapes,
+    margin: {{t: opts.title ? 85 : 60, l:72, r:rMargin, b:60}},   // l:72 reserves space for the left-side colorbar
+    shapes: [...groupShapes, ...hlShape],
     annotations: groupAnno,
     dragmode: 'zoom',
     // ── Dendrogram axis (left narrow panel) ──
@@ -3859,6 +3823,35 @@ function _drawClustHeatmap() {{
       .then( () => {{ _chBusy = false; }} )
       .catch( () => {{ _chBusy = false; }} );
   }});
+}}
+
+// Extract the local sub-dendrogram for a contiguous leaf-index window
+// [lo, hi) of the full cluster order. Standard dendrograms never cross
+// branches, so any merge segment whose x-endpoints both fall inside the
+// window's x-range belongs entirely to leaves within that window; segments
+// reaching outside are simply dropped (their partner leaf isn't visible).
+function _sliceDendro(dendro, lo, hi) {{
+  if (!dendro || !dendro.icoord || !dendro.icoord.length) return null;
+  const xlo = 10*lo, xhi = 10*hi;
+  const icoord=[], dcoord=[];
+  dendro.icoord.forEach((ic, k) => {{
+    if (ic.every(x => x >= xlo - 1e-6 && x <= xhi + 1e-6)) {{
+      icoord.push(ic.map(x => x - xlo));
+      dcoord.push(dendro.dcoord[k]);
+    }}
+  }});
+  if (!icoord.length) return null;
+  const maxD = Math.max(...dcoord.map(d => Math.max(...d)));
+  return {{icoord, dcoord, max_dist: maxD || dendro.max_dist || 1}};
+}}
+
+function _drawClustHeatmap() {{
+  const cd = CLUST_HEATMAP_DATA;
+  if (!cd || typeof Plotly === 'undefined') return;
+  const div = document.getElementById('clust-heatmap-plot');
+  if (!div) return;
+  _renderClustPanel(div, cd.order || [], cd.rows || {{}}, cd.samples || [],
+                     cd.conditions || {{}}, cd.dendro, {{}});
 }}
 </script>"""
 
@@ -4051,20 +4044,18 @@ function _drawClustHeatmap() {{
   {volcano_html}
 
   <!-- ── Clustering Heatmap (hierarchical row clustering, all sig circRNAs) ── -->
-  <details id="clust-heatmap-section" style="margin-top:32px">
-    <summary style="cursor:pointer;font-size:18px;font-weight:600;color:#2c3e50;
-                    padding:8px 0;border-bottom:2px solid #e0e8f0;user-select:none"
-             data-en="Clustering Heatmap (all significant DE circRNAs, hierarchical row clustering)">
+  <div id="clust-heatmap-section" style="margin-top:32px">
+    <h2 style="font-size:18px;font-weight:600;color:#2c3e50;
+               padding:8px 0;border-bottom:2px solid #e0e8f0"
+        data-en="Clustering Heatmap (all significant DE circRNAs, hierarchical row clustering)">
       聚類熱圖（全部顯著 DE circRNA，階層式 row 聚類）
-      <span style="font-size:12px;font-weight:400;color:#888;margin-left:8px" data-en="(click to expand / collapse)"
-            id="clust-hm-collapse-lbl">（點擊展開 / 折疊）</span>
-    </summary>
+    </h2>
     <p style="font-size:12px;color:#888;margin:6px 0 2px"
        data-en="Shows all significant DE circRNAs (primary method: {de_method}) ordered by hierarchical clustering (Ward linkage). Use Plotly zoom tools or click-drag to inspect regions of interest. Double-click to reset zoom.">
       顯示全部顯著 DE circRNA（主方法：{de_method}），依階層聚類（Ward linkage）排列。可用 Plotly 工具列或拖曳放大感興趣區域，雙擊還原。
     </p>
     <div id="clust-heatmap-plot" style="width:100%"></div>
-  </details>
+  </div>
 
   <!-- ④ Top DE tables — up / down circRNAs -->
   <div id="de-tables-section">
