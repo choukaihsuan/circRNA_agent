@@ -529,6 +529,47 @@ def _reset_orphaned_running() -> None:
             )
 
 
+def _self_heal_failed_jobs() -> None:
+    """
+    Correct 'failed' queue jobs whose pipeline actually completed via a
+    manual/external rerun that bypassed _run_queued_job() (e.g. a direct
+    `snakemake ...` launched over SSH to work around a stuck job) -- so
+    nothing ever told the queue DB the real outcome, and it stays frozen
+    on the earlier failure even though report.html now exists.
+
+    A job is only healed if report.html's mtime is AFTER the job's own
+    started_at, so a stale report left over from a prior, unrelated
+    successful run of the same GSE is never mistaken for this job's result.
+    """
+    for j in queue_list():
+        if j["status"] != "failed" or not j.get("started_at"):
+            continue
+        cfg_path = BASE_DIR / "config" / "projects" / f"{j['gse_id']}.yaml"
+        if not cfg_path.exists():
+            continue
+        try:
+            with open(cfg_path) as f:
+                results_dir = (yaml.safe_load(f) or {}).get("results_dir")
+        except Exception:
+            continue
+        if not results_dir:
+            continue
+        report_path = Path(results_dir) / "report.html"
+        if not report_path.exists():
+            continue
+        try:
+            report_mtime = datetime.fromtimestamp(report_path.stat().st_mtime)
+            started_dt   = datetime.strptime(j["started_at"], "%Y-%m-%d %H:%M:%S")
+        except (OSError, ValueError):
+            continue
+        if report_mtime > started_dt:
+            queue_set_status(j["id"], "completed",
+                              completed_at=report_mtime.strftime("%Y-%m-%d %H:%M:%S"))
+            print(f"[self-heal] {j['id']} ({j['gse_id']}): report.html found "
+                  f"after started_at ({report_mtime} > {started_dt}), "
+                  f"correcting failed -> completed", file=_sys.stderr)
+
+
 def _run_queued_job(job: dict) -> None:
     job_id   = job["id"]
     gse_id   = job["gse_id"]
@@ -568,6 +609,7 @@ def _run_queued_job(job: dict) -> None:
 
 def _queue_worker() -> None:
     _reset_orphaned_running()
+    _self_heal_failed_jobs()
     while True:
         try:
             with _worker_lock:
@@ -1185,7 +1227,25 @@ def run_gse():
 
     user_email = (request.form.get("notify_email", "").strip()
                   or session.get("email", ""))
-    cmd = [_sys.executable, "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)]
+
+    # If project config + metadata already exist (re-run scenario), use snakemake directly
+    # to avoid the pysradb dependency in agent.py prepare_metadata step.
+    _proj_cfg  = _project_config_path(gse_id)
+    _meta_ready = _meta_path.exists()
+    if _proj_cfg.exists() and _meta_ready:
+        cmd = [
+            _snake_bin(),
+            "--snakefile", "workflow/Snakefile",
+            "--configfile", str(_proj_cfg.relative_to(BASE_DIR)),
+            "--cores", str(cores),
+            "--resources", f"mem_gb={cfg.get('resources', {}).get('mem_gb', 300)}",
+            "--keep-going",
+            "--rerun-incomplete",
+        ]
+    else:
+        # Fresh dataset: agent.py handles metadata download + snakemake launch
+        cmd = [_sys.executable, "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)]
+
     queue_add(job_id, gse_id, cmd, str(log_path), cores, user_email)
     _notify_queued(user_email, gse_id, job_id)
     return redirect(url_for("queue_page"))
@@ -1447,6 +1507,7 @@ def status():
 
 @app.route("/queue")
 def queue_page():
+    _self_heal_failed_jobs()
     jobs = queue_list()
     pending_pos = 0
     ext_gse = _running_gse_id()  # gse_id of externally-started pipeline (or None)
@@ -1467,6 +1528,7 @@ def queue_page():
 
 @app.route("/api/queue")
 def api_queue():
+    _self_heal_failed_jobs()
     jobs = queue_list()
     return jsonify({"jobs": jobs, "count": len(jobs)})
 
@@ -1704,6 +1766,12 @@ _DATASET_META = {
     "GSE229705":  {"cancer": "Lung Adenocarcinoma",             "cancer_zh": "肺腺癌 LUAD",   "organ": "Lung",      "n_pairs": 6},
     "GSE148036":  {"cancer": "Lung Adenocarcinoma",             "cancer_zh": "肺腺癌 LUAD",   "organ": "Lung",      "n_pairs": 5},
     "GSE121842":  {"cancer": "Colorectal Cancer",               "cancer_zh": "大腸直腸癌 CRC","organ": "Colon",     "n_pairs": 3},
+    "GSE136569":  {"cancer": "Pancreatic Ductal Adenocarcinoma","cancer_zh": "胰臟癌 PDAC",   "organ": "Pancreas",  "n_pairs": 5},
+    "GSE143797":  {"cancer": "Nasopharyngeal Carcinoma",        "cancer_zh": "鼻咽癌 NPC",    "organ": "Nasopharynx","n_pairs": 4},
+    "GSE108735":  {"cancer": "Renal Cell Carcinoma",            "cancer_zh": "腎細胞癌 RCC",  "organ": "Kidney",    "n_pairs": 7},
+    "GSE171011":  {"cancer": "Papillary Thyroid Cancer",        "cancer_zh": "甲狀腺乳突癌 PTC","organ": "Thyroid", "n_pairs": 4},
+    "GSE97239":   {"cancer": "Bladder Cancer",                  "cancer_zh": "膀胱癌",          "organ": "Bladder", "n_pairs": 3},
+    "GSE192410":  {"cancer": "Ovarian Cancer",                  "cancer_zh": "卵巢癌",          "organ": "Ovary",   "n_pairs": 3},
 }
 
 
@@ -1813,6 +1881,7 @@ def cross_dataset():
                                datasets={}, dataset_order=[],
                                recurrent=[], heatmap_json="null",
                                organ_groups={}, organ_groups_json="{}",
+                               upset_json="null",
                                dataset_meta=_DATASET_META,
                                total_datasets=0, total_recurrent=0)
 
@@ -1907,6 +1976,28 @@ def cross_dataset():
     organ_groups = {organ: ids for organ, ids in _organ_map.items() if len(ids) >= 2}
     organ_groups_json = _json.dumps(organ_groups, ensure_ascii=False)
 
+    # ── UpSet plot data ───────────────────────────────────────────────────────
+    _circ_to_gses: dict = {}
+    for _gse_id in dataset_order:
+        for _cid in dataset_results.get(_gse_id, {}).get("sig_ids", set()):
+            _circ_to_gses.setdefault(_cid, []).append(_gse_id)
+    _inter_counts: dict = _defaultdict(int)
+    for _gse_list in _circ_to_gses.values():
+        _inter_counts[tuple(sorted(_gse_list))] += 1
+    # Send all intersections unsorted; JS handles both sort modes and top-N slicing.
+    upset_intersections = [{"combo": list(k), "count": v} for k, v in _inter_counts.items()]
+    upset_data = {
+        "sets": dataset_order,
+        "set_sizes": {g: dataset_results.get(g, {}).get("n_sig", 0)
+                      for g in dataset_order},
+        "intersections": upset_intersections,
+        "labels":    {g: _DATASET_META.get(g, {}).get("cancer_zh", g)
+                      for g in dataset_order},
+        "labels_en": {g: _DATASET_META.get(g, {}).get("cancer", g)
+                      for g in dataset_order},
+    }
+    upset_json = _json.dumps(upset_data, ensure_ascii=False)
+
     return render_template(
         "cross_dataset.html",
         datasets=dataset_results,
@@ -1916,6 +2007,7 @@ def cross_dataset():
         heatmap_json=heatmap_json,
         organ_groups=organ_groups,
         organ_groups_json=organ_groups_json,
+        upset_json=upset_json,
         total_datasets=len(dataset_results),
         total_recurrent=len(recurrent),
     )
