@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，✅ 完成）；GSE121842（CRC 大腸直腸癌 tumor vs. normal，3 pairs，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，✅ 完成）；GSE121842（CRC 大腸直腸癌 tumor vs. normal，3 pairs，✅ 完成）；GSE136569（胰臟癌 PDAC tumor vs. NAT，5 pairs，✅ 完成）；GSE143797（鼻咽癌 NPC tumor vs. normal，4+4 samples，✅ 完成）；GSE108735（腎細胞癌 RCC tumor vs. normal，7 pairs，✅ 完成）；GSE171011（甲狀腺乳突癌 PTC tumor vs. normal，4 pairs，✅ 完成）；GSE97239（膀胱癌 Bladder Cancer tumor vs. normal，3 pairs，✅ 完成）；GSE192410（卵巣癌 Ovarian Cancer tumor vs. normal，3 pairs，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -450,6 +450,8 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 - `GET /auth/<token>` — 驗證 magic link token → 建立 session → 導向首頁
 - `GET /logout` — 清除 session → 導向登入頁
 - `GET /queue` — 工作佇列頁面（排隊中 / 執行中 / 已完成 / 失敗統計）
+- `GET /api/queue` — 佇列 JSON（前端 15 秒自動重整用）
+- `GET /cross_dataset` — 跨資料集 circRNA 比較頁面（見下方「跨資料集分析頁面」）
 
 **登入系統（Email Magic Link）**：
 - Token 有效期：30 分鐘（`TOKEN_MINUTES=30`），儲存在 `jobs/auth_tokens.db`
@@ -480,6 +482,11 @@ Dataset Selection Guide 和 Pipeline Tutorial 折疊區塊標題列各加一個�
 **Queue 通知 Email**（`web_ui.py`，2026-07-02）：
 工作加入佇列後，`notify_queued_job(gse_id, job_id, queue_pos)` 發送 HTML 格式通知信件（dataset / Job ID / 佇列位置 / 進度頁連結），使用 Resend API → SMTP → console fallback 與 magic link 相同機制。
 
+**Queue Worker 自我修復（`_self_heal_failed_jobs()`，`web_ui.py`，2026-07-31）**：
+修正一類反覆出現的狀態不同步問題：job 第一次透過 Queue Worker 執行失敗（正確記錄 `status=failed`），之後有人繞過 Queue、直接手動下 `snakemake` 指令重跑（例如卡住的 job 需要人工排除 DCC 瓶頸），重跑本身可能真的成功、也真的產生了 `report.html`，但因為不是透過 `_run_queued_job()` 執行的，資料庫的 `status` 欄位永遠不會被更新，導致 `/queue` 頁面持續顯示「Failed」，即使使用者已經拿到正確的報告（GSE192410、GSE97239 都發生過）。
+
+`_self_heal_failed_jobs()` 掃描所有 `status=failed` 的 job，讀取對應 `config/projects/{GSE}.yaml` 的 `results_dir`，若 `report.html` 存在**且其修改時間晚於該 job 的 `started_at`**（避免誤認前一次無關執行留下的舊報告），就自動把狀態改為 `completed`、`completed_at` 校正為報告檔案的真實時間。掛在 `/queue`、`/api/queue`（使用者每次看頁面都觸發）以及 `_queue_worker()` 啟動時（重啟 web_ui.py 即可自動修正累積的狀態）。
+
 **PIPELINE_STAGES 雙語化**（`web_ui.py`，2026-07-02）：
 `PIPELINE_STAGES` 由 tuple `(rule_id, label_zh, label_en)` 組成；API 回應及前端均可依語言顯示對應 stage 名稱。
 
@@ -499,6 +506,41 @@ Server 防火牆允許此 endpoint（僅 PRJNA/SRP 的其他 eUtils endpoint 被
 - 各獨立 output（circbase_annotated.tsv / isoform_groups.tsv / de_results.tsv / biomarker_candidates.tsv / isoform_switching.tsv）→ 對應 stage done
 - `report.html` 存在 → 所有剩餘 pending stage 全標 done
 解決 web_ui 重啟後狀態頁全顯示「等待中」的問題。
+
+---
+
+## 跨資料集分析頁面（`/cross_dataset`，2026-07-21）
+
+獨立於單一資料集報告之外的彙整頁面（`web_ui.py` 的 `/cross_dataset` route + `templates/cross_dataset.html`），把所有已完成資料集的顯著 DE circRNA 拉在一起看跨癌症重現性。
+
+**資料來源與計算**（`_load_cross_dataset_data()`，`web_ui.py`）：
+- 掃描 `config/projects/*.yaml`，讀取每個資料集的 `results_dir`、`de.tumor_label/normal_label/fdr_cutoff/log2fc_cutoff/de_sig_by`
+- 讀 `de/de_results.tsv`（edgeR 主方法）套用該資料集自己的顯著性門檻，補上 `circRNA/isoform_groups.tsv` 的 gene_name、`circRNA/circbase_annotated.tsv` 的 circbase_id
+- 「重現 circRNA」定義：同一 circ_id 在 **≥2 個資料集**中都達到顯著
+
+**資料集彙整表**：每個資料集一列，顯示癌症類型（`_DATASET_META` 內建對照表，含 organ 分類）、配對數、tested/顯著/上調/下調數。
+
+**跨資料集 Heatmap**：top 60 重現 circRNA × 全部資料集，log2FC 為值（紅=上調、綠=下調、灰=未偵測）；本身內建**階層式聚類**（`_hclust()`，average-linkage + Euclidean distance，純前端 JS 實作，不依賴 scipy），左側可切換顯示/隱藏樹狀圖（`toggleDendrogram()`）。
+
+**同癌症/器官比較（「Compare within」下拉選單）**：把 organ 欄位相同、且該 organ 有 ≥2 個資料集的分組，讓使用者只在「同一種癌症的資料集之間」比較重現性，而不是跟全部 13+ 個異質資料集混在一起算。目前符合條件的分組：
+- **Lung**：GSE229705、GSE148036（皆為 LUAD）
+- **Breast**：GSE113230、GSE58135、GSE133998、SRP156355（GSE323364 因 organ 標記為 "Cell Line" 自動排除，不會混進組織比較）
+
+選定分組後，「資料集數」欄位重新計算為「只在該分組內的重現次數」（不是全域計數），heatmap 也重新篩選只保留在該分組內 ≥2 個資料集重現的 circRNA 並重繪聚類。此重新計算完全在前端 JS 完成（`filterTable()` + `_updateHeatmapForOrgan()`），不需要額外的伺服器查詢，因為全域 `recurrent` 清單本身已經包含所有「全域 ≥2 個資料集重現」的候選——只要一個 circRNA 在某分組內達到 ≥2，全域計數必然也 ≥2，所以不會有漏算的候選。
+
+**circBase ID 超連結**：重現清單表格的 circbase_id 欄位（非 "novel" 者）連到 `https://www.circbase.org/cgi-bin/singlerecord.cgi?id={id}`。
+
+**UpSet Plot**（`drawUpset()`，`templates/cross_dataset.html`）：
+- 視覺化多資料集交集；橘色直條 = 只出現在單一資料集的 exclusive circRNA；藍色直條 = 跨 ≥2 個資料集的 shared circRNA
+- 點矩陣（dot matrix）顯示每個直條對應哪些資料集的組合
+- **排序模式切換**（互動式）：「依交集層數（5→1 資料集）」vs「依 circRNA 數量（多→少）」；按鈕 `#upset-btn-degree` / `#upset-btn-count`，`setUpsetMode(mode)` 函式；`let _upsetMode = 'degree'`
+- Python 送出全部 ~108 個交集（`upset_intersections` 不做排序或截斷）；JS 依 `_upsetMode` 排序後取 top 30
+- 雙語支援：Y 軸 tick 文字從 `D.labels_en`（English）或 `D.labels`（中文）取用；`applyLang()` 觸發 `drawUpset()` 重繪以切換資料集名稱語言
+- **JS TDZ 陷阱**：`drawUpset()` 不可在 `let _LANG` 宣告前呼叫（ReferenceError: Cannot access before initialization）；只由 `applyLang()` 在宣告後觸發，並包 try-catch 避免 plot 錯誤影響 UI 切換
+
+**已知 bug 修正**：
+- 排序後編號跳號（`sortTable()` 原本沒跳過隱藏列，篩選 + 排序疊加使用時編號變成 1,2,5,6,11...而非連續 1,2,3,4）→ 改成只對可見列遞增編號
+- 空資料集 early-return 路徑漏傳 `organ_groups`/`organ_groups_json` 導致 JS 直接壞掉、heatmap 初始渲染呼叫少了 null 保護 → 皆已補上
 
 ---
 
@@ -776,7 +818,7 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - Gene abundance：05:09 → 05:22（13 min）
 - BWA-MEM：05:22 → 08:25（3h 3min）
 - CIRI2.pl detection：08:25 → 09:21（56 min）
-- Build circular index：09:21 → 09:29（8 min）
+- Build circular index：09:21 → 09:29（8 min；某些 sample 可達 31 min，依 circRNA 數量而定，見 GSE171011 SRR14088793 紀錄）
 - De novo HISAT2 alignment：09:29 → 10:13（44 min）
 - BSJ/FSJ detection & quantification：10:13 → 11:50（97 min，含 disk-full 延遲）
 
@@ -868,6 +910,9 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | DCC `TypeError: NoneType has no len()` | DCC 0.5.0 不支援缺少 `-mt2` | 加入 `star_align_mate1` 和 `star_align_mate2` rule，分別比對 R1/R2 |
 | DCC `command not found` | 指令為大寫 `DCC` | shell command 改為 `DCC` |
 | DCC `-A` flag error | DCC 0.5.0 BAM 參數是 `-B` 不是 `-A` | 改為 `-B {bam}` |
+| `ciriquant.yaml` `ConfigError: File: bwa, not found` | `check_file()` 做字面路徑存在性檢查，`bwa: bwa`（相對路徑）不存在；必須填完整絕對路徑 | 在 `config/ciriquant.yaml` 的 `tools:` 區塊填 conda env 的完整路徑（如 `/home/choukaihsuan/miniconda3/envs/ciriquant/bin/bwa`）；`java: /usr/bin/java`、`perl: /usr/bin/perl` 亦需指定 |
+| `ciriquant.yaml` `ConfigError: Reference fasta need to be specified` | `config/ciriquant.yaml` 的 `reference:` 區塊鍵名錯誤；CIRIquant 期望 `fasta:`/`bwa_index:`/`hisat_index:`，而非 `genome:`/`hisat2_genome:`；若誤用 `database:` 作為頂層鍵則先報 `KeyError: 'reference'` | 正確 `reference:` 結構：`fasta: /path/hg19.fa`、`gtf: /path/genes.gtf`、`bwa_index: /path/hg19.fa`（BWA index prefix，附加 `.bwt` 驗證）、`hisat_index: /path/hg19_hisat2_index`（HISAT2 prefix，附加 `.1.ht2` 驗證）；server 路徑：`bwa_index: /home3/choukaihsuan/reference/hg19/hg19.fa`，`hisat_index: /home3/choukaihsuan/reference/hg19/hg19_hisat2_index` |
+| CIRIquant 看似「completed successfully」但 GTF 消失 | shell 最後一行 `rm -rf ... circ align gene` 成功（exit 0），掩蓋了 CIRIquant 本身失敗（exit 1）的 exit code；Snakemake 只看最終 exit code → 誤報成功 | 根本修法是修正 `ciriquant.yaml` 讓 CIRIquant 真正成功執行；若排查 CIRIquant 問題，需直接看 `logs/ciriquant/{srr}.log` 而非 Snakemake 的 job 狀態 |
 | CIRIquant 輸出 `.bed` 而非 `.bsj` | CIRIquant 1.1.3 bioconda 版本差異 | rule output 只宣告 `.gtf`，忽略 `.bed` |
 | multiqc ImportError TypedDict | multiqc 1.17 + markdown 3.6 不支援 Python 3.7 | `pip install markdown==3.3.7` |
 | Snakemake LockException | 前次執行被 kill 留下 lock | `snakemake --unlock` 後重跑 |
@@ -916,7 +961,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `--adaptive` 沒有傳入 `consensus_filter.py` | `circrna.smk` 的 consensus_filter shell 指令從來沒帶 `--adaptive` flag；adaptive 只在腳本內部實作但未啟用 | `circrna.smk` 加入 `adaptive_flag = "--adaptive" if config["consensus"].get("adaptive", True) else ""`，預設開啟；同時加 `--adaptive-ratio` 參數 |
 | `vst()` 在少於 1000 circRNA 時失敗（GSE58135）| DESeq2 的 `vst()` 要求輸入行數 ≥ nsub（預設 1000）；小資料集（如 28 circRNA）呼叫 `vst()` 報錯：`less than 'nsub' rows` | `analysis.R` 改為 `tryCatch(vst(dds, blind=FALSE), error=function(e) varianceStabilizingTransformation(dds, blind=FALSE))`，自動 fallback |
 | GSE58135（50bp reads）consensus 只有 28 個 circRNA | DCC 在 50bp 讀長下每個 sample 只偵測到 3–17 個 circRNA（STAR chimeric 短讀限制），但 `--adaptive` 未傳入，min_tools=2 要求兩工具交集，結果全部 10 sample 只有 28 個 | 修復 `--adaptive` 傳入問題後，ratio ≈ 0.002 << 0.1，adaptive 自動降級 min_tools=1，結果 1,607 個 circRNA |
-| `_biomarker_normality_plot` Shapiro-Wilk ValueError（n < 3）| GSE323364 只有 2 個 biomarker candidates（p < 0.05），`scipy.stats.shapiro` 要求 n ≥ 3，直接呼叫會 raise ValueError | `generate_report.py` 加 `if n < 3` guard：顯示「樣本數不足（n=N），無法進行常態檢定」而不執行 Shapiro-Wilk |
+| `_biomarker_normality_plot` Shapiro-Wilk ValueError（n < 3）| GSE323364 只有 2 個 biomarker candidates，`scipy.stats.shapiro` 要求 n ≥ 3 | ✅ **已無關**：Shapiro-Wilk 檢定、Normal fit 曲線、垂直線（μ/±σ/±2σ）已全部移除（2026-07-31）；`_biomarker_normality_plot()` 現在只產生純 Histogram，Y 軸為 Number of circRNAs，bin 寬 0.05 |
 | Web UI 手動 SRR 表單 Project ID 預設填入當前專案 ID | `value="{{ config.get('project_id', 'CUSTOM') }}"` 讓使用者未改 ID 就送出，蓋掉現有專案的 metadata | 改為 `value="" required`，強制使用者填入正確 GSE ID |
 | `config/projects/GSE133998.yaml` sra_cache_dir/tmp_dir 繼承舊專案路徑 | Web UI 從前一專案（GSE323364）快照複製 config，路徑殘留 `GSE323364/sra_cache`；Snakemake DAG 正常但中間檔案放錯位置 | 用 `sed -i` 替換 config 中的路徑（`GSE323364` → `GSE133998`）|
 | gzip 壓縮 SRA 轉換 FASTQ 太慢（~2h/15GB）| fasterq-dump 後 gzip 單執行緒壓縮，NFS 寫入慢 | 在 ciriquant env 安裝 `pigz`（`conda install -y -c conda-forge pigz`）；`download.smk` 已使用 pigz（若 pigz 不存在，`find_tool("pigz")` fallback 到 gzip）|
@@ -1044,15 +1089,14 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 | **DE 方法切換器** | 頁面頂部三個按鈕（edgeR_ciriquant / DESeq2 / limma-voom）；切換時即時更新 stat-boxes、Volcano、Heatmap、**Top DE 表格**、**Biomarker 表格**（`Plotly.react` 原地更新，無頁面 reload）|
 | Summary stat-boxes | 樣本數、total circRNAs、顯著數、Up/Down；id="stat-n-sig/up/dn"，供方法切換器更新 |
 | **Type I/II 分類** | edgeR_ciriquant 模式才顯示；橫向進度條 + 各自數量 |
-| **3-method Venn diagram** | SVG 三圓 Venn；圓心 A=(170,128) B=(290,128) C=(230,210) r=90；交集數字加白色 halo（`paint-order="stroke"`）；高度 345px；**7 個區域均可點擊**，點擊後在 `div#venn-detail` 顯示對應 circRNA 清單（含 gene_name / log2FC / p-value / circbase_id / **方法欄**）；「⬇ CSV」下載各區域清單 |
-| **Biomarker 候選表** | top 30 表格；**方法切換時完全重建**（`_renderBiomarkerTable()`）：依所選方法的 p-value 重新排名，過濾按鈕計數同步更新，標題顯示目前方法名稱；fallback：無 bm_table 時降為 graying（opacity 0.25）|
-| **Biomarker Score 分布圖** | 兩圖並排：① Ranked scatter（x=rank, y=score，Top 30 紅點）② Histogram + Normal fit + Shapiro-Wilk 檢定；垂直線 μ / μ±σ / μ±2σ；說明文字在圖下方 |
-| **Top DE table（分兩表）** | 方法切換時完全重繪（`_renderDETables()`）；欄位含 gene_name / strand / region / exon_span / circbase_id / log2FC / p-value / Type |
-| Volcano plot | **Plotly 互動式**；方法切換時 Plotly.react 更新 |
+| **3-method Venn diagram** | SVG 三圓 Venn；圓心 A=(170,128) B=(290,128) C=(230,210) r=90；交集數字加白色 halo（`paint-order="stroke"`）；高度 345px；**7 個區域均可點擊**，點擊後在 `div#venn-detail` 顯示對應 circRNA 清單（含 gene_name / log2FC / p-value / circbase_id（超連結）/ **方法欄**）；「⬇ CSV」下載各區域清單 |
+| **Biomarker 候選表** | 預設顯示前 30，可用「顯示前 N」輸入框調整（`updateBiomarkerN()`，2026-07-下旬新增；`_compute_bm_table_data` 現在回傳**全部**顯著 rows，不再固定截斷 top-30，JS 端依輸入值即時切片）；**方法切換時完全重建**（`_renderBiomarkerTable()`）：依所選方法的 p-value 重新排名，過濾按鈕計數同步更新，標題顯示目前方法名稱；circbase_id 為超連結（見下）；fallback：無 bm_table 時降為 graying（opacity 0.25）|
+| **Biomarker Score 分布圖** | 單一 Histogram（Y 軸 = Number of circRNAs；bin 寬 0.05，`xbins={start:0,end:1,size:0.05}`）；方法切換時 `Plotly.react` 更新；`_biomarker_normality_plot()` 生成靜態初始圖，JS `_updateScoreDist()` 同步更新。**已移除**：Ranked scatter（`bm-scatter-plot`）、Normal fit 曲線、Shapiro-Wilk 檢定、垂直線（μ/μ±σ/μ±2σ）|
+| **Top DE table（分兩表）** | 方法切換時完全重繪（`_renderDETables()`）；欄位含 gene_name / strand / region / exon_span / circbase_id（超連結）/ log2FC / p-value / Type |
+| Volcano plot | **Plotly 互動式**；方法切換時 Plotly.react 更新座標軸標題**必須用巢狀 `xaxis:{title:...}`／`yaxis:{title:...}`**，不可用 `xaxis_title:`/`yaxis_title:` 扁平寫法（那是 Python `plotly.py` 的簡寫語法，純 JavaScript Plotly.js API 不認得、會靜默忽略）——2026-07 曾因此 bug 導致每次 DE 方法切換後座標軸標題消失（`switchDEMethod()` 頁面載入時就會執行一次，所以是「每次載入都消失」而非只在使用者手動切換時），已修正並補回格線樣式 |
 | PCA | **Plotly 互動式**（tumor/normal 顏色區分）；numpy SVD |
-| **Heatmap top-N 控制** | 預設 10+10，最高 50+50；tumor=紅、normal=**綠**（`#2CA02C`） |
-| Heatmap | **Plotly 互動式**（top N DE，z-score 標準化）；方法切換時同步更新；Plotly 內建 title 移除，由 HTML h2 顯示；**欄位順序：tumor 在左、normal 在右**（按 `sample_groups.csv` condition 分類排列）|
-| Isoform Switching | Plotly 長條圖 + 顯著 switching 表格；**不隨 DE 方法切換更新**（IUI 計算固定）；section 下方有說明文字 |
+| **聚類熱圖（Clustering Heatmap，2026-07-下旬）** | 取代原本「Heatmap top-N 控制」（可調整 up/down 各顯示幾筆的舊版已移除）；顯示**全部**顯著 DE circRNA（依主方法），依階層聚類（scipy `linkage(method='ward')` + `leaves_list()`）排序，左側渲染真正的樹狀圖（dendrogram，Python 端算好 icoord/dcoord 傳給 Plotly 畫線段，非 Plotly 內建 dendrogram 功能）；**永遠展開顯示**（原本是 `<details>` 可折疊、且用 `toggle` 事件觸發渲染，因為 `toggle` 只在使用者互動時觸發、頁面載入時不會自動 fire，導致預設看到的是空白折疊區——已改成普通 `<div>` 頁面載入即渲染）；tumor/normal 樣本色塊沿用主 heatmap 配色；繪圖函式抽成共用的 `_renderClustPanel()`，供全報告聚類熱圖與 circRNA 詳細 modal 的 mini heatmap 共用（見下方 modal 說明）|
+| Isoform Switching | Plotly 長條圖 + 顯著 switching 表格；**不隨 DE 方法切換更新**（IUI 計算固定）；circbase_id 欄為超連結；section 下方有說明文字 |
 | **SVG Circular Diagram** | 每個 circRNA 的環狀圖（exon 結構 + miRNA/RBP binding site 弧段 + 流水號 badge）|
 | **互動式欄位排序** | Isoform Switching、Top DE（up/down）、Biomarker 表格的所有欄位均可點擊排序（▲/▼）；`_makeSortable(tableId)` 函式；`_parseGenCoord()` 提供基因組座標排序（chr1<chr2<…<chr22<chrX<chrY，同染色體再按 start position）；gene_name="intergenic" 在 DE 表格顯示「—」（region 欄已有此資訊）|
 
@@ -1088,9 +1132,10 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 
 **circRNA 詳細 modal（點擊任意 circ_id 開啟）**：
 - **⬛ Circular Structure**：SVG 環狀圖；底部「⬇ SVG」下載按鈕；`totalLen` 由 `exon_boundaries[last].cum_end` 推算（interactions.json 的 `spliced_length` 欄位固定為 0，不可用）
-- **📺 miRNA Sponge**：互動表格（Priority 排序）；「⬇ CSV」下載；Binding Seq 欄自動從 UCSC hg19 REST API 獲取序列
-- **🧬 RBP Binding**：同上
-- **📈 Volcano / 🔥 Heatmap**：Plotly mini-chart；「⬇ PNG」下載
+- **📺 miRNA Sponge**：互動表格（Priority 排序）；「⬇ CSV」下載；Binding Seq 欄自動從 UCSC hg19 REST API 獲取序列；**「In circRNA」欄已移除（2026-07-31）**：無法 liftover 對應到 circRNA 座標的項目（`in_circ===false`）直接從表格過濾掉，不再保留並顯示打叉——因為那些項目沒有可用的位置/序列資料，留著只會讓人困惑；`_calcPriority()` 內部評分公式仍讀取 `in_circ` 做加分依據（未變動），只是顯示層面篩掉了不合格項目
+- **🧬 RBP Binding**：同上（含「In circRNA」欄移除規則）
+- **📈 Volcano**：Plotly mini-chart；「⬇ PNG」下載
+- **🔥 Heatmap（2026-07-下旬重寫）**：不再是舊版「top10up+top10down 固定池」，改成**聚類鄰居視圖**——在全報告聚類熱圖的階層排序（`CLUST_HEATMAP_DATA.order`）裡找出目前 circRNA 的位置，取前後共約 20 個鄰近 circRNA（`_buildMiniHeatmap()`），並用 `_sliceDendro()` 從完整樹狀圖切出這個視窗對應的**局部子樹**一併畫出（標準樹狀圖不會有分支交叉，所以座標落在視窗範圍內的合併節點必然完整屬於視窗內的葉節點，超出範圍的直接捨棄即可，不需要重新算圖）；目標 circRNA 一樣用橘色外框標示；與全報告聚類熱圖共用同一份 `_renderClustPanel()` 繪圖邏輯
 - **Priority Score**（miRNA）：seed type（8mer=+4…6mer=+1）+ CLIP>0（+3）+ ENCORI（+2）+ in_circ（+1）
 - **Priority Score**（RBP）：bindingSites log₂×2 max3 + internal（+2）+ CLIP>0（+3）+ ENCORI（+2）+ in_circ（+1）
 - 所有 header 可點擊排序（▲/▼）
@@ -1134,7 +1179,9 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（2026-07-13 完成 GSE121842，共 13 個資料集完成）
+## 目前執行進度（共 19 個資料集完成；0 個進行中）
+
+> **⚠️ GSE108735 資料集更正**：原標記為「TNBC」，實際確認為**腎細胞癌（Renal Cell Carcinoma，RCC）**，7 pairs tumor vs. 正常腎組織，ncRNA-Seq（SRR6439741–SRR6439754）。GSE171011 原標記為「TNBC」，實際為**甲狀腺乳突癌（Papillary Thyroid Cancer，PTC）**，4T+4N=8 samples，RNA-Seq（SRR14088791–SRR14088798）。
 
 ### GSE113230（三陰性乳癌）
 
@@ -1307,7 +1354,7 @@ MDA-MB-436 TNBC cell line，EZH2 抑制劑 EPZ-6438 vs. DMSO，150bp PE，total 
 - 偵測：filterByExpr 後 **61** tested circRNAs
 - edgeR_ciriquant：2 significant circRNAs（nominal p < 0.05）；**2 Type_I (100%) / 0 Type_II**；EZH2 抑制劑對 circRNA 影響極有限（細胞株 + 藥物處理）
 - Isoform switching：**0 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 212 rows；細胞株 circRNA 量少，無顯著 switching）
-- Biomarker candidates：2 個（p < 0.05 篩選極嚴）→ `_biomarker_normality_plot` 需 n ≥ 3 的 Shapiro-Wilk 保護已加入
+- Biomarker candidates：2 個（p < 0.05 篩選極嚴）
 
 **中間檔案已清理**（raw FASTQ + trimmed + sra_cache + 中間 BAM 已刪除，釋放 77GB）；
 報告 1.3MB，保留於 `~/GSE323364_results/report.html`。
@@ -1940,6 +1987,212 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 
 ---
 
+## GSE136569（胰臟癌 PDAC，配對 tumor/normal，✅ 完成 2026-07-22）
+
+**✅ 完成（2026-07-22 02:38）。** 報告位置：`~/GSE136569_results/report.html`（server，20MB）
+
+胰臟導管腺癌（Pancreatic ductal adenocarcinoma，PDAC）手術切除組織，tumor vs. adjacent normal tissue (NAT)，5 對配對 T/N，10 samples（SRR10030979–SRR10030988）。150bp PE，Total RNA，Illumina HiSeq X Ten。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 10/10 完成（SRR10030983 曾遇 S3 DNS SERVFAIL 7+ 小時，手動 aria2c 於 2026-07-20 17:03 完成）|
+| fastp QC/trim | ✅ 10/10 完成 |
+| CIRIquant | ✅ 10/10 完成（SRR10030983 於 2026-07-20 21:05 完成，NFS I/O 良好：HISAT2 27min / BWA-MEM 51min / CIRI2 25min）|
+| STAR paired+mate1+mate2 | ✅ 30/30 完成 |
+| DCC | ✅ 10/10 完成（SRR10030983 DCC 於 2026-07-21 23:53 完成）|
+| consensus_filter / merge_counts | ✅ 完成（count_matrix.tsv 3.1MB，Jul 21 23:57）|
+| assign_isoforms / annotate_circbase | ✅ 完成（isoform_groups.tsv 9.1MB；circbase_annotated.tsv 5.6MB，耗時 ~75 min）|
+| DE analysis | ✅ 完成（三方法全跑：edgeR **199** / DESeq2 **14,163** / limma **2,340** significant）|
+| predict_interactions（union mode）| ✅ 完成（interactions.json 12MB，244 circRNAs）|
+| isoform_switching | ✅ 完成（**76 events**，within-gene FDR < 0.1，共 67,811 rows）|
+| rank_biomarkers | ✅ 完成（199 candidates，biomarker_candidates.tsv 47KB）|
+| report | ✅ 完成（report.html 20MB，2026-07-22 02:38）|
+
+**主要數值結果**：
+- 偵測：consensus circRNAs 共 **173,037**（10 樣本總計）；filterByExpr 後 **7,334 tested**
+- DE（edgeR_ciriquant）：**199 significant**（nominal p < 0.05，|log2FC| > 1）；上調 110 / 下調 89；**138 Type_I (69.3%) / 61 Type_II (30.7%)**
+- DE（DESeq2）：14,163 significant；DE（limma-voom）：2,340 significant
+- Isoform switching：76 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
+- Biomarker candidates：199 個；Top circRNAs：chr7:155465561|155473602（log2FC=4.93，p=0.025）、chr2:240929491|240946787（log2FC=5.46，p=0.0012）
+
+**注意**：Type_II 比例（30.7%）高於其他資料集（一般 10–15%），PDAC 可能有較多 circRNA/線性 RNA 雙層調控事件，值得關注。
+
+**各樣本共識 circRNA 數量**：
+
+| SRR ID | 條件 | 患者 | 共識 circRNA |
+|--------|------|------|----------:|
+| SRR10030979 | tumor | P1 | 19,371 |
+| SRR10030980 | tumor | P2 | 21,670 |
+| SRR10030981 | tumor | P3 | 12,751 |
+| SRR10030982 | tumor | P4 | 17,647 |
+| SRR10030983 | tumor | P5 | 18,025 |
+| SRR10030984 | normal | P1 | 16,542 |
+| SRR10030985 | normal | P2 | 12,202 |
+| SRR10030986 | normal | P3 | 8,108 |
+| SRR10030987 | normal | P4 | 27,199 |
+| SRR10030988 | normal | P5 | 19,522 |
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（5T + 5N）：SRR10030979–SRR10030983（PDAC1–5）；SRR10030984–SRR10030988（NAT1–5）
+- genome：hg19；配對設計（patient_id：P1–P5）
+- Library：Total RNA，150bp PE，Illumina HiSeq X Ten
+- GEO：GSE136569（PRJNA563024）
+
+**Server config**（`config/projects/GSE136569.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE136569/raw`
+- `results_dir: /home3/choukaihsuan/GSE136569_results`
+
+**SRR10030983 特殊記錄**：S3 DNS SERVFAIL 持續 7+ 小時（2026-07-20），手動 aria2c 於 17:03 完成；CIRIquant NFS I/O 良好（HISAT2 27min / BWA-MEM 51min / CIRI2 25min，遠優於 NFS 基準）；DCC 於 2026-07-21 23:53 完成（無 RBM5-locus 型卡點）。annotate_circbase 耗時 ~75 分鐘（71,457 unique circRNAs × Python iterrows 迴圈瓶頸）。
+
+---
+
+## GSE143797（鼻咽癌 NPC，✅ 完成 2026-07-19）
+
+**✅ 完成（2026-07-19 12:01）。** 報告位置：`~/GSE143797_results/report.html`（server，12MB）
+
+鼻咽癌（Nasopharyngeal Carcinoma，NPC）腫瘤組織 vs. 鼻咽炎正常組織，4 tumor + 4 normal = 8 samples（SRR10903023–SRR10903030）。Ding et al. 2020（Circular RNA expression in NPC）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 8/8 完成 |
+| fastp QC/trim | ✅ 8/8 完成 |
+| CIRIquant | ✅ 8/8 完成 |
+| STAR paired+mate1+mate2 | ✅ 24/24 完成 |
+| DCC | ✅ 8/8 完成 |
+| consensus_filter / merge_counts | ✅ 完成（8,922 circRNAs；328 after filterByExpr）|
+| assign_isoforms / annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（三方法全跑：edgeR **56** / DESeq2 / limma）|
+| predict_interactions / isoform_switching / rank_biomarkers | ✅ 完成（56 candidates；6,384 isoform rows）|
+| report | ✅ 完成（12MB）|
+
+**主要數值結果**：
+- 偵測：8,922 consensus circRNAs；filterByExpr 後 **328 tested**
+- DE（edgeR_ciriquant）：**56 significant**（nominal p < 0.05，|log2FC| ≥ 1）；上調 8 / 下調 48；**56 Type_I (100%) / 0 Type_II**——全部為 circRNA 專一性調控，無 FSJ 共同顯著
+- NPC 腫瘤 circRNA 以下調為主（下調 48 / 上調 8），與乳癌、HCC 等腺癌的全局下調趨勢一致
+- Isoform switching：6,384 rows（within-gene BH FDR 分析）
+- Biomarker candidates：56 個
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（4T + 4N）：SRR10903027–SRR10903030（Tumor）；SRR10903023–SRR10903026（Normal）
+- genome：hg19；**非配對設計**（4T + 4N，無 patient_id 欄）
+- Library：Total RNA（rRNA-depleted），NPC tumor vs. nasopharyngitis tissue（Ding et al. 2020）
+
+**Server config**（`config/projects/GSE143797.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE143797/raw`（已清理）
+- `results_dir: /home3/choukaihsuan/GSE143797_results`
+
+---
+
+## GSE108735（腎細胞癌 RCC，✅ 完成 2026-07-24）
+
+**✅ 完成（2026-07-24 16:55）。** 報告位置：`~/GSE108735_results/report.html`（server，11MB）；本機備份：`/mnt/c/Users/User/Desktop/circRNA agent report/GSE108735_report.html`
+
+> **⚠️ 資料集更正**：原標記為「TNBC」，確認為**腎細胞癌（Renal Cell Carcinoma，RCC）** tumor vs. 正常腎組織。SRA Project：SRP128028。
+
+7 pairs 腎細胞癌手術切除組織，tumor vs. adjacent normal kidney，150bp PE，**ncRNA-Seq**（非 Total RNA-Seq，circRNA 和其他 ncRNA 富集），Illumina。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 14/14 完成 |
+| fastp QC/trim | ✅ 14/14 完成 |
+| CIRIquant | ✅ 14/14 完成 |
+| STAR paired+mate1+mate2 | ✅ 42/42 完成 |
+| DCC | ✅ 14/14 完成 |
+| consensus_filter / merge_counts | ✅ 完成（14,262 circRNAs；57 after filterByExpr）|
+| assign_isoforms / annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（三方法全跑：edgeR **55** / DESeq2 / limma）|
+| predict_interactions（union mode）| ✅ 完成 |
+| isoform_switching | ✅ 完成（**377 events**，within-gene FDR < 0.1）|
+| rank_biomarkers | ✅ 完成（55 candidates）|
+| report | ✅ 完成（11MB，2026-07-24 16:55）|
+
+**主要數值結果**：
+- 偵測：**14,262 consensus circRNAs**；filterByExpr 後 **57 tested**——ncRNA-Seq 的 FSJ counts 因線性 RNA 大幅去除而趨近於零，filterByExpr 依 BSJ counts 篩選，最終只有 57 個 circRNA 在全部 14 個樣本中均有足夠表現量
+- DE（edgeR_ciriquant）：**55 significant**（nominal p < 0.05，|log2FC| > 1）；**全部上調（55 up / 0 down）**——ncRNA-Seq 富集 circRNA，RCC 腫瘤中 circRNA 整體上調，與 Total RNA-Seq 資料集「腫瘤普遍下調」趨勢相反（可能反映 library prep 差異，也可能是 RCC 特有的生物學特性）；**47 Type_I (85.5%) / 8 Type_II (14.5%)**
+- Isoform switching：**377 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 10,789 rows）
+- Biomarker candidates：**55 個**
+- Top 1 biomarker：**chr7:155465561|155473602**（log2FC=+8.38，p=1.1e-05，Type_I）——此 circRNA 也是 GSE136569（PDAC）的 Top 1 biomarker，具跨癌種重現性
+
+**注意**：filterByExpr 通過率極低（57/14,262 = 0.4%）主因是 ncRNA-Seq 的 library prep 消除了大量線性 mRNA（FSJ）；edgeR_ciriquant 需要有效的 FSJ counts 估算 offset，FSJ ≈ 0 的 circRNA 大多無法通過 TMM normalization 品管。結果應以 **BSJ counts 直接分析**（DESeq2/limma）作為輔助參考。
+
+**SRR 清單（7T + 7N，配對設計）**：
+
+| SRR ID | 條件 | 患者 |
+|--------|------|------|
+| SRR6439741 | normal | P1 |
+| SRR6439742 | normal | P2 |
+| SRR6439743 | normal | P3 |
+| SRR6439744 | normal | P4 |
+| SRR6439745 | normal | P5 |
+| SRR6439746 | normal | P6 |
+| SRR6439747 | normal | P7 |
+| SRR6439748 | tumor | P1 |
+| SRR6439749 | tumor | P2 |
+| SRR6439750 | tumor | P3 |
+| SRR6439751 | tumor | P4 |
+| SRR6439752 | tumor | P5 |
+| SRR6439753 | tumor | P6 |
+| SRR6439754 | tumor | P7 |
+
+**Server config**（`config/projects/GSE108735.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE108735/raw`（已清理）
+- `results_dir: /home3/choukaihsuan/GSE108735_results`
+- `metadata: metadata/GSE108735/library_info.csv`
+- `groups: metadata/GSE108735/sample_groups.csv`
+
+**磁碟清理（2026-07-27）**：raw/（已刪）+ trimmed/（已刪）+ mate1/mate2/BAM（已刪），釋放空間。
+
+---
+
+## GSE171011（甲狀腺乳突癌 PTC，✅ 完成 2026-07-27）
+
+**✅ 完成（2026-07-27 04:55）。** 報告位置：`~/GSE171011_results/report.html`（server，14MB）；本機備份：`/mnt/c/Users/User/Desktop/circRNA agent report/GSE171011_report.html`
+
+> **⚠️ 資料集更正**：原標記為「TNBC」，確認為**甲狀腺乳突癌（Papillary Thyroid Cancer，PTC）** tumor vs. adjacent normal。SRA Project：SRP312486（GEO: GSE171011）。
+
+4 pairs 甲狀腺乳突癌手術切除組織，tumor vs. adjacent normal thyroid tissue，4T + 4N = 8 samples（SRR14088791–SRR14088798），PAIRED，Total RNA-Seq（RNA-Seq），Illumina。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 8/8 完成 |
+| fastp QC/trim | ✅ 8/8 完成 |
+| CIRIquant | ✅ 8/8 完成（SRR14088793 第一次 de novo 失敗，第二次成功；hisat2-build 耗時 31 min）|
+| STAR paired+mate1+mate2 | ✅ 24/24 完成 |
+| DCC | ✅ 8/8 完成 |
+| consensus_filter / merge_counts | ✅ 完成（32,848 circRNAs；2,377 after filterByExpr）|
+| assign_isoforms / annotate_circbase | ✅ 完成 |
+| DE analysis | ✅ 完成（三方法全跑：edgeR **326** / DESeq2 / limma）|
+| predict_interactions（union mode）| ✅ 完成 |
+| isoform_switching | ✅ 完成（**67 events**，within-gene FDR < 0.1）|
+| rank_biomarkers | ✅ 完成（326 candidates）|
+| report | ✅ 完成（14MB，2026-07-27 04:55）|
+
+**主要數值結果**：
+- 偵測：**32,848 consensus circRNAs**；filterByExpr 後 **2,377 tested**
+- DE（edgeR_ciriquant）：**326 significant**（nominal p < 0.05，|log2FC| > 1）；上調 173 / 下調 153；**303 Type_I (92.9%) / 23 Type_II (7.1%)**
+- Isoform switching：**67 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 29,963 rows）
+- Biomarker candidates：**326 個**
+- Top 1 biomarker：**chr14:31596991|31641328**（log2FC=−9.02，pvalue=0.0155，Type_I，下調）
+- study_title：`Next Generation Sequencing of Papillary Thyroid Cancer tissue sample and adjacent normal tissue`
+
+**CIRIquant SRR14088793 de novo 失敗教訓**：第一次執行於 de novo HISAT2 alignment 階段報 `FileNotFoundError: SRR14088793_denovo.sorted.bam not created`；Snakemake 重啟後第二次成功（hisat2-build 耗時 31 min，遠超 CLAUDE.md 原估算的 8 min；等待期間從時間戳確認 index 仍在寫入、未卡住）。
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（4T + 4N）：SRR14088791–SRR14088798（配對設計，4 pairs）
+- genome：hg19；配對設計（`patient_id` 欄）
+- Library：Total RNA-Seq，150bp PE，Illumina
+
+**Server config**（`config/projects/GSE171011.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE171011/raw`（已清理）
+- `results_dir: /home3/choukaihsuan/GSE171011_results`
+
+**磁碟清理（2026-07-27）**：raw/（71G 已刪）+ trimmed/（27G 已刪）+ mate1/mate2（29G 已刪）。
+
+---
+
 ## GEO / SRA BioProject 資料集選擇指引
 
 ### 支援的 Accession 格式
@@ -2173,3 +2426,120 @@ QKI/ESRP1/2 的表現量特別低，加劇了 back-splicing 抑制。
 **整體趨勢**：乳癌（GSE113230/GSE133998）、HCC（GSE77509）、胃癌（GSE248612）、攝護腺癌（GSE221107）
 的分析結果均與此文獻一致——circRNA 在腫瘤中全局下調，且 Type_I DECs（circRNA 專一性，非線性 mRNA 變化）
 佔 85–98%，進一步支持腫瘤中背向剪接效率普遍降低的假說。
+
+---
+
+## GSE97239（膀胱癌 Bladder Cancer，✅ 完成 2026-07-30）
+
+**✅ 完成（2026-07-30 06:45）。** 報告位置：`~/GSE97239_results/report.html`（server，13MB）
+
+膀胱癌手術切除組織（Bladder Transitional Cell Carcinoma），tumor vs. adjacent normal，3 對配對 T/N，6 samples（SRR5398213–SRR5398218）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 6/6 完成（S3 aria2c） |
+| fastp QC/trim | ✅ 12/12 完成 |
+| CIRIquant | ✅ 6/6 完成 |
+| STAR paired+mate1+mate2 | ✅ 18/18 完成 |
+| DCC | ✅ 6/6 完成 |
+| consensus_filter / merge_counts | ✅ 完成（23,480 circRNAs） |
+| assign_isoforms / annotate_circbase | ✅ 完成（86.1% exonic，intronic 4,356，intergenic 672）|
+| DE analysis | ✅ 完成（edgeR **140** / DESeq2 / limma significant）|
+| predict_interactions（union mode）| ✅ 完成（228 circRNAs，interactions.json 11MB）|
+| isoform_switching | ✅ 完成（**65 events**，within-gene FDR < 0.1）|
+| rank_biomarkers | ✅ 完成（140 candidates）|
+| report | ✅ 完成（report.html 13MB，2026-07-30 06:45）|
+
+**主要數值結果**：
+- 偵測：23,480 consensus circRNAs；filterByExpr 後 **2,719 tested**
+- DE（edgeR_ciriquant）：**140 significant**（nominal p < 0.05，|log2FC| > 1）；上調 121 / 下調 19；**106 Type_I (75.7%) / 34 Type_II (24.3%)**——Type_II 比例（24.3%）高於其他資料集（一般 7–15%），可能反映膀胱癌中 circRNA/線性 RNA 雙層調控的特殊性
+- Isoform switching：**65 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 20,211 rows）
+- Biomarker candidates：140 個
+- Top 1 biomarker：**chr10:126727566|126799662（hsa_circ_0005418）**；log2FC=+5.88，p=0.0065，Type_II，score=0.7766，in_circbase=1
+- Top 2：**chr19:16192723|16197350（hsa_circ_0008432）**；log2FC=+9.47，p=0.0003，Type_II，score=0.7253
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（3T + 3N）：SRR5398213（tumor P1）、SRR5398214（tumor P2）、SRR5398215（tumor P3）；SRR5398216（normal P1）、SRR5398217（normal P2）、SRR5398218（normal P3）
+- genome：hg19；配對設計（patient_id：P1/P2/P3）
+
+**Server config**（`config/projects/GSE97239.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE97239/raw`
+- `results_dir: /home3/choukaihsuan/GSE97239_results`
+
+**啟動歷史（2026-07-29 修復）**：
+- 原 queue 命令為 `agent.py --gse GSE97239`，因 `pysradb` 未安裝於 ciriquant env 而失敗
+- metadata/groups 路徑繼承自 GSE121842（`web_ui.py _update_paths_for_project` bug）
+- 修復：手動建立 `metadata/GSE97239/`，修正 `config/projects/GSE97239.yaml`，更新 queue DB 命令為直接 snakemake 呼叫
+- `web_ui.py run_gse()` 已修正：config+metadata 存在時改用 snakemake 直接調用，避免 pysradb 依賴
+- CIRIquant 首次失敗（`ciriquant.yaml` 設定問題，見已知問題表）：2026-07-29 深夜修正後重跑，2026-07-30 06:45 完成
+
+---
+
+## GSE192410（卵巣癌 Ovarian Cancer，✅ 完成 2026-07-30）
+
+**✅ 完成（2026-07-30 22:43）。** 報告位置：`~/GSE192410_results/report.html`（server，22MB）
+
+卵巣癌組織，tumor vs. adjacent normal，3 對配對 T/N，6 samples（SRR17297761–SRR17297766）。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 6/6 完成 |
+| fastp QC/trim | ✅ 6/6 完成 |
+| CIRIquant | ✅ 6/6 完成（SRR17297766 由新舊兩個進程競爭後，新進程在 19:41 完成 GTF，見 DCC bypass 歷史）|
+| STAR paired+mate1+mate2 | ✅ 18/18 完成 |
+| DCC | ⚠️ **僅 3/6 完成**（SRR17297761/762/763；764/765/766 因 O(n²) 效能瓶頸放棄，改用 header-only bypass）|
+| consensus_filter / merge_counts | ✅ 完成（57,469 circRNAs；見下方樣本表）|
+| assign_isoforms / annotate_circbase | ✅ 完成（41,022 exonic / 13,650 intronic / 2,797 intergenic；~85 min）|
+| DE analysis（三方法）| ✅ 完成（edgeR **2,347** / DESeq2 **4,267** / limma **7,312**）|
+| predict_interactions（union mode）| ✅ 完成（232 circRNAs，13MB，約 110 min）|
+| isoform_switching | ✅ 完成（**51 events**，within-gene FDR < 0.1，共 53,969 rows）|
+| rank_biomarkers | ✅ 完成（2,347 candidates）|
+| report | ✅ 完成（22MB，2026-07-30 22:43）|
+
+**主要數值結果**：
+- 偵測：57,469 consensus circRNAs；filterByExpr 後 **7,141 tested**
+- DE（edgeR_ciriquant）：**2,347 significant**（nominal p < 0.05，|log2FC| > 1）；上調 61 / 下調 2,286（腫瘤普遍下調）；**2,049 Type_I (87.3%) / 298 Type_II (12.7%)**
+- DE（DESeq2）：4,267 significant；DE（limma-voom）：7,312 significant
+- Isoform switching：**51 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 53,969 rows）
+- Biomarker candidates：2,347 個
+- Top 1 biomarker：**chr5:43292576|43297268（hsa_circ_0008621）**；log2FC=−12.79，p≈0，Type_I，下調
+- Top 2：**chr2:61719170|61722748（hsa_circ_0054876）**；log2FC=−6.57，Type_I
+- Top 3：**chr15:25638893|25660989（hsa_circ_0006140）**；log2FC=−6.34，Type_I
+
+**⚠️ 重要注意：DCC bypass 導致偵測方法不對稱**
+
+腫瘤樣本（SRR17297761/762/763）：CIRIquant + DCC **雙工具共識**（min_tools=2）
+正常樣本（SRR17297764/765/766）：**CIRIquant-only**（DCC bypass + adaptive fallback，min_tools=1）
+
+此不對稱導致正常樣本保留更多 circRNAs（16,493–33,267）相對腫瘤樣本（1,567–11,683），進而造成大量 circRNA 在正常樣本中有更高表現量，DE 分析中呈現腫瘤「下調」的假象。**edgeR 的 2,347 個顯著 circRNA（下調 2,286）很可能受此方法偏差影響，解讀時需謹慎**。若未來重跑此資料集，建議全部 6 個樣本統一使用 CIRIquant-only 模式（`USE_DCC=False`）以消除偏差。
+
+**各樣本 consensus circRNA 數量**：
+
+| SRR ID | 條件 | 患者 | 方法 | 共識 circRNA |
+|--------|------|------|------|----------:|
+| SRR17297761 | tumor | P1 | CIRIquant+DCC | 11,683 |
+| SRR17297762 | tumor | P2 | CIRIquant+DCC | 2,890 |
+| SRR17297763 | tumor | P3 | CIRIquant+DCC | 1,567 |
+| SRR17297764 | normal | P1 | CIRIquant-only（DCC bypass）| 32,067 |
+| SRR17297765 | normal | P2 | CIRIquant-only（DCC bypass）| 33,267 |
+| SRR17297766 | normal | P3 | CIRIquant-only（DCC bypass）| 16,493 |
+
+**DCC O(n²) 瓶頸歷史（2026-07-29～30）**：
+- DCC 0.5.0 的 duplicate-marking 使用 list `in` 操作（O(N²) 複雜度），對含 1.3–1.9M 總 junction 的樣本估算需 23–26 小時/樣本
+- **第一輪**：針對 chr10:116879948↔116889298（50,000+ reads）等高頻 junction 執行精確過濾，仍卡住
+- **第二輪**：bulk threshold 過濾（>1000 combined count），max 降至 986，仍卡住（tmp_nonduplicates 僅以 39 KB/min 增長）
+- **第三輪（最終方案）**：放棄 764/765/766 的 DCC；在 `DCC/CircCoordinates` 放入 header-only 檔案（1 行，70 bytes），刪除 `.snakemake/incomplete/` 中對應的 base64 標記，重啟 Snakemake with `--rerun-triggers mtime`；`parse_dcc()` 讀到 0 circRNA → adaptive fallback 觸發（min/max ratio=0 < 0.1）→ CIRIquant-only 模式
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（3T + 3N）：SRR17297761/762/763（tumor P1/P2/P3）；SRR17297764/765/766（normal P1/P2/P3）
+- genome：hg19；配對設計（patient_id：P1/P2/P3）
+- study_title：`Circular RNA expression profiling in ovarian cancer tumor and adjacent normal tissue`
+
+**Server config**（`config/projects/GSE192410.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE192410/raw`
+- `results_dir: /home3/choukaihsuan/GSE192410_results`
+- `sra_cache_dir: /home3/choukaihsuan/GSE192410/sra_cache`
+
+**Queue 失敗歷史（2026-07-29 修復）**：與 GSE97239 相同原因（pysradb 依賴 + metadata 路徑繼承 bug），修復方式相同。
