@@ -37,6 +37,7 @@ dependencies:
   - requests
   - pyyaml>=6.0
   - flask=3.0.0
+  - flask-wtf
   - pyliftover
 
   # ── R & Bioconductor ─────────────────────────────

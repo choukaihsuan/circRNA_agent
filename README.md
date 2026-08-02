@@ -142,12 +142,21 @@ cd circRNA_agent
 # 1. Activate an environment with the dependencies above (conda or container)
 conda activate ciriquant   # or: your equivalent environment
 
-# 2. Point config.yaml's genome: section at your reference genome + indices
-#    (see Configuration Reference below)
+# 2. Edit config.yaml and config/ciriquant.yaml — see the warning below
+#    (see Reference genome / Configuration Reference for exactly what to change)
 
 # 3. Start the Web UI
 python scripts/web_ui.py --host 0.0.0.0 --port 5000
 ```
+
+> ⚠️ **`config.yaml` and `config/ciriquant.yaml` are checked into this repo
+> as the maintainer's own working copies**, not blank templates — every path
+> in them (reference genome files, index directories, tool binaries, cache
+> directories) points to a specific machine and does not exist on yours. The
+> pipeline will fail with confusing `FileNotFoundError`/`ConfigError`
+> messages until you replace them. See
+> [Reference genome](#reference-genome) below for the exact fields to edit
+> before running anything.
 
 Then open `http://<your-server-ip>:5000` in a browser, paste a GEO accession
 (e.g. `GSE113230`) into the "GEO Dataset" card, pick a core count, and click
@@ -170,7 +179,7 @@ environment on a new HPC cluster without managing conda yourself.
 
 ```bash
 mamba env create -f envs/circrna.yaml   # or: conda env create -f envs/circrna.yaml
-conda activate circrna
+conda activate ciriquant                # note: the env is named "ciriquant", not "circrna"
 ```
 
 `envs/circrna.yaml` pulls everything from `bioconda` + `conda-forge` (no
@@ -182,20 +191,62 @@ for the exact keys expected.
 
 ### Reference genome
 
-Regardless of which option you choose, you need:
+**1. Get a FASTA + GTF pair.** Any matched hg19/GRCh37 pair works — common
+sources are the UCSC Genome Browser's "goldenPath" downloads, GENCODE
+(release 19 is the last GRCh37-based annotation), or a pre-bundled Illumina
+iGenomes `hg19` package (which conveniently also ships pre-built indices).
+Search for whichever of these you prefer to use and download both files.
+
+**2. Build the aligner indices** (skip this step if you used an iGenomes
+bundle that already includes them):
+
+```bash
+# BWA
+bwa index -p /path/to/index/hg19 /path/to/hg19.fa
+
+# HISAT2
+hisat2-build /path/to/hg19.fa /path/to/index/hg19_hisat2_index
+
+# STAR (--sjdbOverhang should be read_length - 1; 149 assumes 150bp reads —
+# adjust to match your dataset)
+STAR --runMode genomeGenerate \
+     --genomeDir /path/to/star_index \
+     --genomeFastaFiles /path/to/hg19.fa \
+     --sjdbGTFfile /path/to/genes.gtf \
+     --sjdbOverhang 149 \
+     --runThreadN 8
+```
+
+**3. Point both config files at your paths.** `config.yaml` and
+`config/ciriquant.yaml` ship in this repo pre-filled with the maintainer's
+own paths (see the warning above) — every field below needs to be replaced
+with your own:
+
+| File | Field(s) | What it should point to |
+|------|----------|--------------------------|
+| `config.yaml` | `genome.fasta` | the FASTA file from step 1 |
+| `config.yaml` | `genome.gtf` | the GTF file from step 1 |
+| `config.yaml` | `genome.bwa_index` | the `-p` prefix you gave `bwa index` in step 2 |
+| `config.yaml` | `genome.hisat2_index` | the prefix you gave `hisat2-build` in step 2 |
+| `config.yaml` | `genome.star_index` | the `--genomeDir` you gave `STAR` in step 2 |
+| `config.yaml` | `download.sra_cache_dir`, `download.tmp_dir` | any writable scratch directories on your machine |
+| `config/ciriquant.yaml` | `tools.bwa`, `tools.hisat2`, `tools.samtools`, `tools.stringtie`, `tools.java` | absolute paths to each binary **inside your environment** (e.g. `which bwa` after activating it) |
+| `config/ciriquant.yaml` | `reference.fasta`, `reference.gtf`, `reference.bwa_index`, `reference.hisat_index` | same values as the `config.yaml` genome paths above |
 
 ```yaml
+# config.yaml — genome: block, for reference
 genome:
   fasta:        /path/to/hg19.fa
   gtf:          /path/to/genes.gtf
-  bwa_index:    /path/to/hg19.fa          # BWA index prefix (same as fasta path)
-  hisat2_index: /path/to/hg19_hisat2_index
+  bwa_index:    /path/to/index/hg19          # prefix, not the .fa file itself
+  hisat2_index: /path/to/index/hg19_hisat2_index
   star_index:   /path/to/star_index
   species:      hg19
 ```
 
-Standard UCSC/Ensembl hg19 FASTA + GTF work; build the BWA/HISAT2/STAR indices
-with their respective `*-build`/`*-index` commands ahead of time.
+CIRIquant checks every path in `config/ciriquant.yaml` literally (it does not
+search `$PATH`), so a bare command name like `bwa` will fail — always use the
+full `/path/to/env/bin/bwa`-style path there.
 
 ### Do I need to edit `config.yaml` myself?
 
