@@ -163,6 +163,35 @@ genome:
 Standard UCSC/Ensembl hg19 FASTA + GTF work; build the BWA/HISAT2/STAR indices
 with their respective `*-build`/`*-index` commands ahead of time.
 
+### Do I need to edit `config.yaml` myself?
+
+It depends on which role you're in:
+
+- **Setting up the environment (once, ever)** — yes. Whoever installs the
+  pipeline needs to manually fill in two files before the first analysis can
+  run at all:
+  - `config.yaml`'s `genome:` block (reference FASTA/GTF/index paths, shown
+    above)
+  - `config/ciriquant.yaml` (absolute paths to `bwa`/`hisat2`/`samtools`/
+    `java`/`perl` inside your environment — CIRIquant checks these paths
+    literally, so bare command names like `bwa` will fail)
+
+  These are environment-level settings, independent of which dataset you
+  analyze, and normally only need to be done once per server/cluster.
+
+- **Running an analysis (every time)** — no. Once the environment is set up,
+  everything else — `project_id`, `raw_dir`/`trimmed_dir`/`results_dir`,
+  `metadata`/`groups` paths, circRNA detection tool selection, DE method,
+  and threshold parameters (Steps 1–3 in the Web UI) — is generated and
+  saved automatically when you submit a dataset through the Web UI. Each
+  submission writes its own snapshot to `config/projects/{GSE_ID}.yaml`, so
+  you never need to hand-edit `config.yaml` to launch or switch between
+  analyses.
+
+In short: someone configures the reference genome and tool paths once when
+setting the pipeline up; after that, day-to-day users only interact with the
+Web UI's forms.
+
 ---
 
 ## Usage Guide
