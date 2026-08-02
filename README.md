@@ -1,60 +1,552 @@
-# circRNA_agent
+# CircDEX — circRNA Differential Expression Pipeline
 
-## Container Deployment
+An end-to-end, Snakemake-driven pipeline for circular RNA (circRNA) discovery and
+differential expression analysis, from raw GEO/SRA sequencing data to an
+interactive, self-contained HTML report — all driven through a browser-based
+Web UI, no command-line experience required.
 
-The pipeline ships a Docker image that can be converted to a Singularity `.sif`
-for portable execution on any HPC cluster.
+Given a GEO accession (or your own FASTQ files), the pipeline downloads/aligns
+the data, detects circRNAs with a dual-tool consensus strategy (CIRIquant +
+DCC), runs differential expression analysis (tumor vs. normal, or any two
+conditions), ranks candidate biomarkers, and produces a single interactive
+HTML report you can open in any browser — complete with volcano plots,
+clustering heatmaps, per-circRNA structure diagrams, and miRNA/RBP binding
+site predictions.
 
-### 1 · Build and test locally (WSL2 / Linux)
+---
+
+## Table of Contents
+
+- [Key Features](#key-features)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Usage Guide](#usage-guide)
+  - [1. Starting the Web UI](#1-starting-the-web-ui)
+  - [2. Choosing an input method](#2-choosing-an-input-method)
+  - [3. Configuring the analysis](#3-configuring-the-analysis)
+  - [4. Monitoring progress](#4-monitoring-progress)
+  - [5. Reading the report](#5-reading-the-report)
+  - [6. Cross-dataset comparison](#6-cross-dataset-comparison)
+- [Command-Line Usage](#command-line-usage)
+- [Configuration Reference](#configuration-reference)
+- [Pipeline Architecture](#pipeline-architecture)
+- [Choosing a Good Dataset](#choosing-a-good-dataset)
+- [Container Deployment (Docker / Singularity)](#container-deployment-docker--singularity)
+- [Troubleshooting](#troubleshooting)
+- [Project Structure](#project-structure)
+- [Methodology Notes](#methodology-notes)
+
+---
+
+## Key Features
+
+- **One-click GEO analysis** — paste a GEO/SRA accession (`GSEnnnnnn`, `PRJNAnnnnnn`,
+  or `SRPnnnnnn`) and the pipeline downloads the data and infers tumor/normal
+  labels automatically.
+- **Dual-tool circRNA consensus** — CIRIquant + DCC, with confidence scoring
+  and an adaptive fallback for datasets where one tool underperforms (e.g.
+  short-read libraries).
+- **Three differential-expression methods** run side-by-side: `edgeR_ciriquant`
+  (a BSJ/FSJ-ratio test unique to this pipeline, distinguishing circRNA-specific
+  regulation from linear mRNA co-regulation), `DESeq2`, and `limma-voom`.
+- **Composite biomarker ranking** combining significance, fold-change, detection
+  confidence, circBase novelty, and predicted miRNA/RBP binding partners.
+- **Interactive self-contained HTML report** — Plotly volcano/PCA/heatmap
+  charts, a hierarchical clustering heatmap with a real dendrogram, per-circRNA
+  circular structure diagrams, sortable/exportable tables, and circBase
+  hyperlinks — all in one file you can email or archive.
+- **Cross-dataset comparison page** — once you've analyzed several datasets,
+  see which circRNAs recur across cancer types (or within the same cancer
+  type across independent cohorts).
+- **Job queue** — submit several datasets back-to-back; they run one at a time
+  with email notifications on completion.
+- **Three ways to bring in data**: a GEO accession, a manual SRR list/CSV
+  upload, or FASTQ files you already have on the server.
+
+---
+
+## Requirements
+
+The pipeline is built around a set of bioinformatics tools that are easiest to
+obtain via the provided **Docker/Singularity image** (see
+[Container Deployment](#container-deployment-docker--singularity)) or a conda
+environment (`envs/circrna.yaml`):
+
+| Tool | Purpose |
+|------|---------|
+| Snakemake ≥ 7 | Workflow orchestration |
+| CIRIquant | Primary circRNA detection (HISAT2 + BWA) |
+| DCC | Secondary circRNA detection (STAR chimeric alignment) |
+| STAR, HISAT2, BWA | Read alignment |
+| samtools | BAM handling |
+| fastp, FastQC, MultiQC | QC and trimming |
+| sra-tools, aria2c | SRA/GEO data download |
+| R ≥ 4.2 (edgeR, DESeq2, limma, qvalue) | Differential expression |
+| Python ≥ 3.7 (pandas, plotly, scipy, Flask) | Analysis scripts + Web UI |
+
+You will also need a **reference genome** (hg19 by default) with pre-built
+BWA, HISAT2, and STAR indices, and a GTF annotation file.
+
+The pipeline is designed to run on a Linux server or HPC cluster with enough
+cores/RAM for genome alignment (a single sample's CIRIquant run can peak at
+tens of GB of RAM and, on slower storage, several hundred GB of temporary
+disk space) — a modest laptop is not a realistic target for anything beyond
+inspecting the code.
+
+---
+
+## Quick Start
+
+The fastest way to see the pipeline work end-to-end is the Web UI's one-click
+GEO launcher:
 
 ```bash
-# Run from the repo root (Docker Hub user is already set to choukaihsuan):
-bash containers/build_and_deploy.sh
+git clone <this-repo> circRNA_agent
+cd circRNA_agent
+
+# 1. Activate an environment with the dependencies above (conda or container)
+conda activate ciriquant   # or: your equivalent environment
+
+# 2. Point config.yaml's genome: section at your reference genome + indices
+#    (see Configuration Reference below)
+
+# 3. Start the Web UI
+python scripts/web_ui.py --host 0.0.0.0 --port 5000
 ```
 
-This will:
-- Build `circrna-pipeline:1.0.0` from the `Dockerfile`
-- Run a smoke-test (CIRIquant, snakemake, R/edgeR)
-- Tag and push to Docker Hub
+Then open `http://<your-server-ip>:5000` in a browser, paste a GEO accession
+(e.g. `GSE113230`) into the "GEO 一鍵啟動" card, pick a core count, and click
+start. The status page will show live progress through download → QC →
+detection → differential expression → report generation, and you'll be able
+to open the finished HTML report directly from the browser once it's done.
 
-### 2 · Convert to Singularity on the HPC server
+---
+
+## Installation
+
+### Option A — Docker / Singularity (recommended, most portable)
+
+A pre-built image with every dependency already installed is available on
+Docker Hub. See [Container Deployment](#container-deployment-docker--singularity)
+for the full walkthrough — this is the easiest way to get a working
+environment on a new HPC cluster without managing conda yourself.
+
+### Option B — Conda environment
 
 ```bash
-# On 172.16.0.178 (CentOS 7):
-bash ~/circRNA_agent/containers/build_and_deploy.sh --hpc
+mamba env create -f envs/circrna.yaml   # or: conda env create -f envs/circrna.yaml
+conda activate circrna
 ```
 
-This pulls the Docker Hub image and saves it as
-`~/circRNA_agent/containers/circrna-pipeline_1.0.0.sif`.
+`envs/circrna.yaml` pulls everything from `bioconda` + `conda-forge` (no
+`defaults` channel, to avoid Anaconda's commercial-use terms). After creating
+the environment, point `config/ciriquant.yaml` at the absolute paths of the
+tools inside your environment (CIRIquant validates tool paths literally, so
+relative names like `bwa` will not resolve) — see the comments in that file
+for the exact keys expected.
 
-The `--bind` flags map HPC host paths into the container:
+### Reference genome
 
-| Host path | Container path | Contents |
-|-----------|---------------|----------|
-| `/home3/choukaihsuan` | `/home3/choukaihsuan` | home, results, sra_cache |
-| `/home3/choukaihsuan/reference` | `/reference` | hg19 genome + indices |
+Regardless of which option you choose, you need:
 
-### 3 · Run the pipeline with Singularity
+```yaml
+genome:
+  fasta:        /path/to/hg19.fa
+  gtf:          /path/to/genes.gtf
+  bwa_index:    /path/to/hg19.fa          # BWA index prefix (same as fasta path)
+  hisat2_index: /path/to/hg19_hisat2_index
+  star_index:   /path/to/star_index
+  species:      hg19
+```
+
+Standard UCSC/Ensembl hg19 FASTA + GTF work; build the BWA/HISAT2/STAR indices
+with their respective `*-build`/`*-index` commands ahead of time.
+
+---
+
+## Usage Guide
+
+### 1. Starting the Web UI
 
 ```bash
-# Set use_container: true in config.yaml first, then:
-cd ~/circRNA_agent
-nohup snakemake \
+cd circRNA_agent
+conda activate ciriquant   # or your environment name
+python scripts/web_ui.py --host 0.0.0.0 --port 5000
+```
+
+Open `http://<host>:5000` in a browser. If email login is configured
+(`PIPELINE_ALLOWED_EMAILS` environment variable + either `RESEND_API_KEY` or
+SMTP credentials), you'll be asked to sign in via a one-time magic link sent
+to your email; the link is valid for 30 minutes and the resulting session
+lasts 7 days. If no email is configured, the console will print the magic
+link directly so you can copy it into the browser.
+
+### 2. Choosing an input method
+
+The main page offers three ways to start an analysis:
+
+**Method 1 — GEO accession (one-click)**
+Paste a `GSExxxxxx`, `PRJNAxxxxxx`, or `SRPxxxxxx` accession and a core count,
+then submit. The pipeline fetches sample metadata automatically and tries to
+detect case/control (tumor/normal) labels from the sample descriptions —
+review the detected labels before starting, since automatic detection can be
+ambiguous for unusually-named samples.
+
+**Method 2 — Manual SRR list / CSV upload**
+If automatic GEO detection doesn't work for your dataset (common for
+`PRJNA`/`SRP` accessions, whose metadata endpoints are sometimes blocked on
+restricted networks), enter SRR IDs and conditions by hand, or upload a CSV
+with `srr_id,condition` columns (a `patient_id` column can be added for
+paired tumor/normal designs). A worked example table is shown on the page.
+
+**Method 3 — Local FASTQ files**
+If you already have FASTQ files on the server (e.g. from a private
+sequencing run), point the Web UI at the directory; it auto-detects paired
+files (`_1/_2`, `_R1/_R2`, `_R1_001/_R2_001` conventions) and lets you assign
+conditions per sample in a table. The pipeline symlinks these into its
+working directory and skips the download step entirely.
+
+Before picking a dataset, it's worth reviewing the built-in **Dataset
+Selection Guide** card on the main page — it walks through the read-length,
+library-prep, and sample-size criteria that most affect result quality (see
+also [Choosing a Good Dataset](#choosing-a-good-dataset) below).
+
+### 3. Configuring the analysis
+
+Three configuration steps appear after you pick an input method:
+
+- **Step 1 — circRNA detection tools**: CIRIquant only, DCC only, or both
+  (recommended; the pipeline requires agreement between both tools by
+  default, improving specificity at some cost to sensitivity).
+- **Step 2 — differential expression**: all three methods (`edgeR_ciriquant`,
+  `DESeq2`, `limma-voom`) always run; you choose which one the report
+  displays by default (you can switch between them interactively in the
+  finished report without re-running anything).
+- **Step 3 — advanced parameters**: minimum BSJ read count, coordinate
+  tolerance between tools (`slop`), pseudo-circRNA filtering ratio, FDR/log2FC
+  cutoffs, and thread count.
+
+Saving the configuration writes both the global `config.yaml` and a permanent
+per-project snapshot at `config/projects/{GSE_ID}.yaml`, so re-launching the
+same accession later reuses its own settings rather than whatever project ran
+most recently.
+
+### 4. Monitoring progress
+
+Submitting an analysis takes you to a **status page** that auto-refreshes
+every 5 seconds, showing a progress bar and a grid of pipeline stages (each
+turns green as its output appears). If you submit multiple datasets, they're
+placed in a **job queue** (`/queue`) and run one at a time — you'll get an
+email when a job starts and when it finishes (or fails), if email is
+configured.
+
+### 5. Reading the report
+
+The finished report (`report.html`) is fully self-contained — download it or
+open it directly in the browser. It includes, top to bottom:
+
+- **Sample overview** — read counts, trimming stats, and QC summary per
+  sample (tumor/normal color-coded).
+- **DE method switcher** — toggle between `edgeR_ciriquant` / `DESeq2` /
+  `limma-voom`; every chart and table below updates in place.
+- **PCA and volcano plots** (interactive Plotly charts).
+- **Clustering heatmap** — all significant circRNAs, hierarchically clustered
+  with a real dendrogram; always expanded, no need to click to reveal it.
+- **Top differentially-expressed circRNA tables**, split into up/down-regulated,
+  with gene annotation, exon structure, and clickable circBase links.
+- **Type I / Type II classification** (only for the `edgeR_ciriquant` method)
+  — distinguishes circRNA-specific regulation (Type I) from cases where the
+  linear mRNA also changed significantly (Type II).
+- **3-method Venn diagram** — click any region to see which circRNAs are
+  shared or unique across the three DE methods.
+- **Biomarker candidate table**, ranked by a composite score (significance +
+  fold-change + detection confidence + circBase novelty + predicted miRNA/RBP
+  binding partners); the display count is adjustable.
+- **Isoform switching table** — genes with multiple circRNA isoforms whose
+  relative usage shifts between conditions.
+- **Per-circRNA detail view** — click any circRNA ID to open a modal with its
+  circular exon structure, predicted miRNA sponge sites, RBP binding sites,
+  a mini volcano plot, and a zoomed-in clustering-heatmap view of its nearest
+  neighbors by expression pattern.
+
+Every table can be sorted by clicking its headers and exported to CSV; the
+whole report can be printed or saved as PDF from the toolbar at the top.
+
+### 6. Cross-dataset comparison
+
+Once you've analyzed more than one dataset, visit `/cross_dataset` from the
+navigation bar to see which circRNAs are differentially expressed in more
+than one dataset — including an option to compare only datasets that share
+the same cancer type/tissue, rather than mixing everything together.
+
+---
+
+## Command-Line Usage
+
+For scripting, HPC job schedulers, or CI, you can run the pipeline directly
+with Snakemake instead of the Web UI:
+
+```bash
+conda activate ciriquant
+snakemake \
     --snakefile workflow/Snakefile \
     --configfile config.yaml \
     --cores 36 \
     --resources mem_gb=300 \
-    --use-singularity \
-    --singularity-args "--bind /home3/choukaihsuan:/home3/choukaihsuan --bind /home3/choukaihsuan/reference:/reference" \
     --keep-going \
-    --rerun-incomplete \
-    > logs/pipeline_singularity.log 2>&1 &
-echo "PID: $!"
+    --rerun-incomplete
 ```
 
-### When to set `use_container: true`
+`scripts/agent.py` offers a thinner CLI wrapper around the same workflow:
 
-Set this flag whenever running with `--use-singularity`.  It switches the
-CIRIquant config to `config/ciriquant_container.yaml`, which uses tool names
-(no absolute paths) and the container's Java at
-`/usr/lib/jvm/default-java/bin/java`.
+```bash
+python scripts/agent.py --gse GSE113230 --cores 8
+python scripts/agent.py --gse GSE113230 --cores 8 --dry-run     # preview the DAG
+python scripts/agent.py --gse GSE113230 --cluster "sbatch ..." --jobs 50
+```
+
+> **Note:** `agent.py`'s GEO metadata lookup depends on `pysradb`, which may
+> not be installed in every environment. If it's unavailable, prepare
+> `metadata/library_info.csv` and `metadata/sample_groups.csv` yourself (or
+> via the Web UI's manual CSV upload, which writes exactly these files) and
+> invoke `snakemake` directly as shown above.
+
+---
+
+## Configuration Reference
+
+`config.yaml` (or a per-project snapshot under `config/projects/`) controls
+every parameter of a run:
+
+```yaml
+project_id: GSE113230                 # used to name output directories
+metadata:   metadata/library_info.csv # SRR/sample metadata
+groups:     metadata/sample_groups.csv # condition labels
+
+raw_dir:     /path/to/raw_fastq
+trimmed_dir: /path/to/trimmed
+results_dir: /path/to/results
+
+genome:
+  fasta:        /path/to/hg19.fa
+  gtf:          /path/to/genes.gtf
+  bwa_index:    /path/to/hg19.fa
+  hisat2_index: /path/to/hisat2_index
+  star_index:   /path/to/star_index
+  species:      hg19
+
+ciriquant_config: config/ciriquant.yaml
+
+consensus:
+  tools:              [ciriquant, dcc]  # or a single tool
+  min_tools:           2                # required agreeing tools
+  slop:                10               # coordinate tolerance (bp)
+  min_bsj_reads:        2
+  max_junction_ratio:   1.0             # pseudo-circRNA QC (CIRIquant-only loci)
+
+de:
+  method:              edgeR_ciriquant  # report's default display method
+  fdr_cutoff:          0.05
+  log2fc_cutoff:       1.0
+  de_sig_by:           pvalue           # pvalue (nominal) or padj (BH-corrected)
+  tumor_label:         tumor
+  normal_label:        normal
+
+threads: 8
+```
+
+Key parameters worth understanding before your first run:
+
+- **`consensus.tools`** — using both `ciriquant` and `dcc` gives higher-confidence
+  calls (both tools must agree within `slop` base pairs) at the cost of some
+  sensitivity; single-tool mode is used automatically as a fallback when one
+  tool's detection count is drastically lower than the other's (e.g. short
+  reads that STAR's chimeric alignment handles poorly).
+- **`de.de_sig_by`** — small studies (3 vs. 3 samples is common for circRNA
+  studies) rarely survive Benjamini-Hochberg correction across thousands of
+  tests; `pvalue` (nominal, uncorrected) is the common practical choice for
+  exploratory work, but should be reported as such in any resulting
+  publication.
+
+---
+
+## Pipeline Architecture
+
+```
+SRA/GEO accession
+      │
+      ▼
+ [download]  aria2c (S3) → ascp → prefetch (fallback chain)
+      │
+      ▼
+   [QC/trim]  FastQC + fastp + MultiQC
+      │
+      ├─────────────────────────┐
+      ▼                         ▼
+ [CIRIquant]              [STAR chimeric] ──▶ [DCC]
+ (HISAT2 + BWA)                 │
+      │                          │
+      └──────────┬───────────────┘
+                 ▼
+        [consensus filter]
+        coordinate-tolerant voting between tools
+        + confidence scoring
+                 │
+                 ▼
+        [count matrix + annotation]
+        BSJ/FSJ counts, host gene, circBase ID
+                 │
+                 ▼
+   [differential expression]
+   edgeR_ciriquant / DESeq2 / limma-voom (all three, always)
+                 │
+        ┌────────┴────────┐
+        ▼                 ▼
+ [biomarker ranking]  [isoform switching]
+        │                 │
+        └────────┬────────┘
+                 ▼
+         [HTML report]
+```
+
+---
+
+## Choosing a Good Dataset
+
+Not every public RNA-seq dataset is suitable for circRNA analysis. Before
+committing compute time to a large download, check:
+
+| Factor | Look for | Avoid |
+|--------|----------|-------|
+| Read length | ≥ 100 bp paired-end | < 50 bp, single-end |
+| Library prep | Total RNA (rRNA-depleted) or RNase R-enriched | poly-A selected (circRNAs lack poly-A tails and are barely detectable) |
+| Replicates | ≥ 3 per group (≥ 5 preferred) | n = 1 or 2 |
+| Design | Paired tumor/adjacent-normal from the same patient | unrelated case/control cohorts (less statistical power) |
+| Sequencing depth | ≥ 50M reads/sample | < 30M reads/sample |
+
+Squamous-cell carcinomas and other cancer types with globally low circRNA
+expression can pass every criterion above and still yield very few testable
+circRNAs after expression filtering — this becomes apparent only after
+running the pipeline, at which point switching the report's default DE
+method to `limma-voom` (more robust to sparse count matrices) is a reasonable
+fallback.
+
+---
+
+## Container Deployment (Docker / Singularity)
+
+A pre-built image with every dependency (CIRIquant, DCC, STAR, HISAT2, BWA,
+R/Bioconductor, Snakemake) is published to Docker Hub, and can be converted
+to a Singularity/Apptainer image for HPC clusters that don't allow Docker.
+
+### 1 — Build and test locally (optional — only needed if you're modifying the image)
+
+```bash
+bash containers/build_and_deploy.sh
+```
+
+This builds `circrna-pipeline:1.0.1` from the `Dockerfile`, runs a smoke test
+(CIRIquant, Snakemake, R/edgeR), and pushes it to Docker Hub.
+
+### 2 — Pull the image on your HPC cluster
+
+```bash
+singularity pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.1
+# or, with Apptainer (identical syntax):
+apptainer pull circrna-pipeline.sif docker://choukaihsuan/circrna-pipeline:1.0.1
+```
+
+> Your cluster must have Singularity/Apptainer with user namespaces enabled.
+> If pulling fails with a namespace-related permission error, ask your
+> cluster administrator to run `echo 10000 > /proc/sys/user/max_user_namespaces`,
+> or use a setuid-installed Singularity build.
+
+### 3 — Run the pipeline with Singularity
+
+Set `use_container: true` in `config.yaml` (this switches CIRIquant to
+`config/ciriquant_container.yaml`, which uses in-container tool names instead
+of absolute host paths), then:
+
+```bash
+snakemake \
+    --snakefile workflow/Snakefile \
+    --configfile config.yaml \
+    --cores 36 \
+    --use-singularity \
+    --singularity-args "--bind /path/to/your/data:/path/to/your/data" \
+    --keep-going --rerun-incomplete
+```
+
+---
+
+## Troubleshooting
+
+- **Web UI page auto-translated into the wrong language by your browser** —
+  the pages set `translate="no"`, but some browsers still offer a translation
+  prompt on first visit; decline it once and it won't reoffer.
+- **A pipeline run appears to hang** — check the status page's log viewer
+  first; long CIRIquant runs (multiple hours for large total-RNA samples) are
+  normal, not necessarily stuck. If a run was interrupted (e.g. the process
+  was killed), you may need `snakemake --unlock` before restarting.
+- **`ConfigError` from CIRIquant about missing tools** — CIRIquant checks
+  tool paths literally; `config/ciriquant.yaml`'s `tools:` section needs
+  full absolute paths (e.g. `/opt/conda/envs/ciriquant/bin/bwa`), not bare
+  command names.
+- **Very few circRNAs pass expression filtering** — this is common for
+  squamous-cell carcinomas, short-read libraries, or small/unbalanced sample
+  sizes; try switching the report's DE method to `limma-voom`, which is more
+  robust to sparse count matrices than `edgeR`/`DESeq2` defaults.
+- **PRJNA/SRP accession metadata lookup fails** — some networks block the
+  NCBI eUtils endpoints those accessions rely on; use the Web UI's manual
+  CSV upload instead, after fetching metadata from a machine that does have
+  access (`python scripts/download_geo.py --gse PRJNAxxxxxx`).
+
+---
+
+## Project Structure
+
+```
+circRNA_agent/
+├── config.yaml                  # active run configuration
+├── config/
+│   ├── ciriquant.yaml           # CIRIquant tool paths
+│   └── projects/{GSE_ID}.yaml   # per-project saved configuration
+├── workflow/
+│   ├── Snakefile
+│   └── rules/                   # download / QC / detection / DE rule definitions
+├── scripts/
+│   ├── agent.py                 # CLI entry point
+│   ├── web_ui.py                # Flask Web UI
+│   ├── consensus_filter.py      # dual-tool circRNA consensus voting
+│   ├── analysis.R               # differential expression (3 methods)
+│   ├── rank_biomarkers.py       # composite biomarker scoring
+│   ├── generate_report.py       # interactive HTML report builder
+│   └── templates/               # Web UI + report HTML templates
+├── metadata/                    # per-project sample metadata (auto-generated)
+├── envs/circrna.yaml            # conda environment definition
+└── containers/                  # Docker/Singularity build scripts
+```
+
+---
+
+## Methodology Notes
+
+- **Consensus detection**: coordinate-tolerant voting between CIRIquant and
+  DCC output (default ±10 bp), following the general consensus-detection
+  rationale established by CirComPara2 (Gaffo et al. 2022) and Hansen (2018).
+  A confidence score (log-scaled read support × coordinate agreement,
+  averaged per supporting tool) is reported per circRNA but is a heuristic
+  ranking signal, not a statistical probability.
+- **`edgeR_ciriquant`**: tests whether the BSJ/FSJ ratio (back-splice vs.
+  linear-splice junction usage) changes between conditions, using FSJ counts
+  as a normalization offset — this distinguishes circRNA-specific regulation
+  (Type I) from cases where the change is really in overall gene expression
+  and the circRNA simply followed along (Type II).
+- **Isoform switching**: significance is assessed with within-gene
+  Benjamini-Hochberg correction (DEXSeq-style), not a global correction
+  across all isoforms — appropriate given that switching is a gene-local
+  phenomenon.
+
+For dataset-specific analysis notes, known issues, and their resolutions,
+see `CLAUDE.md` in the repository root.

@@ -33,6 +33,13 @@
                 font-weight:600; transition:all 0.15s; }
     .lang-btn:hover { background:rgba(255,255,255,.2); color:#fff; }
 
+    /* ── UpSet mode toggle ── */
+    .upset-mode-btn { font-size:11.5px; padding:3px 11px; border-radius:5px; cursor:pointer;
+                      border:1px solid #cbd5e1; background:#f1f5f9; color:#475569;
+                      font-weight:500; transition:all 0.15s; }
+    .upset-mode-btn:hover { border-color:#94a3b8; color:#1e293b; }
+    .upset-mode-btn.active { background:#2563eb; border-color:#2563eb; color:#fff; font-weight:600; }
+
     /* ── Layout ── */
     .container { max-width:1200px; margin:0 auto; padding:32px 20px 80px; }
     .page-title { font-size:22px; font-weight:800; margin-bottom:6px; }
@@ -230,6 +237,50 @@
     <div id="cross-heatmap" style="width:100%;min-height:400px"></div>
   </div>
 
+  <!-- ── UpSet plot ── -->
+  <div class="section">
+    <div class="section-title">
+      <span>⬡ <span data-en="UpSet Plot — Intersection Analysis">UpSet Plot — 交集分析</span></span>
+    </div>
+    <!-- Legend row -->
+    <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;font-size:12px;color:#475569;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="display:inline-block;width:14px;height:14px;background:#3b82f6;border-radius:2px;flex-shrink:0"></span>
+        <span data-en="Shared (≥2 datasets)">藍色直條：跨 ≥2 資料集共有</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="display:inline-block;width:14px;height:14px;background:#f59e0b;border-radius:2px;flex-shrink:0"></span>
+        <span data-en="Exclusive to 1 dataset">橘色直條：單一資料集獨有</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="display:inline-block;width:10px;height:10px;background:#3b82f6;border-radius:50%;flex-shrink:0"></span>
+        <span data-en="Dataset participates in this intersection">藍點：該資料集參與此交集</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px">
+        <span style="display:inline-block;width:10px;height:10px;background:#e2e8f0;border-radius:50%;flex-shrink:0"></span>
+        <span data-en="Dataset not in this intersection">灰點：不參與</span>
+      </div>
+    </div>
+    <!-- Reading guide -->
+    <div style="font-size:11.5px;color:#64748b;margin-bottom:12px;line-height:1.6;background:#f8fafc;border-left:3px solid #3b82f6;padding:6px 10px;border-radius:0 4px 4px 0">
+      <b data-en="How to read:">如何閱讀：</b>
+      <span data-en="Each bar = one group of circRNAs sharing the same combination of datasets. Bar height = circRNA count. Dots below show which datasets are in that combination (connected dots = all involved). Left labels show cancer type and total significant circRNA count. Hover over bars for details.">
+        每個直條代表一組具有相同「資料集組合」的 circRNA；直條高度 = circRNA 數量。下方點陣顯示哪些資料集參與（有連線的藍點 = 這些資料集共同擁有）。左側標籤為癌症類型及顯著 circRNA 總數。滑鼠懸停直條可看詳細組合。
+      </span>
+    </div>
+    <!-- Sort mode toggle -->
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+      <span style="font-size:11.5px;color:#64748b;" data-en="Sort by:">排序方式：</span>
+      <button id="upset-btn-degree" class="upset-mode-btn active"
+              onclick="setUpsetMode('degree')"
+              data-en="By degree (5→1 datasets)">依交集層數（5→1 資料集）</button>
+      <button id="upset-btn-count" class="upset-mode-btn"
+              onclick="setUpsetMode('count')"
+              data-en="By circRNA count (most first)">依 circRNA 數量（多→少）</button>
+    </div>
+    <div id="upset-plot" style="width:100%;min-height:480px"></div>
+  </div>
+
   <!-- ── Recurrent targets table ── -->
   <div class="section">
     <div class="section-title" style="justify-content:space-between">
@@ -328,6 +379,7 @@
 // ── Heatmap ──────────────────────────────────────────────────────────────────
 const HEATMAP = {{ heatmap_json | safe }};
 const ORGAN_GROUPS = {{ organ_groups_json | safe }};
+const UPSET_DATA = {{ upset_json | safe }};
 
 // ── Hierarchical clustering (average-linkage, Euclidean) ─────────────────────
 let _showDendrogram = true;
@@ -534,6 +586,129 @@ if (HEATMAP && window.Plotly) {
   _drawHeatmap(HEATMAP.datasets, HEATMAP.circ_ids, HEATMAP.gene_names, HEATMAP.cb_ids, HEATMAP.matrix);
 }
 
+// ── UpSet plot ────────────────────────────────────────────────────────────────
+let _upsetMode = 'degree';  // 'degree' | 'count'
+
+function setUpsetMode(mode) {
+  _upsetMode = mode;
+  document.querySelectorAll('.upset-mode-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('upset-btn-' + mode);
+  if (btn) btn.classList.add('active');
+  if (UPSET_DATA && window.Plotly) { try { drawUpset(); } catch(e) { console.error('drawUpset:', e); } }
+}
+
+function drawUpset() {
+  if (!UPSET_DATA || !UPSET_DATA.intersections || !window.Plotly) return;
+  const D      = UPSET_DATA;
+  const sets   = D.sets;           // GSE IDs in display order
+  const nS     = sets.length;
+  const labels = (_LANG === 'en' ? D.labels_en : D.labels) || D.labels;
+  const sSize  = D.set_sizes;      // {gse_id: n_sig}
+  if (!D.intersections.length || !nS) return;
+
+  // Sort in JS so the user can switch modes without a server round-trip
+  const allInters = [...D.intersections];
+  if (_upsetMode === 'degree') {
+    allInters.sort((a, b) => (b.combo.length - a.combo.length) || (b.count - a.count));
+  } else {
+    allInters.sort((a, b) => (b.count - a.count) || (b.combo.length - a.combo.length));
+  }
+  const inters = allInters.slice(0, 30);
+  const nI     = inters.length;
+  if (!nI) return;
+
+  const xI = inters.map((_, i) => i);
+
+  // ── Top: intersection size bars ──────────────────────────────────────────
+  const barTrace = {
+    x: xI,
+    y: inters.map(it => it.count),
+    type: 'bar',
+    marker: { color: inters.map(it => it.combo.length === 1 ? '#f59e0b' : '#3b82f6') },
+    hovertemplate: '%{customdata}<extra></extra>',
+    customdata: inters.map(it =>
+      it.combo.map(g => labels[g] || g).join(' ∩ ') + '<br>n = ' + it.count),
+    showlegend: false,
+    xaxis: 'x', yaxis: 'y',
+  };
+
+  // ── Bottom: grey background dots ─────────────────────────────────────────
+  const bgX = [], bgY = [];
+  for (let i = 0; i < nI; i++)
+    for (let j = 0; j < nS; j++) { bgX.push(i); bgY.push(j); }
+  const bgDots = {
+    x: bgX, y: bgY, mode: 'markers',
+    marker: { color: '#e2e8f0', size: 7 },
+    hoverinfo: 'skip', showlegend: false,
+    xaxis: 'x', yaxis: 'y2',
+  };
+
+  // ── Bottom: blue dots + vertical connectors ───────────────────────────────
+  const fgX = [], fgY = [], lX = [], lY = [];
+  for (let i = 0; i < nI; i++) {
+    const yVals = inters[i].combo.map(g => sets.indexOf(g)).filter(j => j >= 0);
+    yVals.forEach(j => { fgX.push(i); fgY.push(j); });
+    if (yVals.length >= 2) {
+      const mn = Math.min(...yVals), mx = Math.max(...yVals);
+      lX.push(i, i, null); lY.push(mn, mx, null);
+    }
+  }
+  const fgDots = {
+    x: fgX, y: fgY, mode: 'markers',
+    marker: { color: '#3b82f6', size: 10 },
+    hoverinfo: 'skip', showlegend: false,
+    xaxis: 'x', yaxis: 'y2',
+  };
+  const connLines = {
+    x: lX, y: lY, mode: 'lines',
+    line: { color: '#3b82f6', width: 2 },
+    hoverinfo: 'skip', showlegend: false,
+    xaxis: 'x', yaxis: 'y2',
+  };
+
+  const dotH      = Math.max(180, nS * 28 + 20);
+  const barH      = 170;
+  const totalH    = dotH + barH + 70;
+  const dotEnd    = dotH / (dotH + barH);
+  const barStart  = dotEnd + 0.06;
+
+  Plotly.newPlot('upset-plot',
+    [barTrace, bgDots, fgDots, connLines], {
+    height: totalH,
+    margin: { l: 155, r: 20, t: 30, b: 40 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor:  'rgba(0,0,0,0)',
+    bargap: 0.3,
+    xaxis: {
+      domain: [0, 1],
+      tickvals: xI, showticklabels: false,
+      showgrid: false, zeroline: false, fixedrange: true,
+    },
+    yaxis: {
+      anchor: 'x',
+      domain: [barStart, 1.0],
+      title: { text: 'Intersection size', font: { size: 11 } },
+      showgrid: true, gridcolor: '#f1f5f9',
+      zeroline: false, fixedrange: true,
+    },
+    yaxis2: {
+      anchor: 'x',
+      domain: [0, dotEnd],
+      range: [-0.5, nS - 0.5],
+      tickvals: sets.map((_, j) => j),
+      ticktext: sets.map(g => (labels[g] || g) + ' (' + (sSize[g] || 0) + ')'),
+      tickfont: { size: 10 },
+      showgrid: false, zeroline: false, fixedrange: true,
+    },
+    shapes: [{
+      type: 'line', xref: 'paper', yref: 'paper',
+      x0: 0, x1: 1, y0: dotEnd + 0.03, y1: dotEnd + 0.03,
+      line: { color: '#cbd5e1', width: 1 },
+    }],
+  }, { responsive: true, displayModeBar: false });
+}
+// NOTE: initial drawUpset() is triggered by applyLang() below, after _LANG is declared
+
 // ── Table filter ─────────────────────────────────────────────────────────────
 // When an organ/cancer-type group is selected, "n datasets" is recomputed as
 // the count of THAT circRNA's appearances restricted to the group's own
@@ -633,6 +808,7 @@ function applyLang() {
     if (!el.dataset.zh) el.dataset.zh = el.textContent.trim();
     el.textContent = _LANG === 'en' ? el.dataset.en : el.dataset.zh;
   });
+  if (UPSET_DATA && window.Plotly) { try { drawUpset(); } catch(e) { console.error('drawUpset error:', e); } }
 }
 applyLang();
 

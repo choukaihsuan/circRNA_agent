@@ -139,6 +139,7 @@
   {% endif %}
 
   <form method="POST" action="/login">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="lang" id="lang-field" value="zh">
     <label for="email" data-en="Email address">電子郵件</label>
     <input type="email" id="email" name="email"

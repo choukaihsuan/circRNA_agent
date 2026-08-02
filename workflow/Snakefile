@@ -17,6 +17,9 @@ configfile: "config.yaml"
 # Use bash for shell rules on Linux/HPC; leave default (cmd) on Windows
 if platform.system() != "Windows":
     shell.executable("bash")
+    _env_bin = "/home/choukaihsuan/miniconda3/envs/ciriquant/bin"
+    if os.path.isdir(_env_bin):
+        shell.prefix(f"export PATH={_env_bin}:$PATH; ")
 
 # ─── Load sample metadata ────────────────────────────────
 metadata_file = config["metadata"]

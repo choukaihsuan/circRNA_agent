@@ -37,6 +37,7 @@ _sys.path.insert(0, str(Path(__file__).parent))
 
 from flask import (Flask, jsonify, redirect, render_template,
                    request, session, url_for)
+from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 BASE_DIR = Path(__file__).parent.parent
@@ -64,9 +65,12 @@ app.secret_key = _get_secret_key()
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["SESSION_COOKIE_HTTPONLY"] = True   # JS cannot read session cookie
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"   # Allow cross-site GET (email magic link clicks)
+app.config["WTF_CSRF_TIME_LIMIT"] = 86400       # 24h; long sessions shouldn't expire mid-work
 # Trust X-Forwarded-Proto from reverse proxies (ngrok / Cloudflare Tunnel)
 # so request.url_root uses https:// and cookies are scheme-correct
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+csrf = CSRFProtect(app)
 
 
 # ── Job registry ──────────────────────────────────────────────────────────────

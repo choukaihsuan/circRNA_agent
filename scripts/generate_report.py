@@ -1360,99 +1360,32 @@ def _biomarker_score_dist(bm: pd.DataFrame) -> str:
 
 
 def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
-    """Histogram + fitted normal curve + Shapiro-Wilk test for biomarker score distribution."""
+    """Histogram of biomarker score distribution."""
     if not _PLOTLY or "biomarker_score" not in bm.columns:
         return ""
     import plotly.graph_objects as go
-    import numpy as np
 
     scores = bm["biomarker_score"].dropna().values
-    n = len(scores)
-    if n == 0:
+    if len(scores) == 0:
         return ""
-    mu, sd = float(scores.mean()), float(scores.std())
 
-    # Shapiro-Wilk (n ≤ 5000); fallback to KS for larger sets
-    sw_text = ""
-    conclusion = ""
-    try:
-        from scipy import stats as _stats
-        if n < 3:
-            sw_text = f"樣本數不足（n={n}），無法進行常態檢定 / Insufficient samples (n={n}) for normality test"
-            conclusion = ""
-        elif n <= 5000:
-            W, p_sw = _stats.shapiro(scores)
-            sw_text = f"Shapiro-Wilk: W = {W:.4f}, p = {p_sw:.4e}"
-            conclusion = ("✗ 非常態 / Non-normal" if p_sw < 0.05 else "✓ 常態 / Normal") + " (α = 0.05)"
-        else:
-            D, p_sw = _stats.kstest(scores, "norm", args=(mu, sd))
-            sw_text = f"KS test: D = {D:.4f}, p = {p_sw:.4e}"
-            conclusion = ("✗ 非常態 / Non-normal" if p_sw < 0.05 else "✓ 常態 / Normal") + " (α = 0.05)"
-    except ImportError:
-        sw_text = "scipy 未安裝，無法執行常態檢定 / scipy not installed"
-
-    # Histogram
     fig = go.Figure()
     fig.add_trace(go.Histogram(
-        x=scores, nbinsx=30, name="Observed distribution",
+        x=scores,
+        xbins=dict(start=0.0, end=1.0, size=0.05),
+        name="Observed distribution",
         marker_color="rgba(44,119,214,0.55)",
         marker_line=dict(color="rgba(44,119,214,0.9)", width=0.8),
-        histnorm="probability density",
     ))
-
-    # Fitted normal curve
-    x_norm = np.linspace(scores.min() - 0.05, scores.max() + 0.05, 300)
-    try:
-        from scipy.stats import norm as _norm
-        y_norm = _norm.pdf(x_norm, mu, sd)
-    except ImportError:
-        y_norm = (1 / (sd * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - mu) / sd) ** 2)
-
-    fig.add_trace(go.Scatter(
-        x=x_norm.tolist(), y=y_norm.tolist(),
-        mode="lines", name=f"Normal(μ={mu:.3f}, σ={sd:.3f})",
-        line=dict(color="#d62728", width=2),
-    ))
-
-    # Mean ± 1SD / ± 2SD reference lines
-    ref_lines = [
-        (mu,        "μ",    "solid", "#555", 1.2),
-        (mu - sd,   "μ−σ",  "dot",   "#888", 1.0),
-        (mu + sd,   "μ+σ",  "dot",   "#888", 1.0),
-        (mu - 2*sd, "μ−2σ", "dash",  "#bbb", 0.8),
-        (mu + 2*sd, "μ+2σ", "dash",  "#bbb", 0.8),
-    ]
-    for xv, lbl, dash, col, lw in ref_lines:
-        fig.add_shape(type="line", x0=xv, x1=xv, y0=0, y1=1, yref="paper",
-                      line=dict(color=col, width=lw, dash=dash))
-        fig.add_annotation(x=xv, y=1.02, yref="paper", text=lbl, showarrow=False,
-                           font=dict(size=9, color=col), xanchor="center")
-
-    sw_color = "#d62728" if "Non-normal" in conclusion else "#2CA02C"
     fig.update_layout(
         xaxis=dict(title="Biomarker Score"),
-        yaxis=dict(title="Probability Density"),
-        height=320,
-        margin=dict(t=40, b=90, l=70, r=40),
-        legend=dict(x=0.65, y=0.95, bgcolor="rgba(255,255,255,0.85)"),
+        yaxis=dict(title="Number of circRNAs"),
+        height=300,
+        margin=dict(t=30, b=40, l=70, r=40),
+        showlegend=False,
         plot_bgcolor="white", paper_bgcolor="white",
-        annotations=[dict(
-            x=0.5, y=-0.28, xref="paper", yref="paper",
-            text=f"{sw_text}    <b style='color:{sw_color}'>{conclusion}</b>",
-            showarrow=False, align="center", xanchor="center", yanchor="top",
-            bgcolor="rgba(255,255,255,0.88)", bordercolor="#ccc", borderwidth=1,
-            font=dict(size=10),
-        )],
     )
-    chart_html = fig.to_html(include_plotlyjs=False, full_html=False, div_id="bm-hist-plot")
-    caption = (
-        "<p style='font-size:11px;color:#888;margin:2px 0 0;line-height:1.6'>"
-        "Vertical lines: <b>solid</b> = μ ({mu:.3f}); "
-        "<b>dotted</b> = μ ± σ ({lo1:.3f} – {hi1:.3f}, ~68% of data); "
-        "<b>dashed</b> = μ ± 2σ ({lo2:.3f} – {hi2:.3f}, ~95% of data)"
-        "</p>"
-    ).format(mu=mu, lo1=mu - sd, hi1=mu + sd, lo2=mu - 2*sd, hi2=mu + 2*sd)
-    return chart_html + caption
+    return fig.to_html(include_plotlyjs=False, full_html=False, div_id="bm-hist-plot")
 
 
 def _biomarker_section(biomarker_file: Optional[str],
@@ -1476,7 +1409,6 @@ def _biomarker_section(biomarker_file: Optional[str],
     else:
         score_desc = "Score = mean of: −log₁₀(p-value), |log₂FC|, confidence score, circBase known bonus (each normalised 0–1; 4D)."
 
-    dist_html = _biomarker_score_dist(bm)
     norm_html = _biomarker_normality_plot(bm)
 
     n_total = len(bm)
@@ -1553,17 +1485,11 @@ def _biomarker_section(biomarker_file: Optional[str],
   </script>"""
 
     dist_section = ""
-    if dist_html or norm_html:
-        dist_section = f"<h3 id='bm-dist-title' style='font-size:14px;color:#444;margin:16px 0 4px'>Score Distribution — all {n_total} significant DE circRNAs</h3>"
-        if dist_html and norm_html:
-            dist_section += (
-                "<div style='display:flex;gap:16px;flex-wrap:wrap'>"
-                f"<div style='flex:1;min-width:320px'><p style='font-size:12px;color:#666;margin:0 0 4px'>Ranked Score</p>{dist_html}</div>"
-                f"<div style='flex:1;min-width:320px'><p style='font-size:12px;color:#666;margin:0 0 4px'>Histogram + Normal Fit</p>{norm_html}</div>"
-                "</div>"
-            )
-        else:
-            dist_section += dist_html or norm_html
+    if norm_html:
+        dist_section = (
+            f"<h3 id='bm-dist-title' style='font-size:14px;color:#444;margin:16px 0 4px'>Score Distribution — all {n_total} significant DE circRNAs</h3>"
+            + norm_html
+        )
 
     return f"""
   <h2 id="biomarker-section-title">Biomarker Candidates (top 30 by composite score)</h2>
@@ -3542,49 +3468,17 @@ function _updateScoreDist(method, md) {{
   // Update title
   const t=document.getElementById('bm-dist-title');
   if(t)t.textContent=`Score Distribution — all ${{n}} significant DE circRNAs (${{mLabels[method]||method}})`;
-  // Scatter plot
-  const top30=sd.scores.slice(0,30), rest=sd.scores.slice(30);
-  const xTop=top30.map((_,i)=>i+1), xRest=rest.map((_,i)=>i+31);
-  if(document.getElementById('bm-scatter-plot')){{
-    Plotly.react('bm-scatter-plot',[
-      {{x:xRest,y:rest,mode:'markers',name:`Rank 31–${{n}}`,
-        marker:{{color:'rgba(120,120,120,0.45)',size:5}}}},
-      {{x:xTop,y:top30,mode:'markers',name:'Top 30 (table)',
-        marker:{{color:'#d62728',size:7,line:{{color:'white',width:0.8}}}}}},
-    ],{{
-      xaxis:{{title:'Rank'}},
-      yaxis:{{title:'Biomarker Score',range:[Math.max(0,sd.scores[n-1]-0.05),Math.min(1,sd.scores[0]+0.05)]}},
-      height:320,margin:{{t:20,b:60,l:70,r:40}},
-      plot_bgcolor:'white',paper_bgcolor:'white',
-      shapes:[{{type:'line',x0:30.5,x1:30.5,y0:0,y1:1,yref:'paper',
-                line:{{dash:'dot',color:'#d62728',width:1.2}}}}],
-      annotations:[{{x:31.5,y:0.98,yref:'paper',text:'Top 30',showarrow:false,
-                     font:{{size:10,color:'#d62728'}},xanchor:'left'}}],
-      legend:{{x:0.75,y:0.95,bgcolor:'rgba(255,255,255,0.8)'}},
-    }});
-  }}
   // Histogram
   if(document.getElementById('bm-hist-plot')){{
-    const swColor=(sd.sw_p&&sd.sw_p<0.05)?'#d62728':'#2CA02C';
-    const swText=sd.sw_w?`Shapiro-Wilk: W = ${{sd.sw_w.toFixed(4)}}, p = ${{sd.sw_p.toExponential(2)}}`:'';
-    const swConc=sd.sw_p?_LS[_LANG||'zh'].swConc(sd.sw_p):'';
     Plotly.react('bm-hist-plot',[
-      {{x:sd.scores,type:'histogram',nbinsx:30,name:_LS[_LANG||'zh'].obsDist,histnorm:'probability density',
+      {{x:sd.scores,type:'histogram',xbins:{{start:0,end:1,size:0.05}},
         marker:{{color:'rgba(44,119,214,0.55)',line:{{color:'rgba(44,119,214,0.9)',width:0.8}}}}}},
-      {{x:sd.x_norm,y:sd.y_norm,mode:'lines',
-        name:`Normal(μ=${{sd.mu.toFixed(3)}}, σ=${{sd.sd.toFixed(3)}})`,
-        line:{{color:'#d62728',width:2}}}},
     ],{{
       xaxis:{{title:'Biomarker Score'}},
-      yaxis:{{title:'Probability Density'}},
-      height:320,margin:{{t:40,b:90,l:70,r:40}},
-      legend:{{x:0.65,y:0.95,bgcolor:'rgba(255,255,255,0.85)'}},
+      yaxis:{{title:'Number of circRNAs'}},
+      height:300,margin:{{t:30,b:40,l:70,r:40}},
+      showlegend:false,
       plot_bgcolor:'white',paper_bgcolor:'white',
-      annotations:[{{x:0.5,y:-0.28,xref:'paper',yref:'paper',
-        text:`${{swText}}    <b style="color:${{swColor}}">${{swConc}}</b>`,
-        showarrow:false,align:'center',xanchor:'center',yanchor:'top',
-        bgcolor:'rgba(255,255,255,0.88)',bordercolor:'#ccc',borderwidth:1,
-        font:{{size:10}}}}],
     }});
   }}
 }}

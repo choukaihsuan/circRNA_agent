@@ -716,6 +716,7 @@
         </span>
       </p>
       <form method="POST" action="/run_gse" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="geo-row">
           <input class="geo-input" type="text" name="gse_id"
                  placeholder="GSE113230 / PRJNA808398 / SRP156355"
@@ -745,6 +746,7 @@
       </p>
 
       <form method="POST" action="/run_manual" enctype="multipart/form-data" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <!-- Meta: project ID, condition labels, cores -->
         <div class="manual-meta">
@@ -927,6 +929,7 @@
         </div>
 
         <form id="local-form" method="POST" action="/run_local" style="margin-top:16px;">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" id="local-samples-json" name="samples_json" value="[]">
           <input type="hidden" id="lf-project-id"   name="project_id">
           <input type="hidden" id="lf-tumor-label"  name="tumor_label">
@@ -943,6 +946,7 @@
   </div>
 
   <form method="POST" action="/update">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
     <!-- ── Step 1: circRNA Detection Tools ── -->
     <div class="section">
