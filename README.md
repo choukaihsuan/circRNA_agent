@@ -150,7 +150,7 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 ```
 
 Then open `http://<your-server-ip>:5000` in a browser, paste a GEO accession
-(e.g. `GSE113230`) into the "GEO 一鍵啟動" card, pick a core count, and click
+(e.g. `GSE113230`) into the "GEO Dataset" card, pick a core count, and click
 start. The status page will show live progress through download → QC →
 detection → differential expression → report generation, and you'll be able
 to open the finished HTML report directly from the browser once it's done.
