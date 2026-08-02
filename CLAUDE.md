@@ -2476,9 +2476,9 @@ QKI/ESRP1/2 的表現量特別低，加劇了 back-splicing 抑制。
 
 ---
 
-## GSE192410（卵巣癌 Ovarian Cancer，✅ 完成 2026-07-30）
+## GSE192410（卵巣癌 Ovarian Cancer，✅ 完成 2026-07-30，方法不對稱已於 2026-08-02 修正）
 
-**✅ 完成（2026-07-30 22:43）。** 報告位置：`~/GSE192410_results/report.html`（server，22MB）
+**✅ 完成（2026-08-02 13:13，CIRIquant-only 全量重跑修正版）。** 報告位置：`~/GSE192410_results/report.html`（server，22MB）
 
 卵巣癌組織，tumor vs. adjacent normal，3 對配對 T/N，6 samples（SRR17297761–SRR17297766）。
 
@@ -2486,35 +2486,67 @@ QKI/ESRP1/2 的表現量特別低，加劇了 back-splicing 抑制。
 |------|------|
 | 下載 SRA | ✅ 6/6 完成 |
 | fastp QC/trim | ✅ 6/6 完成 |
-| CIRIquant | ✅ 6/6 完成（SRR17297766 由新舊兩個進程競爭後，新進程在 19:41 完成 GTF，見 DCC bypass 歷史）|
+| CIRIquant | ✅ 6/6 完成（GTF 沿用舊檔，不受 `-Nr`/tools 設定影響，2026-08-02 重跑未重新執行）|
 | STAR paired+mate1+mate2 | ✅ 18/18 完成 |
-| DCC | ⚠️ **僅 3/6 完成**（SRR17297761/762/763；764/765/766 因 O(n²) 效能瓶頸放棄，改用 header-only bypass）|
-| consensus_filter / merge_counts | ✅ 完成（57,469 circRNAs；見下方樣本表）|
-| assign_isoforms / annotate_circbase | ✅ 完成（41,022 exonic / 13,650 intronic / 2,797 intergenic；~85 min）|
-| DE analysis（三方法）| ✅ 完成（edgeR **2,347** / DESeq2 **4,267** / limma **7,312**）|
-| predict_interactions（union mode）| ✅ 完成（232 circRNAs，13MB，約 110 min）|
-| isoform_switching | ✅ 完成（**51 events**，within-gene FDR < 0.1，共 53,969 rows）|
+| DCC | ⚠️ 僅 3/6 完成過（SRR17297761/762/763；764/765/766 因 O(n²) 效能瓶頸放棄）；**2026-08-02 起全部 6 個樣本改為 CIRIquant-only，DCC 不再是 consensus_filter 的依賴**（見下方修正說明）|
+| consensus_filter / merge_counts | ✅ 完成（**59,196** consensus circRNAs，CIRIquant-only 對稱方法；見下方樣本表）|
+| assign_isoforms / annotate_circbase | ✅ 完成（41,977 exonic / 14,260 intronic / 2,958 intergenic）|
+| DE analysis（三方法）| ✅ 完成（edgeR **2,346** / DESeq2 **4,292** / limma **7,368**）|
+| predict_interactions（union mode）| ✅ 完成（233 circRNAs，~50 min）|
+| isoform_switching | ✅ 完成（**51 events**，within-gene FDR < 0.1，共 55,640 rows）|
 | rank_biomarkers | ✅ 完成（2,347 candidates）|
-| report | ✅ 完成（22MB，2026-07-30 22:43）|
+| report | ✅ 完成（22MB，2026-08-02 13:13）|
 
-**主要數值結果**：
-- 偵測：57,469 consensus circRNAs；filterByExpr 後 **7,141 tested**
-- DE（edgeR_ciriquant）：**2,347 significant**（nominal p < 0.05，|log2FC| > 1）；上調 61 / 下調 2,286（腫瘤普遍下調）；**2,049 Type_I (87.3%) / 298 Type_II (12.7%)**
-- DE（DESeq2）：4,267 significant；DE（limma-voom）：7,312 significant
-- Isoform switching：**51 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 53,969 rows）
+**主要數值結果（CIRIquant-only 修正版）**：
+- 偵測：59,196 consensus circRNAs；filterByExpr 後 **7,144 tested**
+- DE（edgeR_ciriquant）：**2,346 significant**（nominal p < 0.05，|log2FC| > 1）；上調 62 / 下調 2,284（腫瘤仍普遍下調）；**2,044 Type_I (87.1%) / 302 Type_II (12.9%)**
+- DE（DESeq2）：4,292 significant；DE（limma-voom）：7,368 significant
+- Isoform switching：**51 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
 - Biomarker candidates：2,347 個
-- Top 1 biomarker：**chr5:43292576|43297268（hsa_circ_0008621）**；log2FC=−12.79，p≈0，Type_I，下調
-- Top 2：**chr2:61719170|61722748（hsa_circ_0054876）**；log2FC=−6.57，Type_I
-- Top 3：**chr15:25638893|25660989（hsa_circ_0006140）**；log2FC=−6.34，Type_I
+- Top 1 biomarker：**chr5:43292576|43297268（hsa_circ_0008621，HMGCS1）**；log2FC=−12.79，p=8.5e-06，Type_I，score=0.7507，155 miRNA / 151 RBP binders，下調——**與修正前完全相同的旗艦候選**
 
-**⚠️ 重要注意：DCC bypass 導致偵測方法不對稱**
+**✅ 2026-08-02 方法不對稱修正 + 重要結論：下調並非方法假影**
 
-腫瘤樣本（SRR17297761/762/763）：CIRIquant + DCC **雙工具共識**（min_tools=2）
-正常樣本（SRR17297764/765/766）：**CIRIquant-only**（DCC bypass + adaptive fallback，min_tools=1）
+原始分析（2026-07-30）腫瘤樣本用 CIRIquant+DCC 雙工具共識、正常樣本因 DCC 的 O(n²) 效能瓶頸被迫改用 CIRIquant-only，記錄為「⚠️ 方法不對稱，2,286 個下調可能被高估」。修正方式：`config/projects/GSE192410.yaml` 的 `consensus.tools` 改為 `[ciriquant]`（`min_tools: 1`），讓全部 6 個樣本統一用同一種偵測方法，重跑 `consensus_filter → merge_counts → assign_isoforms → annotate_circbase → DE → predict_interactions → isoform_switching → rank_biomarkers → generate_report`（CIRIquant/STAR/DCC 本身不必重跑，GTF 不受 tools 設定影響）。
 
-此不對稱導致正常樣本保留更多 circRNAs（16,493–33,267）相對腫瘤樣本（1,567–11,683），進而造成大量 circRNA 在正常樣本中有更高表現量，DE 分析中呈現腫瘤「下調」的假象。**edgeR 的 2,347 個顯著 circRNA（下調 2,286）很可能受此方法偏差影響，解讀時需謹慎**。若未來重跑此資料集，建議全部 6 個樣本統一使用 CIRIquant-only 模式（`USE_DCC=False`）以消除偏差。
+**修正後結果幾乎與修正前完全一致**（下調 2,284 vs 原本 2,286；上調 62 vs 61；Top 1 biomarker 完全相同）——**代表「腫瘤下調」這個發現不是 DCC bypass 造成的方法假影，而是真實訊號**。方法不對稱本身是一個確實存在、必須修正的技術瑕疵（已修正），但它並不是這個資料集腫瘤下調趨勢的主要成因。
 
-**各樣本 consensus circRNA 數量**：
+**額外驗證：CIRIquant 自己回報的 Circular_Reads（偵測階段最原始的 BSJ read 數，早於任何 consensus/DCC 邏輯介入）直接證實這個下調是真實的**：
+
+| SRR | 條件 | Total_Reads | Mapped_Reads | Circular_Reads |
+|-----|------|-----------:|-------------:|----------------:|
+| SRR17297761 | tumor | 82.1M | 77.2M | 444,706 |
+| SRR17297762 | tumor | 121.1M | 116.0M | 89,798 |
+| SRR17297763 | tumor | 111.8M | 101.6M | 266,062 |
+| SRR17297764 | normal | 104.0M | 98.5M | 1,173,544 |
+| SRR17297765 | normal | 110.4M | 106.0M | 1,216,554 |
+| SRR17297766 | normal | 99.0M | 92.0M | 1,823,374 |
+
+總讀數和 mapping rate 在 tumor/normal 之間相近（都是 ~90–96%），但 **Circular_Reads 在 tumor 只有 90K–445K，normal 卻有 1.17M–1.82M**（約 3–10 倍差距）——這個數字來自 CIRIquant 內部偵測，跟 DCC 或 consensus 共識邏輯完全無關，證明卵巢腫瘤組織的環化活性（back-splicing efficiency）確實遠低於鄰近正常組織，與 CLAUDE.md「腫瘤組織 circRNA 普遍下調的生物機制」段落記錄的跨資料集趨勢（QKI/ESRP1/MBNL 下調、乳癌/HCC/胃癌/攝護腺癌皆同向）完全吻合。
+
+**各樣本 consensus circRNA 數量（CIRIquant-only 對稱方法，2026-08-02）**：
+
+| SRR ID | 條件 | 患者 | 共識 circRNA |
+|--------|------|------|----------:|
+| SRR17297761 | tumor | P1 | 14,603 |
+| SRR17297762 | tumor | P2 | 3,722 |
+| SRR17297763 | tumor | P3 | 2,044 |
+| SRR17297764 | normal | P1 | 32,067 |
+| SRR17297765 | normal | P2 | 33,267 |
+| SRR17297766 | normal | P3 | 16,493 |
+
+tumor 樣本的 consensus 數量比修正前（雙工具共識，1,567–11,683）略高（改為單工具後不再需要 DCC 交集，保留更多 circRNA），normal 樣本數字不變（本來就是 CIRIquant-only）；但 tumor 仍明顯低於 normal，與上述 Circular_Reads 的證據一致——這是真實的生物學差異，不是統計假影。
+
+<details>
+<summary><b>歷史版本（2026-07-30 雙工具/單工具混用版，僅供對照）</b></summary>
+
+**主要數值結果（舊版，方法不對稱）**：
+- 偵測：57,469 consensus circRNAs；filterByExpr 後 7,141 tested
+- DE（edgeR_ciriquant）：2,347 significant；上調 61 / 下調 2,286；2,049 Type_I (87.3%) / 298 Type_II (12.7%)
+- DE（DESeq2）：4,267 significant；DE（limma-voom）：7,312 significant
+- Top 1 biomarker：chr5:43292576|43297268（hsa_circ_0008621）；log2FC=−12.79，Type_I
+
+**各樣本 consensus circRNA 數量（舊版）**：
 
 | SRR ID | 條件 | 患者 | 方法 | 共識 circRNA |
 |--------|------|------|------|----------:|
@@ -2525,7 +2557,9 @@ QKI/ESRP1/2 的表現量特別低，加劇了 back-splicing 抑制。
 | SRR17297765 | normal | P2 | CIRIquant-only（DCC bypass）| 33,267 |
 | SRR17297766 | normal | P3 | CIRIquant-only（DCC bypass）| 16,493 |
 
-**DCC O(n²) 瓶頸歷史（2026-07-29～30）**：
+</details>
+
+**DCC O(n²) 瓶頸歷史（2026-07-29～30，仍為有效的技術紀錄）**：
 - DCC 0.5.0 的 duplicate-marking 使用 list `in` 操作（O(N²) 複雜度），對含 1.3–1.9M 總 junction 的樣本估算需 23–26 小時/樣本
 - **第一輪**：針對 chr10:116879948↔116889298（50,000+ reads）等高頻 junction 執行精確過濾，仍卡住
 - **第二輪**：bulk threshold 過濾（>1000 combined count），max 降至 986，仍卡住（tmp_nonduplicates 僅以 39 KB/min 增長）
@@ -2541,5 +2575,6 @@ QKI/ESRP1/2 的表現量特別低，加劇了 back-splicing 抑制。
 - `raw_dir: /home3/choukaihsuan/GSE192410/raw`
 - `results_dir: /home3/choukaihsuan/GSE192410_results`
 - `sra_cache_dir: /home3/choukaihsuan/GSE192410/sra_cache`
+- `consensus.tools: [ciriquant]`（2026-08-02 起，原為 `[ciriquant, dcc]`）；`consensus.min_tools: 1`（原為 2）
 
 **Queue 失敗歷史（2026-07-29 修復）**：與 GSE97239 相同原因（pysradb 依賴 + metadata 路徑繼承 bug），修復方式相同。
