@@ -88,11 +88,45 @@ environment (`envs/circrna.yaml`):
 You will also need a **reference genome** (hg19 by default) with pre-built
 BWA, HISAT2, and STAR indices, and a GTF annotation file.
 
-The pipeline is designed to run on a Linux server or HPC cluster with enough
-cores/RAM for genome alignment (a single sample's CIRIquant run can peak at
-tens of GB of RAM and, on slower storage, several hundred GB of temporary
-disk space) — a modest laptop is not a realistic target for anything beyond
-inspecting the code.
+The pipeline is designed to run on a Linux server or HPC cluster — a modest
+laptop is not a realistic target for anything beyond inspecting the code.
+
+### Minimum Hardware Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| OS | Linux (x86_64) | CentOS 7+ / Ubuntu 20.04+ |
+| CPU | 8 cores | 16–36+ cores (parallel samples finish faster) |
+| RAM | 32 GB | 64–128 GB+ |
+| Free disk space | 200 GB | 500 GB – 1 TB+ |
+| Network | Stable broadband (SRA downloads can be tens of GB per sample) | — |
+
+These numbers assume human genome (hg19/hg38) alignment with **one sample at
+a time**; running several samples concurrently multiplies the RAM and disk
+requirements accordingly. A few things drive the requirement up in practice:
+
+- **RAM** — STAR's human genome index alone needs ~30 GB resident in memory;
+  CIRIquant (HISAT2 + BWA + CIRI2, run per sample) has been observed to peak
+  around 50 GB for a single large total-RNA sample.
+  32 GB is survivable for small/short-read datasets but will be tight or fail
+  outright on deep total-RNA samples.
+- **Disk** — beyond the ~20–30 GB reference genome + indices, intermediate
+  files for a *single* sample (STAR BAM, CIRIquant's internal alignment
+  files, chimeric junction files) can transiently reach 100–200 GB before
+  cleanup, especially on network-attached storage where large SAM/BAM writes
+  amplify usage. Raw + trimmed FASTQ for a typical dataset (6–12 samples,
+  100–150 bp paired-end) commonly totals 100–300 GB by itself. Plan for
+  enough headroom to hold several samples' worth of intermediates
+  simultaneously if running with `--cores` high enough to parallelize.
+- **CPU** — most steps (STAR, HISAT2, BWA, DCC) scale reasonably well with
+  thread count; 8 cores will work but a full dataset (10+ samples) will take
+  considerably longer than on a 24–36 core machine.
+
+If your hardware falls short of the recommended column, running the pipeline
+one sample/one dataset at a time (rather than relying on Snakemake to
+parallelize across samples) is the main lever to keep RAM/disk peaks
+manageable — set `--cores` low and let the job queue in the Web UI serialize
+multiple datasets instead of running them side by side.
 
 ---
 
