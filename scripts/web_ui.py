@@ -1776,6 +1776,7 @@ _DATASET_META = {
     "GSE171011":  {"cancer": "Papillary Thyroid Cancer",        "cancer_zh": "甲狀腺乳突癌 PTC","organ": "Thyroid", "n_pairs": 4},
     "GSE97239":   {"cancer": "Bladder Cancer",                  "cancer_zh": "膀胱癌",          "organ": "Bladder", "n_pairs": 3},
     "GSE192410":  {"cancer": "Ovarian Cancer",                  "cancer_zh": "卵巢癌",          "organ": "Ovary",   "n_pairs": 3},
+    "GSE192849":  {"cancer": "Node-positive Breast Cancer",     "cancer_zh": "淋巴結陽性乳癌",  "organ": "Breast",  "n_pairs": 3},
 }
 
 
