@@ -732,6 +732,13 @@ function filterTable() {
     } else {
       n = parseInt(tr.dataset.n) || 0;
     }
+    // Keep the displayed "# Datasets" badge (and its sort/export value) in
+    // sync with whatever count is actually being filtered on — otherwise a
+    // circRNA can show e.g. "4" (its global count) while only 3 of those
+    // datasets belong to the selected group, silently disappearing at >=4.
+    tr.dataset.nds = n;
+    const badge = tr.querySelector('.n-badge');
+    if (badge) badge.textContent = n;
     if (n >= minN) {
       tr.style.display = '';
       tr.cells[0].textContent = rank++;
@@ -779,11 +786,13 @@ function sortTable(col) {
 
 // ── CSV export ───────────────────────────────────────────────────────────────
 function exportCSV() {
-  const minN = parseInt(document.getElementById('min-ds-sel').value) || 2;
   const header = ['circ_id','gene_name','circbase_id','n_datasets','avg_abs_lfc','direction'];
   const rows = [header.join(',')];
   document.querySelectorAll('#rec-tbody tr').forEach(tr => {
-    if (parseInt(tr.dataset.n) < minN) return;
+    // Export exactly what's currently visible in the table (filterTable()
+    // already applied the min-datasets + group-scope filtering and kept
+    // tr.dataset.nds in sync), rather than re-deriving a possibly stale count.
+    if (tr.style.display === 'none') return;
     rows.push([
       tr.dataset.circ, tr.dataset.gene, tr.dataset.cb,
       tr.dataset.nds, tr.dataset.lfc, tr.dataset.dir
