@@ -184,6 +184,8 @@
                  display:flex; align-items:center; justify-content:center; margin-top:2px; }
     .step-content h4 { font-size:15px; font-weight:700; margin-bottom:5px; }
     .step-content p  { font-size:13px; color:#374151; line-height:1.6; margin-bottom:6px; }
+    .tut-shot { display:block; max-width:100%; border-radius:8px; border:1px solid #e5e7eb;
+                box-shadow:0 2px 10px rgba(0,0,0,.06); cursor:zoom-in; margin:8px 0 10px; }
     .tip-box  { background:#fef9c3; border-left:3px solid #eab308; border-radius:6px;
                 padding:8px 12px; font-size:12px; color:#713f12; margin-top:6px; line-height:1.5; }
     .info-box { background:#eff6ff; border-left:3px solid #3b82f6; border-radius:6px;
@@ -500,7 +502,7 @@
         <div style="text-align:center;margin:4px 0 20px;">
           <img src="/static/pipeline_diagram2.png?v=7" alt="circRNA Analysis Pipeline"
                style="max-width:100%;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.08);cursor:zoom-in;"
-               onclick="document.getElementById('diagram-lightbox').style.display='flex';"
+               onclick="openLightbox('/static/pipeline_diagram2.png?v=7')"
                title="點擊放大 / Click to zoom">
           <div style="font-size:11px;color:var(--muted);margin-top:6px;" data-en="Click diagram to zoom">點擊圖片可放大</div>
         </div>
@@ -510,6 +512,8 @@
           <div class="step-num">1</div>
           <div class="step-content">
             <h4>選擇適合的 GEO 資料集</h4>
+            <img class="tut-shot" src="/static/tutorial/step1.png" alt="資料集選擇指引截圖"
+                 onclick="openLightbox('/static/tutorial/step1.png')">
             <p>在 <a href="https://www.ncbi.nlm.nih.gov/geo/" target="_blank">NCBI GEO</a> 搜尋 circRNA 相關研究。
                找到目標 Series 後，確認以下三項關鍵欄位：</p>
             <dl class="tut-kv">
@@ -526,6 +530,8 @@
           <div class="step-num">2</div>
           <div class="step-content">
             <h4>設定分析參數（Step 1–3）</h4>
+            <img class="tut-shot" src="/static/tutorial/step2.png" alt="Step 1-3 設定表單截圖"
+                 onclick="openLightbox('/static/tutorial/step2.png')">
             <p>在頁面下方的 Step 1–3 表單依序設定：</p>
             <dl class="tut-kv">
               <dt>Step 1 — 偵測工具</dt>
@@ -547,6 +553,8 @@
           <div class="step-num">3</div>
           <div class="step-content">
             <h4>啟動分析</h4>
+            <img class="tut-shot" src="/static/tutorial/step3.png" alt="啟動分析三種方式截圖"
+                 onclick="openLightbox('/static/tutorial/step3.png')">
             <p>共三種啟動方式，依資料來源選擇：</p>
             <dl class="tut-kv">
               <dt>方式一：GEO 一鍵啟動</dt>
@@ -568,6 +576,8 @@
           <div class="step-num">4</div>
           <div class="step-content">
             <h4>監控執行進度</h4>
+            <img class="tut-shot" src="/static/tutorial/step4.png" alt="狀態頁分析步驟截圖"
+                 onclick="openLightbox('/static/tutorial/step4.png')">
             <p>啟動後點「查看執行狀態」或輸入任務編號（格式 <span class="code-inline">GSE113230-XXXX</span>）進入狀態頁。</p>
             <div class="tut-flow">
               <span class="tut-flow-step">下載 SRA</span><span class="tut-flow-arrow">→</span>
@@ -594,6 +604,8 @@
           <div class="step-num">5</div>
           <div class="step-content">
             <h4>下載並解讀報告</h4>
+            <img class="tut-shot" src="/static/tutorial/step5.png" alt="下載報告按鈕截圖"
+                 onclick="openLightbox('/static/tutorial/step5.png')">
             <p>所有步驟完成後，狀態頁頂部出現「📥 下載報告」與「🔗 在線瀏覽」按鈕。</p>
             <dl class="tut-kv">
               <dt>report.html</dt><dd>自包含單一 HTML 檔，可離線開啟，含所有互動式圖表</dd>
@@ -1393,7 +1405,7 @@
       <div style="text-align:center;margin:4px 0 20px;">
         <img src="/static/pipeline_diagram2.png?v=7" alt="circRNA Analysis Pipeline"
              style="max-width:100%;border-radius:8px;box-shadow:0 2px 14px rgba(0,0,0,.08);cursor:zoom-in;"
-             onclick="document.getElementById('diagram-lightbox').style.display='flex';"
+             onclick="openLightbox('/static/pipeline_diagram2.png?v=7')"
              title="Click to zoom">
         <div style="font-size:11px;color:#94a3b8;margin-top:6px;">Click diagram to zoom</div>
       </div>
@@ -1401,6 +1413,8 @@
         <div class="step-num">1</div>
         <div class="step-content">
           <h4>Select a GEO Dataset</h4>
+          <img class="tut-shot" src="/static/tutorial/step1.png" alt="Dataset Selection Guide screenshot"
+               onclick="openLightbox('/static/tutorial/step1.png')">
           <p>Search for circRNA-related studies on <a href="https://www.ncbi.nlm.nih.gov/geo/" target="_blank">NCBI GEO</a>.
              Verify these three key fields for your target Series:</p>
           <dl class="tut-kv">
@@ -1415,6 +1429,8 @@
         <div class="step-num">2</div>
         <div class="step-content">
           <h4>Configure Analysis Parameters (Steps 1–3)</h4>
+          <img class="tut-shot" src="/static/tutorial/step2.png" alt="Step 1-3 configuration forms screenshot"
+               onclick="openLightbox('/static/tutorial/step2.png')">
           <p>Fill in the Step 1–3 forms below the launch panel:</p>
           <dl class="tut-kv">
             <dt>Step 1 — Detection tools</dt>
@@ -1433,6 +1449,8 @@
         <div class="step-num">3</div>
         <div class="step-content">
           <h4>Launch Analysis</h4>
+          <img class="tut-shot" src="/static/tutorial/step3.png" alt="Launch Analysis three modes screenshot"
+               onclick="openLightbox('/static/tutorial/step3.png')">
           <p>Three launch modes — choose based on your data source:</p>
           <dl class="tut-kv">
             <dt>Mode 1: GEO One-Click</dt>
@@ -1452,6 +1470,8 @@
         <div class="step-num">4</div>
         <div class="step-content">
           <h4>Monitor Progress</h4>
+          <img class="tut-shot" src="/static/tutorial/step4.png" alt="Status page analysis steps screenshot"
+               onclick="openLightbox('/static/tutorial/step4.png')">
           <p>After launch, click "📊 View Status" or enter the job ID (format <span class="code-inline">GSE113230-XXXX</span>).</p>
           <div class="tut-flow">
             <span class="tut-flow-step">Download SRA</span><span class="tut-flow-arrow">→</span>
@@ -1476,6 +1496,8 @@
         <div class="step-num">5</div>
         <div class="step-content">
           <h4>Download &amp; Interpret Results</h4>
+          <img class="tut-shot" src="/static/tutorial/step5.png" alt="Download report buttons screenshot"
+               onclick="openLightbox('/static/tutorial/step5.png')">
           <p>When all steps complete, "📥 Download Report" and "🔗 Open Online" buttons appear at the top of the status page.</p>
           <dl class="tut-kv">
             <dt>report.html</dt><dd>Self-contained single HTML file; opens offline with all interactive charts</dd>
@@ -1747,14 +1769,20 @@
   }
 </script>
 
-<!-- Pipeline diagram lightbox -->
-<div id="diagram-lightbox"
+<!-- Generic image lightbox (pipeline diagram + tutorial screenshots) -->
+<div id="img-lightbox"
      style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;
             align-items:center;justify-content:center;cursor:zoom-out;"
      onclick="this.style.display='none'">
-  <img src="/static/pipeline_diagram2.png?v=7"
+  <img id="img-lightbox-img" src=""
        style="max-width:94vw;max-height:94vh;border-radius:10px;
               box-shadow:0 12px 60px rgba(0,0,0,.6);pointer-events:none;">
 </div>
+<script>
+  function openLightbox(src) {
+    document.getElementById('img-lightbox-img').src = src;
+    document.getElementById('img-lightbox').style.display = 'flex';
+  }
+</script>
 </body>
 </html>
