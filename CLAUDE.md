@@ -5,7 +5,7 @@
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
 從 GEO/SRA 原始數據下載，到差異表現分析（DE）與 HTML 報告輸出。
 
-- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，✅ 完成）；GSE121842（CRC 大腸直腸癌 tumor vs. normal，3 pairs，✅ 完成）；GSE136569（胰臟癌 PDAC tumor vs. NAT，5 pairs，✅ 完成）；GSE143797（鼻咽癌 NPC tumor vs. normal，4+4 samples，✅ 完成）；GSE108735（腎細胞癌 RCC tumor vs. normal，7 pairs，✅ 完成）；GSE171011（甲狀腺乳突癌 PTC tumor vs. normal，4 pairs，✅ 完成）；GSE97239（膀胱癌 Bladder Cancer tumor vs. normal，3 pairs，✅ 完成）；GSE192410（卵巣癌 Ovarian Cancer tumor vs. normal，3 pairs，✅ 完成）
+- **目標數據集**：GSE113230（三陰性乳癌 tumor vs. normal，6 samples，✅ 完成）；GSE58135（乳癌，10 samples，✅ 完成）；GSE323364（TNBC cell line EZH2 inhibitor，6 samples，✅ 完成）；GSE133998（乳癌 tumor vs. normal，12 samples，✅ 完成）；SRP156355（早期乳癌 IDC，6 pairs，✅ 完成）；GSE77509（HCC 肝癌 tumor vs. normal，6 pairs，✅ 完成）；GSE130078（ESCC 食道鱗狀細胞癌 tumor vs. normal，6 pairs，✅ 完成）；GSE248612（胃癌 tumor vs. normal，6 pairs，✅ 完成）；GSE221107（攝護腺癌 tumor vs. normal，4 pairs，✅ 完成；排除 Pair8/Pair11 降解 RNA）；PRJNA553289（SCLC 小細胞肺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE229705（LUAD 肺腺癌 tumor vs. normal，6 pairs，✅ 完成）；GSE148036（LUAD 肺腺癌 tumor vs. normal，5+5 samples，✅ 完成）；GSE121842（CRC 大腸直腸癌 tumor vs. normal，3 pairs，✅ 完成）；GSE136569（胰臟癌 PDAC tumor vs. NAT，5 pairs，✅ 完成）；GSE143797（鼻咽癌 NPC tumor vs. normal，4+4 samples，✅ 完成）；GSE108735（腎細胞癌 RCC tumor vs. normal，7 pairs，✅ 完成）；GSE171011（甲狀腺乳突癌 PTC tumor vs. normal，4 pairs，✅ 完成）；GSE97239（膀胱癌 Bladder Cancer tumor vs. normal，3 pairs，✅ 完成）；GSE192410（卵巣癌 Ovarian Cancer tumor vs. normal，3 pairs，✅ 完成）；GSE192849（乳癌 node-positive tumor vs. normal，3 pairs，RNase R 富集，✅ 完成）
 - **主要工具**：CIRIquant（circRNA 偵測）+ DCC（輔助偵測，雙工具共識）
 - **執行環境**：基因體中心 HPC server（`172.16.0.178`，CentOS 7，96 cores，377 GB RAM）
 - **本機開發**：Windows 11 + WSL2（Ubuntu 26.04），程式碼在 `/mnt/c/Users/User/develop/circRNA_agent/`
@@ -725,11 +725,15 @@ snakemake --snakefile benchmark/Snakefile \
 
 RNase R 消化線性 RNA 並富集環狀 RNA，是目前 circRNA 偵測 benchmark 的標準方法。
 
-**Enrichment Ratio（ER）判斷**：
-- ER = RNase R BSJ counts / Total RNA BSJ counts
-- ER > 1.5 → **True Positive**（真實 circRNA）
-- ER < 0.5 → **True Negative**（假陽性候選）
-- 中間值排除於評估之外
+**Enrichment Ratio（ER）判斷**（`rnaser_ground_truth.py`）：
+- **兩個 RNase R replicate 都會用到，以算術平均合併**：
+  `ER = mean(BSJ_SRR444974, BSJ_SRR445016) / BSJ_SRR444655`（`bsj_rnaser_mean = sum(vals)/len(vals)`，非取最大值、也非只挑一個 replicate）
+- 用的是**原始 BSJ read count**，不做 per-sample RPM 正規化——因為 RNase R 處理會使線性 RNA 大幅減少，導致 RNase R 樣本的總 BSJ read 數比 Total RNA 樣本多 ~25 倍；若用 RPM 正規化，分母被灌水 25 倍會系統性壓低幾乎所有 ER 值（實測會造成 ~94% 假 TN），故改用原始 count，只要兩組樣本 library size 量級相近（同一批 Illumina 定序即符合）ER 比值仍具意義
+- 座標比對用 slop=10bp 模糊匹配（同 consensus_filter 的邏輯），非精確字串比對
+- Edge case：Total RNA 中偵測不到（BSJ≈0）但 RNase R 有偵測到 → ER=100（視為強 TP 訊號）；兩邊都偵測不到 → ER=1（歸入 ambiguous）
+- ER ≥ 1.5 → **True Positive**（真實 circRNA）
+- ER ≤ 0.5 → **True Negative**（假陽性候選）
+- 中間值（0.5 < ER < 1.5）排除於評估之外
 
 GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無需手動準備。
 
@@ -1179,7 +1183,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
-## 目前執行進度（共 19 個資料集完成；0 個進行中）
+## 目前執行進度（共 20 個資料集完成；0 個進行中）
 
 > **⚠️ GSE108735 資料集更正**：原標記為「TNBC」，實際確認為**腎細胞癌（Renal Cell Carcinoma，RCC）**，7 pairs tumor vs. 正常腎組織，ncRNA-Seq（SRR6439741–SRR6439754）。GSE171011 原標記為「TNBC」，實際為**甲狀腺乳突癌（Papillary Thyroid Cancer，PTC）**，4T+4N=8 samples，RNA-Seq（SRR14088791–SRR14088798）。
 
@@ -2578,3 +2582,71 @@ tumor 樣本的 consensus 數量比修正前（雙工具共識，1,567–11,683�
 - `consensus.tools: [ciriquant]`（2026-08-02 起，原為 `[ciriquant, dcc]`）；`consensus.min_tools: 1`（原為 2）
 
 **Queue 失敗歷史（2026-07-29 修復）**：與 GSE97239 相同原因（pysradb 依賴 + metadata 路徑繼承 bug），修復方式相同。
+
+---
+
+## GSE192849（乳癌 node-positive，RNase R 富集，✅ 完成 2026-08-03）
+
+**✅ 完成（2026-08-03 02:14）。** 報告位置：`~/GSE192849_results/report.html`（server，19MB）；本機備份：`/mnt/c/Users/User/Desktop/circRNA agent report/GSE192849_report.html`
+
+淋巴結陽性原發性乳癌（Node-positive primary breast cancer）手術切除組織，tumor vs. adjacent normal，3 對配對 T/N，6 samples（SRR17395573–SRR17395578）。VAHTS Total RNA Library Prep Kit + **RNase R 消化**（circRNA 富集），Illumina，150bp PE，~55M reads/sample。
+
+| 步驟 | 狀態 |
+|------|------|
+| 下載 SRA | ✅ 6/6 完成 |
+| fastp QC/trim | ✅ 6/6 完成 |
+| CIRIquant | ✅ 6/6 完成 |
+| STAR paired+mate1+mate2 | ✅ 18/18 完成 |
+| DCC | ⚠️ 全部 bypass（RNase R O(n²) 瓶頸，見下方）|
+| consensus_filter / merge_counts | ✅ 完成（68,680 consensus circRNAs；filterByExpr 後 10,977 tested）|
+| assign_isoforms / annotate_circbase | ✅ 完成 |
+| DE analysis（三方法）| ✅ 完成（edgeR **404** / DESeq2 / limma significant）|
+| predict_interactions（union mode）| ✅ 完成（interactions.json 8.7MB）|
+| isoform_switching | ✅ 完成（**20 events**，within-gene FDR < 0.1）|
+| rank_biomarkers | ✅ 完成（404 candidates，biomarker_candidates.tsv 98KB）|
+| report | ✅ 完成（19MB，2026-08-03 02:14）|
+
+**主要數值結果**：
+- 偵測：68,680 consensus circRNAs（CIRIquant-only）；filterByExpr 後 **10,977 tested**
+- DE（edgeR_ciriquant）：**404 significant**（nominal p < 0.05，|log2FC| > 1）；上調 395 / 下調 9；**368 Type_I (91.1%) / 36 Type_II (8.9%)**
+- Isoform switching：**20 events**（within-gene BH FDR < 0.1，|ΔIUI| > 0.1，共 64,806 rows）
+- Biomarker candidates：404 個
+- Top 1 biomarker：**hsa_circ_0001922（HUWE1，chrX:53672263|53681075）**；log2FC=+9.23，p=0.0042，Type_II，score=0.7815，50 miRNA / 106 RBP binders，上調
+- Top 2：**hsa_circ_0001777（ESYT2，chr7:158580695|158591763）**；log2FC=+9.33，Type_II，score=0.7723
+- Top 3：**hsa_circ_0001118（NDUFA10，chr2:240929491|240946787）**；log2FC=+9.17，Type_II，score=0.7525
+
+**⚠️ 重要注意：RNase R 富集造成方向性差異**
+
+腫瘤上調（395/404 = 97.8%）與其他 Total RNA-Seq 資料集的「腫瘤下調」趨勢**相反**。此方向差異主因 **RNase R 消化** 的 library prep：
+- RNase R 消化線性 RNA 後，FSJ counts 幾乎歸零（線性轉錄本大幅減少）
+- edgeR_ciriquant 測的是 BSJ/FSJ ratio；RNase R 後 FSJ≈0 → ratio 自然偏高
+- 腫瘤樣本的 CIRIquant Circular_Reads（bypass 前原始數字）：444K / 90K / 266K
+- 正常樣本的 Circular_Reads：1.17M / 1.22M / 1.82M（約 3–10 倍差距）
+- 即使排除 ratio 效應，正常組織的環化活性（back-splicing）仍高於腫瘤，符合 circRNA 腫瘤普遍下調的生物機制
+- **論文 Discussion 需說明**：RNase R 富集資料的 log2FC 方向不可直接與 Total RNA-Seq 資料集比較；biomarker 方向需以 CSI（circular-to-total ratio）或原始 BSJ counts 佐證
+
+**各樣本共識 circRNA 數量（CIRIquant-only）**：
+
+| SRR ID | 條件 | 患者 | 共識 circRNA |
+|--------|------|------|----------:|
+| SRR17395573 | tumor | P1 | 6,240 |
+| SRR17395574 | tumor | P2 | 19,253 |
+| SRR17395575 | tumor | P3 | 12,711 |
+| SRR17395576 | normal | P1 | 26,854 |
+| SRR17395577 | normal | P2 | 18,845 |
+| SRR17395578 | normal | P3 | 42,268 |
+
+**DCC O(n²) 瓶頸與 bypass 處理**：
+
+RNase R 富集使 Chimeric.out.junction 檔案極大（paired: 438K–1.3M lines；mate1+mate2 加總：1.1M–3.4M lines/sample），DCC 0.5.0 duplicate-marking O(n²) 複雜度導致估算需 23–26 小時/樣本（與 GSE192410 pattern 一致）。**全部 6 個樣本統一使用 header-only CircCoordinates bypass**（54 bytes，1 header line），確保方法對稱性（不重蹈 GSE192410 初版的 tumor/normal 不對稱問題）。Snakemake 以 `--rerun-triggers mtime` 重啟，跳過 DCC 繼續後續步驟。部分 DCC 孤兒進程（Aug02 殘留）於 2026-08-03 以 `kill -9` 清除。
+
+**設定**：
+- case/control label：`tumor` / `normal`
+- SRR 清單（3T + 3N）：SRR17395573/574/575（tumor P1/P2/P3）；SRR17395576/577/578（normal P1/P2/P3）
+- genome：hg19；配對設計（patient_id：P1/P2/P3）
+- Library：VAHTS Total RNA + RNase R，150bp PE，Illumina
+- `consensus.tools: [ciriquant]`；`consensus.min_tools: 1`（DCC bypass）
+
+**Server config**（`config/projects/GSE192849.yaml`）路徑：
+- `raw_dir: /home3/choukaihsuan/GSE192849/raw`
+- `results_dir: /home3/choukaihsuan/GSE192849_results`
