@@ -1636,6 +1636,17 @@ def api_progress():
             data["stages"] = _infer_stages_from_files(results_dir, data["stages"], cfg)
             report_exists = (Path(results_dir) / "report.html").exists()
             qc_exists = (Path(results_dir) / "qc" / "multiqc_report.html").exists()
+            if report_exists:
+                # report.html existing is unambiguous proof the whole pipeline
+                # finished. Without this, a job whose own log couldn't be
+                # parsed for a final "X of Y steps" summary (e.g. web_ui was
+                # restarted after the run completed, or the job_id wasn't in
+                # the in-memory registry) would show all stages below as done
+                # while the progress bar above stayed stuck at "0 / 0" / idle.
+                data["finished_count"] = len(data["stages"])
+                data["total_count"] = len(data["stages"])
+                data["running"] = False
+                data["completed"] = True
     data["report_exists"] = report_exists
     data["qc_exists"] = qc_exists
     return jsonify(data)
