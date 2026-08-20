@@ -735,7 +735,7 @@
         </span>
       </p>
       <div class="demo-btn" onclick="fillDemo()">
-        🎓 <span data-en="Try a demo dataset (GSE323364 — TNBC cell line, smallest of our validated datasets; CIRIquant alone runs ~2–4h/sample, so expect several hours end-to-end)">試用範例資料集（GSE323364，TNBC 細胞株，是目前已驗證資料集中樣本量最小的一組；光 CIRIquant 就約需 2–4 小時/樣本，整體跑完預估數小時）</span>
+        🎓 <span data-en="Try a demo dataset (GSE97239 — bladder cancer, 3 paired tumor/normal, 140 significant DE circRNAs; this dataset has already been processed on the server, so a demo run typically finishes in minutes)">試用範例資料集（GSE97239，膀胱癌，3 對配對 tumor/normal，140 個顯著 DE circRNA；此資料集已在 server 上跑過，示範送出通常幾分鐘內就會完成）</span>
       </div>
       <form method="POST" action="/run_gse" style="margin:0">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -1347,9 +1347,9 @@
   function fillDemo() {
     const el = document.getElementById('gse-id-input');
     if (!el) return;
-    el.value = 'GSE323364';
+    el.value = 'GSE97239';
     el.focus();
-    scheduleDetect('GSE323364');
+    scheduleDetect('GSE97239');
   }
 
   // ── Auto-detect group labels from existing GEO metadata ──────────────────
