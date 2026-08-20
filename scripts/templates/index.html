@@ -102,6 +102,13 @@
                     padding: 4px 10px; background: #f0fdfa; border: 1px solid #99f6e4;
                     border-radius: 6px; font-weight: 600; transition: background 0.15s; }
     .guide-toggle:hover { background: #ccfbf1; }
+
+    /* ── Demo dataset badge ── */
+    .demo-btn { font-size: 12px; color: #7c3aed; cursor: pointer; user-select: none;
+                display: inline-flex; align-items: center; gap: 5px; margin-bottom: 12px;
+                padding: 4px 10px; background: #faf5ff; border: 1px solid #ddd6fe;
+                border-radius: 6px; font-weight: 600; transition: background 0.15s; }
+    .demo-btn:hover { background: #ede9fe; }
     .guide-body { display: none; margin-top: 12px; padding: 16px;
                   background: #fafafa; border: 1px solid #e2e8f0; border-radius: 10px;
                   font-size: 13px; }
@@ -727,6 +734,9 @@
           <code>SRP156355</code>（SRA Study）
         </span>
       </p>
+      <div class="demo-btn" onclick="fillDemo()">
+        🎓 <span data-en="Try a demo dataset (GSE323364 — TNBC cell line, smallest of our validated datasets; CIRIquant alone runs ~2–4h/sample, so expect several hours end-to-end)">試用範例資料集（GSE323364，TNBC 細胞株，是目前已驗證資料集中樣本量最小的一組；光 CIRIquant 就約需 2–4 小時/樣本，整體跑完預估數小時）</span>
+      </div>
       <form method="POST" action="/run_gse" style="margin:0">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="geo-row">
@@ -1331,6 +1341,15 @@
       inp.files = dt.files;
       showFileName(inp);
     }
+  }
+
+  // ── Demo dataset shortcut ──────────────────────────────────────────────
+  function fillDemo() {
+    const el = document.getElementById('gse-id-input');
+    if (!el) return;
+    el.value = 'GSE323364';
+    el.focus();
+    scheduleDetect('GSE323364');
   }
 
   // ── Auto-detect group labels from existing GEO metadata ──────────────────
