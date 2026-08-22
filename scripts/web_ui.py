@@ -73,6 +73,19 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 csrf = CSRFProtect(app)
 
 
+def _mask_email(email: str) -> str:
+    """Partially obscure an email for display (e.g. queue table) — keep the
+    first 2 chars of the local part + the domain, mask the rest."""
+    if not email or "@" not in email:
+        return email or ""
+    local, domain = email.split("@", 1)
+    visible = local[:2]
+    return f"{visible}{'*' * max(3, len(local) - len(visible))}@{domain}"
+
+
+app.jinja_env.filters["mask_email"] = _mask_email
+
+
 # ── Job registry ──────────────────────────────────────────────────────────────
 
 def generate_job_id(gse_id: str) -> str:
