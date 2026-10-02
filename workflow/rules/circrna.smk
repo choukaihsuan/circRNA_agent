@@ -33,8 +33,14 @@ rule ciriquant:
     output:
         gtf = RESULTS_DIR + "/circRNA/{srr}/{srr}.gtf",
     params:
-        outdir = RESULTS_DIR + "/circRNA/{srr}",
-        sample = "{srr}",
+        outdir   = RESULTS_DIR + "/circRNA/{srr}",
+        sample   = "{srr}",
+        # Only emit -a when it differs from CIRIquant's own default (5), so the
+        # generated command at default settings is byte-identical to the
+        # previously-hardcoded version (see tests/test_validate_config.py).
+        anchor_arg = (f"-a {config['tools']['ciriquant']['anchor']}"
+                      if config["tools"]["ciriquant"]["anchor"] != 5 else ""),
+        no_gene  = "--no-gene" if config["tools"]["ciriquant"]["no_gene"] else "",
     threads: config["threads"]
     resources:
         mem_gb = 16
@@ -48,6 +54,8 @@ rule ciriquant:
             --config {input.cfg} \
             -o {params.outdir} \
             -p {params.sample} \
+            {params.anchor_arg} \
+            {params.no_gene} \
             > {log} 2>&1
         rm -rf {params.outdir}/circ {params.outdir}/align {params.outdir}/gene
         """
@@ -175,8 +183,19 @@ rule dcc:
     output:
         RESULTS_DIR + "/circRNA/{srr}/DCC/CircCoordinates",
     params:
-        outdir = RESULTS_DIR + "/circRNA/{srr}/DCC",
-    threads: 4
+        outdir   = RESULTS_DIR + "/circRNA/{srr}/DCC",
+        nr       = lambda w: f"{config['tools']['dcc']['count_threshold']} {config['tools']['dcc']['replicate_threshold']}",
+        filter_f = "-F" if config["tools"]["dcc"]["filter_recommended"] else "",
+        filter_m = "-M" if config["tools"]["dcc"]["filter_mito"] else "",
+        # Only emit -E/-m/-n when they differ from DCC's own defaults
+        # (5 / 1,000,000 / 30), so the default-config command is byte-identical
+        # to the previously-hardcoded version.
+        extra_opts = " ".join(filter(None, [
+            f"-E {config['tools']['dcc']['end_tol']}" if config["tools"]["dcc"]["end_tol"] != 5 else "",
+            f"-m {config['tools']['dcc']['max_length']}" if config["tools"]["dcc"]["max_length"] != 1_000_000 else "",
+            f"-n {config['tools']['dcc']['min_length']}" if config["tools"]["dcc"]["min_length"] != 30 else "",
+        ])),
+    threads: config["tools"]["dcc"]["threads"]
     log: "logs/dcc/{srr}.log"
     shell:
         """
@@ -185,7 +204,8 @@ rule dcc:
             -mt1 {input.junc1} \
             -mt2 {input.junc2} \
             -D -an {input.gtf} \
-            -Pi -F -M -Nr 2 1 \
+            -Pi {params.filter_f} {params.filter_m} -Nr {params.nr} \
+            {params.extra_opts} \
             -G -B {input.bam} \
             -O {params.outdir} \
             -T {threads} ) \
@@ -213,6 +233,10 @@ rule consensus_filter:
         qc_bsj_threshold   = config["consensus"].get("qc_bsj_threshold", 5),
         adaptive_flag      = "--adaptive" if config["consensus"].get("adaptive", True) else "",
         adaptive_ratio     = config["consensus"].get("adaptive_ratio", 0.1),
+        # Only emit --min-confidence when it differs from consensus_filter.py's
+        # own default (0.0), to keep the default-config command byte-identical.
+        min_conf_arg       = (f"--min-confidence {config['consensus'].get('min_confidence', 0.0)}"
+                               if config["consensus"].get("min_confidence", 0.0) != 0.0 else ""),
     log: "logs/consensus/{srr}.log"
     shell:
         """
@@ -228,6 +252,7 @@ rule consensus_filter:
             --qc-bsj-threshold    {params.qc_bsj_threshold} \
             {params.adaptive_flag} \
             --adaptive-ratio      {params.adaptive_ratio} \
+            {params.min_conf_arg} \
             2>&1 | tee {log}
         """
 

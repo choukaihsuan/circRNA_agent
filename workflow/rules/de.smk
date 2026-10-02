@@ -28,6 +28,10 @@ rule de_analysis:
         de_sig_by            = config["de"].get("de_sig_by", "auto"),
         heatmap_top_n        = config["de"].get("heatmap_top_n", 10),
         fsj_concordance_lfc  = config["de"].get("fsj_concordance_lfc", 0.0),
+        filter_expr_min_count       = config["de"].get("filter_expr_min_count", 5),
+        filter_expr_min_total_count = config["de"].get("filter_expr_min_total_count", 15),
+        deseq2_size_factor_type     = config["de"].get("deseq2_size_factor_type", "poscounts"),
+        paired_design_override      = config["de"].get("paired_design_override", "auto"),
     log: "logs/de_analysis.log"
     script:
         "../../scripts/analysis.R"
@@ -70,10 +74,40 @@ rule rank_biomarkers:
         interactions = RESULTS_DIR + "/de/interactions.json",
     output:
         RESULTS_DIR + "/de/biomarker_candidates.tsv",
+        # NOTE: biomarker_candidates_fully_evaluated.tsv (--fully-evaluated-only)
+        # is intentionally NOT declared as a rule output yet. Declaring a new
+        # output here would change this rule's output signature and make
+        # Snakemake consider rank_biomarkers "incomplete" for every already-
+        # completed dataset the next time its DAG is touched, forcing a rerun
+        # of this step across all 19 published datasets -- which contradicts
+        # the explicit "don't touch existing results yet" decision (2026-10).
+        # Run the script directly (see CLAUDE.md) when the fully-evaluated
+        # table is needed for a specific dataset; wire it into this rule only
+        # once a deliberate, dataset-by-dataset rerun has been decided.
     params:
         fdr             = config["de"]["fdr_cutoff"],
         lfc             = config["de"]["log2fc_cutoff"],
         de_sig_by       = config["de"].get("de_sig_by", "auto"),
+        # Only emit --sig-cap/--fc-cap when they differ from rank_biomarkers.py's
+        # own defaults (10 / 5), to keep the default-config command byte-identical.
+        cap_args = " ".join(filter(None, [
+            f"--sig-cap {config['de'].get('biomarker', {}).get('sig_cap', 10)}"
+            if config["de"].get("biomarker", {}).get("sig_cap", 10) != 10 else "",
+            f"--fc-cap {config['de'].get('biomarker', {}).get('fc_cap', 5)}"
+            if config["de"].get("biomarker", {}).get("fc_cap", 5) != 5 else "",
+        ])),
+        # Only emit --components-json when weights differ from the equal-weight
+        # default, so the default-config command stays byte-identical.
+        components_arg = (
+            lambda w: (
+                "--components-json " + __import__("shlex").quote(__import__("json").dumps(
+                    config["de"]["biomarker"]["components"]))
+                if config["de"].get("biomarker", {}).get("components")
+                   != {k: {"enabled": True, "weight": 1.0} for k in
+                       ("sig", "fc", "conf", "known", "mirna", "rbp")}
+                else ""
+            )
+        ),
     log: "logs/rank_biomarkers.log"
     shell:
         """
@@ -87,6 +121,8 @@ rule rank_biomarkers:
             --fdr     {params.fdr} \
             --lfc     {params.lfc} \
             --de-sig-by {params.de_sig_by} \
+            {params.cap_args} \
+            {params.components_arg} \
             2>&1 | tee {log}
         """
 

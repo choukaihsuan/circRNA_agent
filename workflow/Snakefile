@@ -14,6 +14,14 @@ import pandas as pd
 # ─── Config ──────────────────────────────────────────────
 configfile: "config.yaml"
 
+sys.path.insert(0, os.path.join(os.path.dirname(workflow.snakefile), "..", "scripts"))
+from validate_config import validate_and_fill_defaults, ConfigError  # noqa: E402
+
+try:
+    validate_and_fill_defaults(config)
+except ConfigError as e:
+    sys.exit(f"[config validation] {e}")
+
 # Use bash for shell rules on Linux/HPC; leave default (cmd) on Windows
 if platform.system() != "Windows":
     shell.executable("bash")

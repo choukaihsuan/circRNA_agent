@@ -45,6 +45,28 @@ heatmap_top_n_raw <- tryCatch(snakemake@params[["heatmap_top_n"]], error = funct
 heatmap_top_n <- if (length(heatmap_top_n_raw) == 0 || is.null(heatmap_top_n_raw)) 10L else as.integer(heatmap_top_n_raw)
 circbase_annot_file <- tryCatch(snakemake@input[["circbase_annot"]], error = function(e) NULL)
 
+# filterByExpr thresholds (edgeR_ciriquant); previously hardcoded min.count=5,
+# min.total.count left at edgeR's own default (15).
+filter_expr_min_count <- tryCatch(as.integer(snakemake@params[["filter_expr_min_count"]]),
+                                   error = function(e) 5L)
+if (length(filter_expr_min_count) == 0 || is.na(filter_expr_min_count)) filter_expr_min_count <- 5L
+filter_expr_min_total_count <- tryCatch(as.integer(snakemake@params[["filter_expr_min_total_count"]]),
+                                         error = function(e) 15L)
+if (length(filter_expr_min_total_count) == 0 || is.na(filter_expr_min_total_count)) filter_expr_min_total_count <- 15L
+
+# DESeq2 size factor estimation type; previously unconditionally "poscounts".
+deseq2_size_factor_type <- tryCatch(snakemake@params[["deseq2_size_factor_type"]],
+                                     error = function(e) "poscounts")
+if (length(deseq2_size_factor_type) == 0 || !deseq2_size_factor_type %in% c("poscounts", "ratio", "iterate"))
+  deseq2_size_factor_type <- "poscounts"
+
+# Paired-design override; "auto" = detect patient_id column (previous
+# behaviour, the only mode this pipeline has ever run with in production).
+paired_design_override <- tryCatch(snakemake@params[["paired_design_override"]],
+                                    error = function(e) "auto")
+if (length(paired_design_override) == 0 || !paired_design_override %in% c("auto", "force_paired", "force_unpaired"))
+  paired_design_override <- "auto"
+
 # Resolve primary method
 de_method <- tryCatch(snakemake@params[["de_method"]], error = function(e) "deseq2")
 if (is.null(de_method)) de_method <- "deseq2"
@@ -76,6 +98,10 @@ storage.mode(counts) <- "integer"
 counts <- counts[rowSums(counts) > 0, , drop = FALSE]
 
 has_patient <- "patient_id" %in% colnames(groups)
+if (paired_design_override == "force_paired" && !has_patient)
+  stop("de.paired_design_override=force_paired but groups file has no patient_id column")
+if (paired_design_override == "force_unpaired") has_patient <- FALSE
+if (paired_design_override == "force_paired")   has_patient <- TRUE
 if (has_patient) {
   patient <- factor(groups$patient_id)
   design  <- model.matrix(~ patient + condition)
@@ -171,7 +197,9 @@ result_edger <- tryCatch({
   if (length(common_circs) == 0) stop("No circRNAs in common between BSJ and FSJ matrices")
   bsj <- counts[common_circs, ]; fsj <- fsj[common_circs, ]
 
-  keep <- filterByExpr(bsj, group = condition, min.count = 5)
+  keep <- filterByExpr(bsj, group = condition,
+                        min.count = filter_expr_min_count,
+                        min.total.count = filter_expr_min_total_count)
   bsj  <- bsj[keep, ]; fsj <- fsj[keep, ]
   message(sprintf("[edgeR_ciriquant] %d circRNAs after filterByExpr", sum(keep)))
 
@@ -246,7 +274,7 @@ result_deseq <- tryCatch({
   if (has_patient) col_data$patient <- patient
   deseq_design <- if (has_patient) ~ patient + condition else ~ condition
   dds <- DESeqDataSetFromMatrix(countData = counts, colData = col_data, design = deseq_design)
-  dds <- estimateSizeFactors(dds, type = "poscounts")
+  dds <- estimateSizeFactors(dds, type = deseq2_size_factor_type)
   dds <- DESeq(dds)
   res <- results(dds, contrast = c("condition", tumor_label, normal_label))
   res_df <- as.data.frame(res)

@@ -1,11 +1,38 @@
 ciriquant_config: config/ciriquant.yaml
 use_container: false      # set true when running with --use-singularity
+
+# NOTE (2026-10): every default value below is unchanged from this pipeline's
+# previous hardcoded behavior (see CLAUDE.md "circDEX 可調參數" section for
+# the file:line this was moved from). Loading a config.yaml / config/projects/
+# *.yaml that predates these keys reproduces identical results -- missing
+# keys are filled in by scripts/validate_config.py with these same defaults.
+# Strand-related params (DCC -N/-ss, CIRIquant -l) are intentionally NOT
+# exposed yet -- see CLAUDE.md strand-assumption investigation.
+tools:
+  ciriquant:
+    no_gene: false    # --no-gene: skip stringtie gene abundance (speed only; no effect on circRNA calls)
+    anchor: 5         # -a/--anchor: min anchor length for junction alignment
+  dcc:
+    threads: 4                  # -T; was hardcoded in circrna.smk. benchmark/config_benchmark.yaml pins this
+                                 # independently to 4 regardless of this default (Figure 6(c) compute-cost basis)
+    count_threshold: 2          # -Nr arg 1
+    replicate_threshold: 1      # -Nr arg 2
+    filter_mito: true           # -M
+    filter_recommended: true    # -F
+    end_tol: 5                  # -E
+    max_length: 1000000         # -m
+    min_length: 30              # -n
 consensus:
   min_bsj_reads: 2
   min_tools: 2
   slop: 10
   max_junction_ratio: 1.0
   qc_bsj_threshold: 5       # only apply ratio QC when BSJ < this; high-BSJ circRNAs exempt
+  adaptive: true            # default True matches what every published dataset actually ran with
+                             # (circrna.smk's previous .get("adaptive", True) fallback) -- NOT
+                             # consensus_filter.py's own argparse default of False
+  adaptive_ratio: 0.1
+  min_confidence: 0.0       # consensus_filter.py --min-confidence; previously never wired into circrna.smk
   tools:
   - ciriquant
   - dcc
@@ -23,6 +50,25 @@ de:
   encori_program_num: 2    # min prediction programs agreeing
   normal_label: normal
   tumor_label: tumor
+  filter_expr_min_count: 5         # edgeR filterByExpr min.count; was hardcoded in analysis.R
+  filter_expr_min_total_count: 15  # edgeR filterByExpr min.total.count (edgeR's own implicit default, now explicit)
+  deseq2_size_factor_type: poscounts  # estimateSizeFactors(type=); was unconditionally hardcoded in analysis.R
+  paired_design_override: auto     # auto = detect patient_id column; force_paired/force_unpaired to override
+  biomarker:
+    sig_cap: 10   # -log10(p) cap in rank_biomarkers.py sig_norm; was hardcoded
+    fc_cap: 5     # |log2FC| cap in rank_biomarkers.py fc_norm; was hardcoded
+    # Default = equal weights on all 6 components = this paper's setting.
+    # Weights are normalized WITHIN the enabled set (and, per-row, within
+    # whichever of those actually have data -- see "missing-value handling"
+    # in CLAUDE.md). Changing these values changes the ranking; the paper's
+    # reported Biomarker Scores assume every weight below stays at 1.0.
+    components:
+      sig:   { enabled: true, weight: 1.0 }
+      fc:    { enabled: true, weight: 1.0 }
+      conf:  { enabled: true, weight: 1.0 }
+      known: { enabled: true, weight: 1.0 }
+      mirna: { enabled: true, weight: 1.0 }
+      rbp:   { enabled: true, weight: 1.0 }
 download:
   max_concurrent: 2
   retry: 3

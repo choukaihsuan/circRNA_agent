@@ -30,6 +30,15 @@ def _pdf_to_b64(pdf_path: str) -> str:
         return base64.b64encode(fh.read()).decode()
 
 
+def _disp_coord(cid: str) -> str:
+    """Convert 1-based circ_id start to 0-based for display (matching circBase convention)."""
+    import re as _re
+    m = _re.match(r'^(chr[\w]+):(\d+)\|(.+)$', str(cid))
+    if not m:
+        return cid
+    return f"{m.group(1)}:{int(m.group(2)) - 1}|{m.group(3)}"
+
+
 def _embed_pdf(pdf_path: str, height: int = 480) -> str:
     b64 = _pdf_to_b64(pdf_path)
     return (
@@ -287,7 +296,7 @@ function showVennRegion(region) {{
     const cb = (c.cb && c.cb !== 'novel') ?
       `<span style="color:#e07b39;font-weight:bold">${{_cbLink(c.cb)}}</span>` : 'novel';
     tr.innerHTML = `<td>${{i+1}}</td>
-      <td><a class="circ-link" onclick="showCircDetail('${{c.id}}')" title="View detail">${{c.id}}</a></td>
+      <td><a class="circ-link" onclick="showCircDetail('${{c.id}}')" title="View detail">${{_dispCoord(c.id)}}</a></td>
       <td>${{c.gene||'—'}}</td>
       <td style="color:${{c.lfc>0?'#d62728':'#2CA02C'}};font-weight:bold">${{c.lfc.toFixed(2)}}</td>
       <td>${{c.pval < 0.001 ? c.pval.toExponential(2) : c.pval.toFixed(4)}}</td>
@@ -472,7 +481,7 @@ def _de_table_clickable(df: pd.DataFrame, interactions: dict) -> str:
         def _link(v: str) -> str:
             tip = "in interaction data" if str(v) in interactions else "no interaction data pre-fetched"
             return (f'<a class="circ-link" onclick="showCircDetail(\'{v}\')" '
-                    f'title="{tip}">{v}</a>')
+                    f'title="{tip}">{_disp_coord(v)}</a>')
         disp[id_col] = disp[id_col].astype(str).apply(_link)
     if "circbase_id" in disp.columns:
         disp["circbase_id"] = disp["circbase_id"].apply(_cb_link)
@@ -684,7 +693,6 @@ const _LS = {
   zh: {
     hmStatus:   (n,u,d)=>`（已顯示 ${n} 筆；資料庫最多 ${u} up + ${d} down）`,
     swConc:     p=>p<0.05?'✗ 非常態 / Non-normal (α=0.05)':'✓ 常態 / Normal (α=0.05)',
-    obsDist:    '觀測分布',
     bmAll:      n=>`全部（${n}）`,
     bm2:        n=>`≥ 2 方法顯著（${n}）`,
     bm3:        n=>`3 方法均顯著（${n}）`,
@@ -696,7 +704,6 @@ const _LS = {
   en: {
     hmStatus:   (n,u,d)=>`(showing ${n}; pool: ${u} up + ${d} down)`,
     swConc:     p=>p<0.05?'✗ Non-normal (α=0.05)':'✓ Normal (α=0.05)',
-    obsDist:    'Observed distribution',
     bmAll:      n=>`All (${n})`,
     bm2:        n=>`≥ 2 methods (${n})`,
     bm3:        n=>`All 3 methods (${n})`,
@@ -731,7 +738,6 @@ function switchReportLang(lang) {
     const d = VENN_REGION_DATA[vennPanel.dataset.active];
     if (d) document.getElementById('venn-detail-title').textContent = d['label_' + _LANG] || d.label_zh;
   }
-  _refreshBMHistLang();
 }
 
 function _applyLangToContainer(el) {
@@ -762,13 +768,6 @@ function _updateBMFilterBtnLabels() {
   });
 }
 
-function _refreshBMHistLang() {
-  if (typeof Plotly === 'undefined' || !document.getElementById('bm-hist-plot')) return;
-  try {
-    Plotly.restyle('bm-hist-plot', {name: [_LS[_LANG].obsDist]}, [0]);
-  } catch(e) {}
-}
-
 (function() {
   var saved = localStorage.getItem('circrna_report_lang');
   if (saved === 'en') switchReportLang('en');
@@ -780,6 +779,12 @@ function _cbLink(cb) {
   if (!v || v.toLowerCase() === 'nan' || v.toLowerCase() === 'novel' || v === '—') return v || '—';
   return '<a href="https://www.circbase.org/cgi-bin/singlerecord.cgi?id=' + encodeURIComponent(v) +
          '" target="_blank" rel="noopener" class="cb-link">' + v + '</a>';
+}
+function _dispCoord(cid) {
+  // Convert 1-based circ_id start to 0-based for display, matching circBase convention.
+  var m = String(cid).match(/^(chr\w+):(\d+)\|(.+)$/);
+  if (!m) return cid;
+  return m[1] + ':' + (parseInt(m[2]) - 1) + '|' + m[3];
 }
 function _parseGenCoord(s) {
   // Parse chrN:start|end → {c: chrNum, p: startPos} for genomic sort
@@ -1133,6 +1138,8 @@ def _isoform_section(switching_file: Optional[str],
                  if c in sig.columns]
     sort_keys = [c for c in ["gene_name", "p_value"] if c in sig.columns]
     disp = sig.sort_values(sort_keys)[show_cols].copy()
+    if "circ_id" in disp.columns:
+        disp["circ_id"] = disp["circ_id"].apply(_disp_coord)
     if "circbase_id" in disp.columns:
         disp["circbase_id"] = disp["circbase_id"].apply(_cb_link)
     table_html = (
@@ -1165,63 +1172,6 @@ def _isoform_section(switching_file: Optional[str],
   {plot_html}
   {table_html}
 """
-
-
-def _compute_score_dist_data(
-    de: pd.DataFrame,
-    p_col: str,
-    sig_thr: float,
-    lfc: float,
-    bm_lookup: dict,
-    method_label: str = "",
-) -> Optional[dict]:
-    """Pre-compute score distribution data for one DE method (for JS-side Plotly.react)."""
-    if p_col not in de.columns or "log2FC" not in de.columns or "circ_id" not in de.columns:
-        return None
-    mask = de[p_col].notna() & (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
-    sig = de[mask].copy()
-    if sig.empty:
-        return None
-    n = len(sig)
-    sig = sig.copy()
-    sig["_sig"] = sig[p_col].apply(lambda p: min(-math.log10(max(p, 1e-10)), 10))
-    sig["_fc"]  = sig["log2FC"].abs().clip(upper=5)
-    def _mn(s):
-        mn, mx = s.min(), s.max()
-        return (s - mn) / (mx - mn + 1e-10)
-    sig["_sig_n"] = _mn(sig["_sig"])
-    sig["_fc_n"]  = _mn(sig["_fc"])
-    use_ixn = any(bm_lookup.get(str(r), {}).get("mirna_n", 0) > 0 for r in sig["circ_id"])
-    ndim = 6.0 if use_ixn else 4.0
-    scores = []
-    for _, r in sig.iterrows():
-        lu = bm_lookup.get(str(r["circ_id"]), {})
-        base = r["_sig_n"] + r["_fc_n"] + lu.get("conf_n", 0) + lu.get("known", 0)
-        if use_ixn:
-            base += lu.get("mirna_n", 0) + lu.get("rbp_n", 0)
-        scores.append(round(float(base) / ndim, 4))
-    scores.sort(reverse=True)
-    try:
-        import numpy as _np
-        arr = _np.array(scores)
-        mu = float(arr.mean()); sd = float(arr.std())
-        x_n = _np.linspace(max(0, arr.min()-0.05), min(1, arr.max()+0.05), 200)
-        try:
-            from scipy.stats import norm as _norm, shapiro as _shap
-            y_n = _norm.pdf(x_n, mu, sd).tolist()
-            sw_w, sw_p = (_shap(arr) if n <= 5000 else (None, None))
-            sw_w = float(sw_w) if sw_w is not None else None
-            sw_p = float(sw_p) if sw_p is not None else None
-        except Exception:
-            y_n = [(1/(sd*(2*3.14159)**0.5))*math.exp(-0.5*((x-mu)/sd)**2) for x in x_n.tolist()]
-            sw_w = sw_p = None
-        return {"n": n, "label": method_label, "scores": scores,
-                "mu": round(mu,4), "sd": round(sd,4),
-                "x_norm": [round(float(x),4) for x in x_n],
-                "y_norm": [round(float(y),4) for y in y_n],
-                "sw_w": round(sw_w,4) if sw_w else None, "sw_p": sw_p}
-    except Exception:
-        return None
 
 
 def _compute_bm_table_data(
@@ -1296,98 +1246,6 @@ def _compute_bm_table_data(
     return {"cols": cols, "rows": rows, "n_total": n_total}
 
 
-def _biomarker_score_dist(bm: pd.DataFrame) -> str:
-    """Ranked scatter plot of biomarker scores for all DE circRNAs."""
-    if not _PLOTLY or "biomarker_score" not in bm.columns or "circ_id" not in bm.columns:
-        return ""
-    import plotly.graph_objects as go
-
-    bm2 = bm.reset_index(drop=True).copy()
-    bm2["_rank"] = range(1, len(bm2) + 1)
-    top_n = 30
-
-    def _hover(r):
-        parts = [f"<b>#{int(r['_rank'])}</b>  {r['circ_id']}",
-                 f"Score: {r['biomarker_score']:.4f}"]
-        if "log2FC" in r and pd.notna(r["log2FC"]):
-            parts.append(f"log₂FC: {r['log2FC']:.3f}")
-        if "Type" in r and pd.notna(r["Type"]):
-            parts.append(f"Type: {r['Type']}")
-        if "in_circbase" in r and r["in_circbase"]:
-            cb = r.get("circbase_id", "")
-            parts.append(f"circBase: {cb}")
-        return "<br>".join(parts)
-
-    bm2["_hover"] = bm2.apply(_hover, axis=1)
-    top = bm2.iloc[:top_n]
-    rest = bm2.iloc[top_n:]
-
-    fig = go.Figure()
-    if not rest.empty:
-        fig.add_trace(go.Scatter(
-            x=rest["_rank"], y=rest["biomarker_score"],
-            mode="markers", name=f"Rank {top_n+1}–{len(bm2)}",
-            marker=dict(color="rgba(120,120,120,0.45)", size=5),
-            hovertext=rest["_hover"], hoverinfo="text",
-        ))
-    fig.add_trace(go.Scatter(
-        x=top["_rank"], y=top["biomarker_score"],
-        mode="markers", name=f"Top {top_n} (table)",
-        marker=dict(color="#d62728", size=7, line=dict(color="white", width=0.8)),
-        hovertext=top["_hover"], hoverinfo="text",
-    ))
-    # Elbow line
-    fig.add_shape(type="line", x0=top_n + 0.5, x1=top_n + 0.5,
-                  y0=0, y1=1, yref="paper",
-                  line=dict(dash="dot", color="#d62728", width=1.2))
-    fig.add_annotation(x=top_n + 1.5, y=0.98, yref="paper",
-                       text=f"Top {top_n}", showarrow=False,
-                       font=dict(size=10, color="#d62728"), xanchor="left")
-
-    score_min = float(bm2["biomarker_score"].min())
-    score_max = float(bm2["biomarker_score"].max())
-    fig.update_layout(
-        xaxis=dict(title="Rank", tickmode="auto"),
-        yaxis=dict(title="Biomarker Score",
-                   range=[max(0, score_min - 0.05), min(1, score_max + 0.05)]),
-        height=320,
-        margin=dict(t=20, b=60, l=70, r=40),
-        legend=dict(x=0.75, y=0.95, bgcolor="rgba(255,255,255,0.8)"),
-        plot_bgcolor="white", paper_bgcolor="white",
-        hovermode="closest",
-    )
-    return fig.to_html(include_plotlyjs=False, full_html=False, div_id="bm-scatter-plot")
-
-
-def _biomarker_normality_plot(bm: pd.DataFrame) -> str:
-    """Histogram of biomarker score distribution."""
-    if not _PLOTLY or "biomarker_score" not in bm.columns:
-        return ""
-    import plotly.graph_objects as go
-
-    scores = bm["biomarker_score"].dropna().values
-    if len(scores) == 0:
-        return ""
-
-    fig = go.Figure()
-    fig.add_trace(go.Histogram(
-        x=scores,
-        xbins=dict(start=0.0, end=1.0, size=0.05),
-        name="Observed distribution",
-        marker_color="rgba(44,119,214,0.55)",
-        marker_line=dict(color="rgba(44,119,214,0.9)", width=0.8),
-    ))
-    fig.update_layout(
-        xaxis=dict(title="Biomarker Score"),
-        yaxis=dict(title="Number of circRNAs"),
-        height=300,
-        margin=dict(t=30, b=40, l=70, r=40),
-        showlegend=False,
-        plot_bgcolor="white", paper_bgcolor="white",
-    )
-    return fig.to_html(include_plotlyjs=False, full_html=False, div_id="bm-hist-plot")
-
-
 def _biomarker_section(biomarker_file: Optional[str],
                        interactions: Optional[dict] = None,
                        iso_lookup: Optional[dict] = None) -> str:
@@ -1409,7 +1267,33 @@ def _biomarker_section(biomarker_file: Optional[str],
     else:
         score_desc = "Score = mean of: −log₁₀(p-value), |log₂FC|, confidence score, circBase known bonus (each normalised 0–1; 4D)."
 
-    norm_html = _biomarker_normality_plot(bm)
+    # ── Interaction (miRNA/RBP) query coverage disclosure (2026-10) ────────────
+    # predict_interactions.py only queries a fixed top-N union (~150-250
+    # circRNAs), independent of how many circRNAs are actually significant.
+    # For a candidate never in that union, mirna/rbp are excluded from its
+    # score (not treated as 0) -- see rank_biomarkers.py _compute_weighted_score.
+    # That is correct, but it means candidates differ in how many components
+    # their score is actually based on; make that visible rather than implicit.
+    coverage_html = ""
+    if "interaction_queried" in bm.columns:
+        n_sig_total   = len(bm)
+        n_queried     = int(bm["interaction_queried"].sum())
+        coverage_pct  = round(n_queried / n_sig_total * 100, 1) if n_sig_total else 0.0
+        warn = coverage_pct < 80
+        bg = "#fff3e0" if warn else "#f4f8ff"
+        border = "#f0b868" if warn else "#d0e4f7"
+        warn_line = (
+            f'<div style="margin-top:4px;font-size:12px;color:#8a5a00">'
+            f'⚠ <span data-en="Coverage below 80%: miRNA/RBP binder counts are only directly comparable among the {n_queried} candidates that were actually queried. See the &dagger; mark in the table below.">'
+            f'覆蓋率低於80%：miRNA/RBP binder數量只在實際被查詢過的{n_queried}個候選之間可直接比較，表格中標示&dagger;者請留意。</span></div>'
+            if warn else ""
+        )
+        coverage_html = f"""
+  <div style="margin:6px 0 10px;padding:8px 12px;background:{bg};border:1px solid {border};border-radius:6px;font-size:13px">
+    <span data-en="miRNA/RBP components evaluated for {n_queried} of {n_sig_total} candidates ({coverage_pct}%)">
+    miRNA/RBP 兩個分量實際被評估的候選數：{n_queried} / {n_sig_total}（{coverage_pct}%）</span>
+    {warn_line}
+  </div>"""
 
     n_total = len(bm)
     bm_top = bm.head(30).copy()
@@ -1424,11 +1308,14 @@ def _biomarker_section(biomarker_file: Optional[str],
             return cg
         bm_top["circbase_gene"] = bm_top.apply(_fix_cbg, axis=1)
     disp = _fmt_floats(bm_top[show_cols].copy())
+    _not_queried_ids = (set(bm_top.loc[~bm_top["interaction_queried"], "circ_id"].astype(str))
+                        if "interaction_queried" in bm_top.columns else set())
     if "circ_id" in disp.columns and interactions is not None:
         def _link(v: str) -> str:
             tip = "in interaction data" if str(v) in interactions else "no interaction data pre-fetched"
+            dagger = ' <span title="miRNA/RBP not queried for this candidate; score renormalized over the remaining components">&dagger;</span>' if str(v) in _not_queried_ids else ""
             return (f'<a class="circ-link" onclick="showCircDetail(\'{v}\')" '
-                    f'title="{tip}">{v}</a>')
+                    f'title="{tip}">{_disp_coord(v)}</a>{dagger}')
         disp["circ_id"] = disp["circ_id"].astype(str).apply(_link)
     if "circbase_id" in disp.columns:
         disp["circbase_id"] = disp["circbase_id"].apply(_cb_link)
@@ -1484,17 +1371,10 @@ def _biomarker_section(biomarker_file: Optional[str],
   }}
   </script>"""
 
-    dist_section = ""
-    if norm_html:
-        dist_section = (
-            f"<h3 id='bm-dist-title' style='font-size:14px;color:#444;margin:16px 0 4px'>Score Distribution — all {n_total} significant DE circRNAs</h3>"
-            + norm_html
-        )
-
     return f"""
   <h2 id="biomarker-section-title">Biomarker Candidates (top 30 by composite score)</h2>
   <p style="font-size:13px;color:#555;margin-bottom:8px;">{score_desc}</p>
-  {dist_section}
+  {coverage_html}
   <div style="display:flex;align-items:center;gap:10px;margin:20px 0 4px;flex-wrap:wrap">
     <h3 style="font-size:14px;color:#444;margin:0">Biomarker Candidates</h3>
     <div style="display:flex;align-items:center;gap:6px;background:#f4f8ff;padding:6px 12px;border-radius:6px;border:1px solid #d0e4f7">
@@ -1551,7 +1431,7 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
             continue
         hover = sub.apply(
             lambda r: (
-                f"<b>{r.get('circ_id', '')}</b><br>"
+                f"<b>{_disp_coord(r.get('circ_id', ''))}</b><br>"
                 f"log₂FC: {r['log2FC']:.3f}<br>"
                 f"{p_label}: {r[p_col]:.2e}"
                 + (f"<br>Type: {r['Type']}" if has_type and pd.notna(r.get("Type")) else "")
@@ -1572,7 +1452,7 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
         if not heat_df.empty:
             heat_hover = heat_df.apply(
                 lambda r: (
-                    f"<b>{r.get('circ_id','')}</b><br>"
+                    f"<b>{_disp_coord(r.get('circ_id',''))}</b><br>"
                     f"★ Heatmap top {int(len(heatmap_ids)//2)} up+down<br>"
                     f"log₂FC: {r['log2FC']:.3f}<br>"
                     f"{p_label}: {r[p_col]:.2e}"
@@ -1585,7 +1465,7 @@ def _plotly_volcano(de: pd.DataFrame, fdr: float, lfc: float, de_method: str,
                 visible="legendonly",
                 marker=dict(symbol="circle-open", size=13, color="black",
                             line=dict(width=2, color="black")),
-                text=heat_df["circ_id"].tolist(),
+                text=[_disp_coord(c) for c in heat_df["circ_id"].tolist()],
                 textposition="top center",
                 textfont=dict(size=8, color="black"),
                 hovertext=heat_hover.tolist(),
@@ -1650,7 +1530,7 @@ def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
 
     def _label(cid: str) -> str:
         cb = cb_map.get(cid, "")
-        return cb if cb and cb not in ("", "novel") else cid
+        return cb if cb and cb not in ("", "novel") else _disp_coord(cid)
 
     up_ids = (
         de[de["log2FC"] > 0].dropna(subset=[p_col])
@@ -2005,7 +1885,7 @@ def build_report(
                 _rows_c = {}
                 for _cid in _cids_ord:
                     _cb = _cb_map_c.get(_cid, "")
-                    _lbl = _cb if _cb and _cb not in ("", "novel") else _cid
+                    _lbl = _cb if _cb and _cb not in ("", "novel") else _disp_coord(_cid)
                     _rows_c[_cid] = {
                         "z":      [round(float(v), 3) for v in _z_c.loc[_cid].tolist()],
                         "lfc":    round(float(_lfc_map_c.get(_cid, 0.0)), 2),
@@ -2161,27 +2041,6 @@ def build_report(
         if _bid in _iso_lookup:
             _bm_lookup[_bid].setdefault("gene_name", _iso_lookup[_bid].get("gene_name", ""))
 
-    # Add score_dist to each method's data (primary + alternates)
-    _msw_labels_sd = {"edgeR_ciriquant": "edgeR (FSJ offset)", "deseq2": "DESeq2", "limma": "limma-voom"}
-    # Primary method
-    _primary_sd = _compute_score_dist_data(de, p_col, sig_thr, lfc, _bm_lookup, _msw_labels_sd.get(de_method, de_method))
-    if de_method not in all_de_data:
-        all_de_data[de_method] = {}
-    all_de_data[de_method]["score_dist"] = _primary_sd
-    # Alternate methods
-    for _mkey, _mfile in (de_files or {}).items():
-        if _mkey not in all_de_data or not _mfile or not Path(_mfile).exists():
-            continue
-        try:
-            _m_de2 = pd.read_csv(_mfile, sep="\t")
-            if "log2FC" not in _m_de2.columns and "log2FoldChange" in _m_de2.columns:
-                _m_de2 = _m_de2.rename(columns={"log2FoldChange": "log2FC"})
-            _m_pcol2, _m_thr2, _ = _eff_sig(_m_de2, de_sig_by, fdr)
-            all_de_data[_mkey]["score_dist"] = _compute_score_dist_data(
-                _m_de2, _m_pcol2, _m_thr2, lfc, _bm_lookup, _msw_labels_sd.get(_mkey, _mkey))
-        except Exception:
-            pass
-
     # Compute per-method bm_table (top-30 biomarker ranking) for dynamic table update
     # Primary method (de already enriched)
     if de_method not in all_de_data:
@@ -2260,7 +2119,7 @@ function showCircDetail(circId) {{
   try {{
     const d    = CIRC_DATA[circId] || {{}};
     const info = d.info || {{}};
-    document.getElementById('cm-title').textContent = circId;
+    document.getElementById('cm-title').textContent = _dispCoord(circId);
     document.getElementById('cm-sub').innerHTML =
       [
         (info.gene_name && info.gene_name !== 'intergenic') ? info.gene_name : null,
@@ -2297,7 +2156,7 @@ function showCircDetail(circId) {{
     document.getElementById('circ-modal').style.display = 'flex';
   }} catch(err) {{
     console.error('[showCircDetail]', err);
-    document.getElementById('cm-title').textContent = circId;
+    document.getElementById('cm-title').textContent = _dispCoord(circId);
     document.getElementById('cm-circle-wrap').innerHTML =
       '<p style="color:#c0392b;padding:12px"><b>JS Error:</b> '+err.message+'<br>'
       +'<small style="color:#888">Check browser console (F12) for details.</small></p>';
@@ -3395,8 +3254,6 @@ function switchDEMethod(method) {{
   _renderDETables(method, md);
   // Re-render Biomarker table (per-method ranking; fallback to graying if no bm_table)
   _renderBiomarkerTable(method, md);
-  // Update biomarker score distribution plots
-  _updateScoreDist(method, md);
 }}
 
 function _renderDETables(method, md) {{
@@ -3424,7 +3281,7 @@ function _renderDETables(method, md) {{
       row.forEach((v,i)=>{{
         const col=cols[i]||'';
         if(col==='circ_id'&&v){{
-          html+=`<td><a class="circ-link" onclick="showCircDetail('${{v}}')">${{v}}</a></td>`;
+          html+=`<td><a class="circ-link" onclick="showCircDetail('${{v}}')">${{_dispCoord(v)}}</a></td>`;
         }} else if(col==='circbase_id'){{
           html+=`<td>${{_cbLink(v)}}</td>`;
         }} else if(col==='log2FC'&&v!=null){{
@@ -3460,29 +3317,6 @@ function _renderDETables(method, md) {{
   _makeSortable('de-dn-table');
 }}
 
-function _updateScoreDist(method, md) {{
-  const sd=md.score_dist;
-  if(!sd||typeof Plotly==='undefined')return;
-  const n=sd.scores.length;
-  const mLabels={{'edgeR_ciriquant':'edgeR (FSJ offset)','deseq2':'DESeq2','limma':'limma-voom'}};
-  // Update title
-  const t=document.getElementById('bm-dist-title');
-  if(t)t.textContent=`Score Distribution — all ${{n}} significant DE circRNAs (${{mLabels[method]||method}})`;
-  // Histogram
-  if(document.getElementById('bm-hist-plot')){{
-    Plotly.react('bm-hist-plot',[
-      {{x:sd.scores,type:'histogram',xbins:{{start:0,end:1,size:0.05}},
-        marker:{{color:'rgba(44,119,214,0.55)',line:{{color:'rgba(44,119,214,0.9)',width:0.8}}}}}},
-    ],{{
-      xaxis:{{title:'Biomarker Score'}},
-      yaxis:{{title:'Number of circRNAs'}},
-      height:300,margin:{{t:30,b:40,l:70,r:40}},
-      showlegend:false,
-      plot_bgcolor:'white',paper_bgcolor:'white',
-    }});
-  }}
-}}
-
 function _renderBiomarkerTable(method, md) {{
   const bt = md && md.bm_table;
   const tbody = document.querySelector('#tbl_biomarker tbody');
@@ -3513,7 +3347,7 @@ function _renderBiomarkerTable(method, md) {{
       if (col === 'circ_id' && v) {{
         const hasDat = CIRC_DATA && CIRC_DATA[v];
         const tip = hasDat ? 'in interaction data' : 'no interaction data pre-fetched';
-        return `<td><a class="circ-link" onclick="showCircDetail('${{v}}')" title="${{tip}}">${{v}}</a></td>`;
+        return `<td><a class="circ-link" onclick="showCircDetail('${{v}}')" title="${{tip}}">${{_dispCoord(v)}}</a></td>`;
       }}
       if (col === 'log2FC' && v != null) return `<td>${{(+v).toFixed(2)}}</td>`;
       if (col === 'biomarker_score' && v != null) return `<td>${{(+v).toFixed(3)}}</td>`;
@@ -3593,7 +3427,7 @@ function _renderClustPanel(div, order, rows, samps, conds, dendro, opts) {{
 
   // Scipy leaf convention: row i sits at y = 10*i+5 (5,15,25,...)
   const y_positions = order.map((_, i) => 10 * i + 5);
-  const ylbls       = order.map(id => rows[id] ? rows[id].label || id : id);
+  const ylbls       = order.map(id => rows[id] ? rows[id].label || _dispCoord(id) : _dispCoord(id));
 
   const fontSz = n > 200 ? 4 : n > 100 ? 6 : n > 50 ? 8 : n > 25 ? 9 : 10;
   const rowH   = n > 200 ? 4 : n > 100 ? 6 : n > 50 ? 8 : n > 25 ? 14 : 20;
@@ -4014,6 +3848,287 @@ function _drawClustHeatmap() {{
     print(f"[OK] Report written → {output_file}")
 
 
+# ── Thesis figure export ─────────────────────────────────────────────────────
+# Target: 9 pt text at 15 cm column width
+#   printed_pt = 425.2 × plotly_font_size ÷ write_image_width
+#   900 px width, font 19 → 425.2 × 19 ÷ 900 ≈ 9.0 pt  ✓
+
+_TH_W     = 900                           # output width in px
+_TH_SCALE = 3                             # → 2700 px / ~457 dpi at 15 cm
+_TH_FONT  = 19                            # body / tick font
+_TH_AFONT = 21                            # axis-title font
+_TH_FACE  = "Times New Roman, Times, serif"
+
+
+def _th_layout(**extra) -> dict:
+    """Base layout kwargs for thesis figures; caller may override any key."""
+    base: dict = dict(
+        font=dict(family=_TH_FACE, size=_TH_FONT),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        legend=dict(font=dict(size=_TH_FONT - 3, family=_TH_FACE)),
+        margin=dict(t=25, b=70, l=80, r=20),
+        title=None,
+    )
+    base.update(extra)
+    return base
+
+
+def _th_axis(title: str = "", **extra) -> dict:
+    """Axis dict for thesis layout."""
+    d: dict = dict(
+        tickfont=dict(size=_TH_FONT, family=_TH_FACE),
+        showgrid=True, gridcolor="#e0e0e0", zeroline=False,
+    )
+    if title:
+        d["title"] = dict(text=title, font=dict(size=_TH_AFONT, family=_TH_FACE))
+    d.update(extra)
+    return d
+
+
+def _th_save(fig, path: str, height: int = 560) -> None:
+    fig.write_image(path, width=_TH_W, height=height, scale=_TH_SCALE)
+    px_w, px_h = _TH_W * _TH_SCALE, height * _TH_SCALE
+    col_cm = 15.0  # target column width
+    dpi = px_w / (col_cm / 2.54)
+    print(f"[thesis] {path}  ({px_w}×{px_h} px, ~{dpi:.0f} dpi @ {col_cm} cm)")
+
+
+def thesis_export_figs(
+    de_file:        str,
+    matrix_file:    str,
+    groups_file:    Optional[str],
+    switching_file: Optional[str],
+    out_dir:        str,
+    de_method:      str   = "edgeR_ciriquant",
+    fdr:            float = 0.05,
+    lfc:            float = 1.0,
+    de_sig_by:      str   = "auto",
+    isoform_file:   Optional[str] = None,
+    circbase_file:  Optional[str] = None,
+    tumor_label:    str   = "tumor",
+    normal_label:   str   = "normal",
+) -> None:
+    """Export thesis-quality PNGs: fig4b_pca, fig4c_volcano, fig4d_heatmap, fig4e_isoform.
+
+    Requires kaleido: pip install kaleido
+    Activate by setting env var CIRCDEX_THESIS_FIGS=/path/to/output/dir
+    """
+    if not _PLOTLY:
+        print("[thesis] plotly not available — skipping PNG export"); return
+    try:
+        import kaleido  # noqa: F401
+    except ImportError:
+        print("[thesis] kaleido not installed — run: pip install kaleido"); return
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+    de = pd.read_csv(de_file, sep="\t")
+    matrix = pd.read_csv(matrix_file, sep="\t", index_col=0)
+    if "log2FC" not in de.columns and "log2FoldChange" in de.columns:
+        de = de.rename(columns={"log2FoldChange": "log2FC"})
+    de = _enrich_de(de, isoform_file, circbase_file)
+    p_col, sig_thr, _p_label = _eff_sig(de, de_sig_by, fdr)
+
+    # ── fig4b: PCA ────────────────────────────────────────────────────────────
+    if matrix.shape[1] >= 2:
+        cond_map_pca: dict = {}
+        if groups_file and Path(groups_file).exists():
+            try:
+                grp = pd.read_csv(groups_file)
+                if {"srr_id", "condition"} <= set(grp.columns):
+                    cond_map_pca = dict(zip(grp["srr_id"], grp["condition"]))
+            except Exception:
+                pass
+        try:
+            log_mat = np.log2(matrix.values.astype(float) + 1)
+            X = log_mat.T - log_mat.T.mean(axis=0)
+            U, s, _ = np.linalg.svd(X, full_matrices=False)
+            scores  = U * s
+            var_pct = (s ** 2 / max((s ** 2).sum(), 1e-10)) * 100
+            samples    = matrix.columns.tolist()
+            conditions = [cond_map_pca.get(smp, "unknown") for smp in samples]
+            c_palette: dict = {tumor_label: "#d62728", normal_label: "#2CA02C", "unknown": "#888"}
+            fig_pca = go.Figure()
+            for cond in sorted(set(conditions)):
+                idx = [i for i, c in enumerate(conditions) if c == cond]
+                fig_pca.add_trace(go.Scatter(
+                    x=[float(scores[i, 0]) for i in idx],
+                    y=[float(scores[i, 1]) for i in idx],
+                    mode="markers", name=cond.title(),
+                    marker=dict(color=c_palette.get(cond, "#888"), size=11,
+                                line=dict(color="white", width=1.5)),
+                    hovertemplate="%{text}<extra></extra>",
+                    text=[samples[i] for i in idx],
+                ))
+            fig_pca.update_layout(**_th_layout(
+                height=460,
+                xaxis=_th_axis(title=f"PC1: {var_pct[0]:.1f}%"),
+                yaxis=_th_axis(title=f"PC2: {var_pct[1]:.1f}%"),
+                # Explicit legend font — must set both font and title.font explicitly
+                legend=dict(
+                    font=dict(size=_TH_FONT, family=_TH_FACE),
+                    title=dict(text="Group",
+                               font=dict(size=_TH_FONT, family=_TH_FACE)),
+                ),
+            ))
+            _th_save(fig_pca, str(Path(out_dir) / "fig4b_pca.png"), height=460)
+        except Exception as e:
+            print(f"[thesis] PCA failed: {e}")
+
+    # ── fig4c: Volcano ────────────────────────────────────────────────────────
+    df_v = de[de[p_col].notna() & de["log2FC"].notna()].copy() if p_col in de.columns else pd.DataFrame()
+    if not df_v.empty:
+        df_v["nlp"] = df_v[p_col].clip(lower=1e-300).apply(lambda p: -math.log10(p))
+        def _sv(row):
+            if row[p_col] < sig_thr and row["log2FC"] > lfc:  return "Up"
+            if row[p_col] < sig_thr and row["log2FC"] < -lfc: return "Down"
+            return "NS"
+        df_v["sig"] = df_v.apply(_sv, axis=1)
+        vc = {"Up": "#d62728", "Down": "#2CA02C", "NS": "rgba(150,150,150,0.3)"}
+        vs = {"Up": 8, "Down": 8, "NS": 5}
+        traces_v = []
+        for grp in ["NS", "Down", "Up"]:
+            sub = df_v[df_v["sig"] == grp]
+            if sub.empty: continue
+            traces_v.append(go.Scatter(
+                x=sub["log2FC"].tolist(), y=sub["nlp"].tolist(),
+                mode="markers", name=grp,
+                marker=dict(color=vc[grp], size=vs[grp], opacity=0.8, line=dict(width=0)),
+                hovertemplate="%{x:.2f}, %{y:.2f}<extra></extra>",
+            ))
+        fig_vol = go.Figure(traces_v)
+        fig_vol.add_vline(x=lfc,  line_dash="dot", line_color="#999", line_width=1.5)
+        fig_vol.add_vline(x=-lfc, line_dash="dot", line_color="#999", line_width=1.5)
+        fig_vol.add_hline(y=-math.log10(sig_thr), line_dash="dot", line_color="#999", line_width=1.5)
+        fig_vol.update_layout(**_th_layout(
+            height=500,
+            xaxis=_th_axis(title="log₂ Fold Change (Tumor / Normal)"),
+            yaxis=_th_axis(title=f"−log₁₀({_p_label})"),
+            margin=dict(t=25, b=65, l=85, r=20),
+        ))
+        _th_save(fig_vol, str(Path(out_dir) / "fig4c_volcano.png"), height=500)
+
+    # ── fig4d: Heatmap — all significant rows; label only top-20 up + top-20 down ──
+    top_n_lbl = 20
+    cb_map_th: dict = {}
+    if "circbase_id" in de.columns and "in_circbase" in de.columns:
+        known_th = de[de["in_circbase"] == 1].dropna(subset=["circbase_id"])
+        cb_map_th = dict(zip(known_th["circ_id"], known_th["circbase_id"]))
+    def _lbl_th(cid: str) -> str:
+        cb = cb_map_th.get(cid, "")
+        return cb if cb and cb not in ("", "novel") else _disp_coord(cid)
+
+    if p_col in de.columns and "log2FC" in de.columns:
+        sig_up_th = (de[(de[p_col] < sig_thr) & (de["log2FC"] >  lfc)]
+                     .dropna(subset=[p_col]).sort_values(p_col))
+        sig_dn_th = (de[(de[p_col] < sig_thr) & (de["log2FC"] < -lfc)]
+                     .dropna(subset=[p_col]).sort_values(p_col))
+    else:
+        sig_up_th = sig_dn_th = pd.DataFrame()
+
+    all_ids_th  = (sig_up_th["circ_id"].tolist() + sig_dn_th["circ_id"].tolist()
+                   if not sig_up_th.empty or not sig_dn_th.empty else [])
+    label_ids_th = set(sig_up_th.head(top_n_lbl)["circ_id"].tolist() +
+                       sig_dn_th.head(top_n_lbl)["circ_id"].tolist())
+    avail_th = [i for i in all_ids_th if i in matrix.index]
+    if len(avail_th) >= 2:
+        sub_th = matrix.loc[avail_th].astype(float)
+        log_s  = np.log2(sub_th + 1)
+        n_cols_th: list = []
+        cm_th: dict = {}
+        if groups_file and Path(groups_file).exists():
+            try:
+                grp = pd.read_csv(groups_file)
+                cm_th = dict(zip(grp["srr_id"], grp["condition"]))
+                n_cols_th = [c for c in log_s.columns if cm_th.get(c, "") == normal_label]
+            except Exception:
+                pass
+        ref_th = n_cols_th if n_cols_th else log_s.columns.tolist()
+        z_th   = log_s.sub(log_s[ref_th].mean(axis=1), axis=0).div(log_s.std(axis=1).clip(lower=0.1), axis=0)
+        tc = [c for c in z_th.columns if cm_th.get(c, "") not in (normal_label, "")]
+        nc = [c for c in z_th.columns if cm_th.get(c, "") == normal_label]
+        oc = [c for c in z_th.columns if c not in set(tc) and c not in set(nc)]
+        if tc or nc:
+            z_th = z_th[tc + nc + oc]
+        # blank label for rows outside top-20 up / top-20 down
+        y_lbl_th = [_lbl_th(i) if i in label_ids_th else "" for i in avail_th]
+        # height: each row ~20 px, with floor of 600 px
+        h_hm = max(600, len(avail_th) * 20 + 100)
+        # left margin wide enough for circBase ID labels (~18 chars)
+        fig_hm = go.Figure(go.Heatmap(
+            z=z_th.values.tolist(), x=z_th.columns.tolist(), y=y_lbl_th,
+            colorscale=[[0, "#2ca02c"], [0.5, "white"], [1, "#d62728"]], zmid=0,
+            colorbar=dict(
+                title=dict(text=f"z-score<br>({normal_label}-centered)",
+                           font=dict(size=_TH_FONT - 2, family=_TH_FACE)),
+                tickfont=dict(size=_TH_FONT - 2, family=_TH_FACE),
+                len=0.5,
+            ),
+        ))
+        fig_hm.update_layout(**_th_layout(
+            height=h_hm,
+            # tickfont uses _TH_FONT (not hard-coded 10) so it inherits template sizing
+            yaxis=dict(
+                tickfont=dict(size=_TH_FONT, family=_TH_FACE),
+                autorange="reversed",
+            ),
+            xaxis=dict(
+                tickfont=dict(size=_TH_FONT, family=_TH_FACE),
+                tickangle=30,
+            ),
+            margin=dict(t=20, b=90, l=260, r=30),
+        ))
+        _th_save(fig_hm, str(Path(out_dir) / "fig4d_heatmap.png"), height=h_hm)
+
+    # ── fig4e: Isoform switching bar chart ────────────────────────────────────
+    if switching_file and Path(switching_file).exists():
+        try:
+            sw = pd.read_csv(switching_file, sep="\t")
+            if not sw.empty and "is_switching" in sw.columns and "gene_name" in sw.columns:
+                sig_sw = sw[sw["is_switching"] == True].copy()
+                if not sig_sw.empty:
+                    iui_c = f"iui_{tumor_label}"  if f"iui_{tumor_label}"  in sig_sw.columns else "iui_tumor"
+                    iui_n = f"iui_{normal_label}" if f"iui_{normal_label}" in sig_sw.columns else "iui_normal"
+                    top_g = (sig_sw.groupby("gene_name")["padj_global"]
+                             .min().sort_values().head(10).index.tolist())
+                    pal_iso = ["#1D9E75","#534AB7","#BA7517","#D85A30","#378ADD",
+                               "#9467BD","#8C564B","#E377C2","#7F7F7F","#17BECF"]
+                    fig_iso = go.Figure()
+                    for gene in top_g:
+                        # Use ALL isoforms for the gene (not just significant ones)
+                        # so both isoforms contribute to each stacked bar
+                        rws = sw[sw["gene_name"] == gene].reset_index(drop=True)
+                        for i_iso, (_, row) in enumerate(rws.iterrows()):
+                            short = str(row.get("circ_id", "")).split(":")[-1]
+                            fig_iso.add_trace(go.Bar(
+                                name=f"{gene} | {short}",
+                                x=[[gene, gene], [normal_label.title(), tumor_label.title()]],
+                                y=[row.get(iui_n, 0), row.get(iui_c, 0)],
+                                marker_color=pal_iso[i_iso % len(pal_iso)],
+                                legendgroup=gene,
+                            ))
+                    fig_iso.update_layout(**_th_layout(
+                        height=520, barmode="stack",
+                        yaxis=_th_axis(title="Isoform Usage Index (IUI)"),
+                        xaxis=dict(
+                            tickfont=dict(size=_TH_FONT - 3, family=_TH_FACE),
+                            tickangle=-45,
+                        ),
+                        legend=dict(
+                            font=dict(size=_TH_FONT, family=_TH_FACE),
+                            title=dict(text="Gene | BSJ coords",
+                                       font=dict(size=_TH_FONT, family=_TH_FACE)),
+                        ),
+                        margin=dict(t=25, b=100, l=80, r=220),
+                    ))
+                    _th_save(fig_iso, str(Path(out_dir) / "fig4e_isoform.png"), height=520)
+        except Exception as e:
+            print(f"[thesis] isoform figure failed: {e}")
+
+    print(f"[thesis] Done → {out_dir}/")
+
+
 # ── Snakemake entry point ────────────────────────────────────────────────────
 
 if "snakemake" in dir():
@@ -4046,3 +4161,22 @@ if "snakemake" in dir():
                               if getattr(snakemake.input, a, None)},               # type: ignore[name-defined]
         study_title        = str(getattr(snakemake.params, "study_title", "")),    # type: ignore[name-defined]
     )
+
+    # ── Thesis PNG export (triggered by env var CIRCDEX_THESIS_FIGS=/path/to/out) ──
+    _th_out = os.environ.get("CIRCDEX_THESIS_FIGS", "")
+    if _th_out:
+        thesis_export_figs(
+            de_file        = snakemake.input.de,                               # type: ignore[name-defined]
+            matrix_file    = snakemake.input.matrix,                           # type: ignore[name-defined]
+            groups_file    = getattr(snakemake.input, "groups", None),         # type: ignore[name-defined]
+            switching_file = getattr(snakemake.input, "switching", None),      # type: ignore[name-defined]
+            out_dir        = _th_out,
+            de_method      = str(snakemake.params.de_method),                  # type: ignore[name-defined]
+            fdr            = float(snakemake.params.fdr),                      # type: ignore[name-defined]
+            lfc            = float(snakemake.params.lfc),                      # type: ignore[name-defined]
+            de_sig_by      = str(getattr(snakemake.params, "de_sig_by", "auto")),  # type: ignore[name-defined]
+            isoform_file   = getattr(snakemake.input, "isoform_groups", None), # type: ignore[name-defined]
+            circbase_file  = getattr(snakemake.input, "circbase_annot", None), # type: ignore[name-defined]
+            tumor_label    = str(snakemake.params.tumor_label),                # type: ignore[name-defined]
+            normal_label   = str(snakemake.params.normal_label),               # type: ignore[name-defined]
+        )
