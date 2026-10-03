@@ -82,7 +82,7 @@ add("cancer-type labels: list", "; ".join(c19), "; ".join(c15), "", "")
 c15merged = sorted({("breast cancer" if META[d][0] == "breast" else META[d][1]) for d in DS15})
 add("cancer-type count if all breast subtypes merged to 'breast cancer'", len({("breast cancer" if META[d][0]=="breast" else META[d][1]) for d in DS19}), len(c15merged), "", "alt. definition: gives 13 for the 15 set")
 add("NOTE definition difference", "organ site = anatomical site (breast, lung…); cancer-type label = histology/subtype (TNBC, IDC, SCLC, LUAD…)",
-    "15 set: 12 organ sites vs 15 cancer-type labels vs 15 datasets (the 15/15 equality is a coincidence: GSE148036 LUAD is the only LUAD; two unlabeled-subtype breast sets collapse to one label 'breast cancer (bulk)' only because GSE58135 is removed)", "", "choose ONE: '12 organ sites' for the 15 set; do not reuse '13'")
+    "15 set: 12 organ sites vs 15 cancer-type labels vs 15 datasets; the 15=15 equality is coincidental (breast has 3 labels TNBC/IDC/bulk, lung has 2 SCLC/LUAD, other 10 organs 1 each)", "", "choose ONE: '12 organ sites' for the 15 set; do not reuse '13'")
 
 # ---- sample size
 def npairs(d): return min(int(summ[d]["n_tumor"]), int(summ[d]["n_normal"]))
