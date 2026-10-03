@@ -1,0 +1,97 @@
+item	value_19_datasets	value_15_datasets	source	location_in_v19
+total significant calls (sum over datasets)	4357	1591	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Abstract; §3.4 (opening paragraph)
+dataset with most calls	GSE192410=2346 (53.8% of total)	GSE171011=326 (20.5% of total)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§3.4 (opening paragraph): GSE192410 share of all calls
+range of calls per dataset (min–max)	1–2346	6–326	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§3.4 (opening paragraph): range of calls per dataset
+dataset with fewest calls	GSE229705=1	GSE148036=6	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§3.4 (opening paragraph)
+n datasets	19	15	thesis_common.py DS19/DS15	throughout
+Type I share per dataset, range (%)	69.3–100.0	69.3–100.0	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Abstract; §3.4.1; §4.1, §4.5; §5
+dataset with lowest Type I share	GSE136569 (69.3%)	GSE136569 (69.3%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+datasets with 100% Type I	2 (GSE229705;GSE148036)	1 (GSE148036)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§3.4.1 refers to two datasets with 100% Type I; this becomes ONE dataset in the 15 set
+pooled Type I (n, %)	3813/4357 (87.5%)	1387/1591 (87.2%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+pooled Type II (n, %)	544 (12.5%)	204 (12.8%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+sig calls with Type other than I/II (sanity, should be 0)	0	0	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+datasets where Type I > Type II	19/19	15/15	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§3.4.1
+Type I/II: GSE113230	TypeI=212 (88.3%); TypeII=28 (11.7%); n=240	TypeI=212 (88.3%); TypeII=28 (11.7%); n=240	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE58135	TypeI=13 (86.7%); TypeII=2 (13.3%); n=15	EXCLUDED	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE133998	TypeI=77 (97.5%); TypeII=2 (2.5%); n=79	TypeI=77 (97.5%); TypeII=2 (2.5%); n=79	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: SRP156355	TypeI=144 (94.7%); TypeII=8 (5.3%); n=152	TypeI=144 (94.7%); TypeII=8 (5.3%); n=152	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE77509	TypeI=36 (87.8%); TypeII=5 (12.2%); n=41	TypeI=36 (87.8%); TypeII=5 (12.2%); n=41	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE130078	TypeI=9 (75.0%); TypeII=3 (25.0%); n=12	TypeI=9 (75.0%); TypeII=3 (25.0%); n=12	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE248612	TypeI=42 (91.3%); TypeII=4 (8.7%); n=46	TypeI=42 (91.3%); TypeII=4 (8.7%); n=46	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE221107	TypeI=52 (91.2%); TypeII=5 (8.8%); n=57	TypeI=52 (91.2%); TypeII=5 (8.8%); n=57	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: PRJNA553289	TypeI=110 (94.0%); TypeII=7 (6.0%); n=117	TypeI=110 (94.0%); TypeII=7 (6.0%); n=117	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE229705	TypeI=1 (100.0%); TypeII=0 (0.0%); n=1	EXCLUDED	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE148036	TypeI=6 (100.0%); TypeII=0 (0.0%); n=6	TypeI=6 (100.0%); TypeII=0 (0.0%); n=6	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE121842	TypeI=55 (84.6%); TypeII=10 (15.4%); n=65	TypeI=55 (84.6%); TypeII=10 (15.4%); n=65	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE136569	TypeI=138 (69.3%); TypeII=61 (30.7%); n=199	TypeI=138 (69.3%); TypeII=61 (30.7%); n=199	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE143797	TypeI=50 (89.3%); TypeII=6 (10.7%); n=56	TypeI=50 (89.3%); TypeII=6 (10.7%); n=56	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE108735	TypeI=47 (85.5%); TypeII=8 (14.5%); n=55	TypeI=47 (85.5%); TypeII=8 (14.5%); n=55	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE171011	TypeI=303 (92.9%); TypeII=23 (7.1%); n=326	TypeI=303 (92.9%); TypeII=23 (7.1%); n=326	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE97239	TypeI=106 (75.7%); TypeII=34 (24.3%); n=140	TypeI=106 (75.7%); TypeII=34 (24.3%); n=140	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE192410	TypeI=2044 (87.1%); TypeII=302 (12.9%); n=2346	EXCLUDED	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+Type I/II: GSE192849	TypeI=368 (91.1%); TypeII=36 (8.9%); n=404	EXCLUDED	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 7
+direction: GSE113230	up=237; down=3; dominant=up (up share 98.8%)	up=237; down=3; dominant=up (up share 98.8%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE58135	up=2; down=13; dominant=down (up share 13.3%)	EXCLUDED	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE133998	up=33; down=46; dominant=down (up share 41.8%)	up=33; down=46; dominant=down (up share 41.8%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: SRP156355	up=19; down=133; dominant=down (up share 12.5%)	up=19; down=133; dominant=down (up share 12.5%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE77509	up=5; down=36; dominant=down (up share 12.2%)	up=5; down=36; dominant=down (up share 12.2%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE130078	up=1; down=11; dominant=down (up share 8.3%)	up=1; down=11; dominant=down (up share 8.3%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE248612	up=10; down=36; dominant=down (up share 21.7%)	up=10; down=36; dominant=down (up share 21.7%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE221107	up=4; down=53; dominant=down (up share 7.0%)	up=4; down=53; dominant=down (up share 7.0%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: PRJNA553289	up=23; down=94; dominant=down (up share 19.7%)	up=23; down=94; dominant=down (up share 19.7%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE229705	up=0; down=1; dominant=down (up share 0.0%)	EXCLUDED	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE148036	up=0; down=6; dominant=down (up share 0.0%)	up=0; down=6; dominant=down (up share 0.0%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE121842	up=29; down=36; dominant=down (up share 44.6%)	up=29; down=36; dominant=down (up share 44.6%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE136569	up=110; down=89; dominant=up (up share 55.3%)	up=110; down=89; dominant=up (up share 55.3%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE143797	up=8; down=48; dominant=down (up share 14.3%)	up=8; down=48; dominant=down (up share 14.3%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE108735	up=55; down=0; dominant=up (up share 100.0%)	up=55; down=0; dominant=up (up share 100.0%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE171011	up=173; down=153; dominant=up (up share 53.1%)	up=173; down=153; dominant=up (up share 53.1%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE97239	up=121; down=19; dominant=up (up share 86.4%)	up=121; down=19; dominant=up (up share 86.4%)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE192410	up=62; down=2284; dominant=down (up share 2.6%)	EXCLUDED	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+direction: GSE192849	up=395; down=9; dominant=up (up share 97.8%)	EXCLUDED	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 8; §3.4.2
+datasets up-dominant / down-dominant / tie	6 / 13 / 0	5 / 10 / 0	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Supports direction-heterogeneity statements (§3.4.2; §5)
+up-dominant datasets	GSE113230;GSE136569;GSE108735;GSE171011;GSE97239;GSE192849	GSE113230;GSE136569;GSE108735;GSE171011;GSE97239	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+down-dominant datasets	GSE58135;GSE133998;SRP156355;GSE77509;GSE130078;GSE248612;GSE221107;PRJNA553289;GSE229705;GSE148036;GSE121842;GSE143797;GSE192410	GSE133998;SRP156355;GSE77509;GSE130078;GSE248612;GSE221107;PRJNA553289;GSE148036;GSE121842;GSE143797	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+datasets with >=80% of calls in one direction	14/19	10/15	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+pooled up / down calls	1287 / 3070	828 / 763	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	pooled is dominated by GSE192410 (down) in the 19 set
+§3.4.2 named examples hold in 15 set?	GSE192410 down-dominant; SRP156355 down; GSE113230 up; GSE108735 100% up	GSE192410 EXCLUDED (sentence must change); SRP156355 down; GSE113230 up; GSE108735 up=55 down=0	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§3.4.2
+organ sites: n distinct (paper naming)	13	12	thesis_common.META[...][0]	Abstract; §3.4; Figure 8 caption; §4.1, §4.5; §5
+organ sites: list	bladder, breast, colorectal, esophagus, kidney, liver, lung, nasopharynx, ovary, pancreas, prostate, stomach, thyroid	bladder, breast, colorectal, esophagus, kidney, liver, lung, nasopharynx, pancreas, prostate, stomach, thyroid		§3.4 (opening paragraph) lists 13
+organ sites removed by 15-set	-	ovary		ovary disappears (only GSE192410); breast keeps 3 sets, lung keeps 2
+datasets per organ site	bladder=1; breast=5; colorectal=1; esophagus=1; kidney=1; liver=1; lung=3; nasopharynx=1; ovary=1; pancreas=1; prostate=1; stomach=1; thyroid=1	bladder=1; breast=3; colorectal=1; esophagus=1; kidney=1; liver=1; lung=2; nasopharynx=1; pancreas=1; prostate=1; stomach=1; thyroid=1		
+organ sites with >=2 datasets (within-organ comparisons)	breast; lung	breast; lung		web_ui 'Compare within' (breast, lung)
+cancer-type labels (histology/subtype as in paper abbreviations): n distinct	17	15	thesis_common.META[...][1]	NOT in v19 text as a number; likely source of the '15 種癌症／組織類型' wording
+cancer-type labels: list	CRC; ESCC; HCC; IDC; LUAD; NPC; PDAC; PTC; RCC; SCLC; TNBC; bladder cancer; breast cancer, bulk; gastric cancer; node-positive breast cancer; ovarian cancer; prostate cancer	CRC; ESCC; HCC; IDC; LUAD; NPC; PDAC; PTC; RCC; SCLC; TNBC; bladder cancer; breast cancer, bulk; gastric cancer; prostate cancer		
+cancer-type count if all breast subtypes merged to 'breast cancer'	14	13		alt. definition: gives 13 for the 15 set
+NOTE definition difference	organ site = anatomical site (breast, lung…); cancer-type label = histology/subtype (TNBC, IDC, SCLC, LUAD…)	15 set: 12 organ sites vs 15 cancer-type labels vs 15 datasets (the 15/15 equality is a coincidence: GSE148036 LUAD is the only LUAD; two unlabeled-subtype breast sets collapse to one label 'breast cancer (bulk)' only because GSE58135 is removed)		choose ONE: '12 organ sites' for the 15 set; do not reuse '13'
+samples per arm (min–max pairs)	3–7	3–7	data/per_dataset_summary.tsv n_tumor/n_normal	§4.5; §4.10 (Limitations)
+n per arm distribution	3:5; 4:3; 5:3; 6:7; 7:1	3:3; 4:3; 5:2; 6:6; 7:1		
+designs that are NOT same-patient pairs (wording 'pairs' imprecise)	GSE148036 (5T+5N unrelated), GSE143797 (4 NPC + 4 nasopharyngitis)	same two (both in 15 set)	CLAUDE.md dataset notes (unverified against GEO)	v19 wording is 'pairs' (§4.5, §4.10)
+library-prep: n distinct classes documented in GEO/SRA	6	3	per_dataset_summary.tsv library_prep (GEO/SRA metadata) mapped by META[...][2]	v19 gives no number for library-preparation protocols (§4.5, §4.6)
+library-prep: classes (datasets)	RNase R=1; SPIA/Trio rRNA-transcript removal=1; ncRNA-seq size fractionation=2; not stated=6; poly(A) selection=1; rRNA depletion=7; rRNA depletion + RNase R=1	ncRNA-seq size fractionation=2; not stated=5; rRNA depletion=7; rRNA depletion + RNase R=1		
+library-prep: classes if 'not stated' counted as a class	7	4		
+poly(A)-selected datasets included	GSE58135	none	per_dataset_summary.tsv	contradicts §2.13 exclusion in the 19 set
+RNase R-treated datasets	GSE97239; GSE192849	GSE97239	per_dataset_summary.tsv	
+reads/sample range (M, both mates, fastp pre-filter)	23–188	23–131	per_dataset_summary.tsv	
+read length range (bp)	50–150	100–150	per_dataset_summary.tsv	50/51 bp sets are GSE58135/GSE229705 (both excluded)
+recurrence: circRNAs significant in >=1 datasets	3671	1283	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+recurrence: circRNAs significant in >=2 datasets	530	228	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Abstract; §3.4.3; §4.1, §4.6; Figure 9a/b
+recurrence: circRNAs significant in >=3 datasets	118	57	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Abstract; §3.4.3; §4.1, §4.6; Figure 9a/b
+recurrence: circRNAs significant in >=4 datasets	31	19	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Abstract; §3.4.3; §4.1, §4.6; Figure 9a/b
+recurrence: circRNAs significant in >=5 datasets	7	4	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Abstract; §3.4.3; §4.1, §4.6; Figure 9a/b
+recurrence: exactly 5 datasets	7	4	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.6
+recurrence: max n datasets	5	5	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+recurrence: unique circRNAs sig in >=1 dataset	3671	1283	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+sensitivity: excluding only GSE192410 (>=2/>=3/>=4)	266/68/23	n/a	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.10 (sensitivity analysis excluding GSE192410); reproduced here for 18 datasets
+recurrence: 15-set tiers as shares of 15-set unique	-	2:17.8%; 3:4.4%; 4:1.5%; 5:0.3%	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+§4.6 candidate chr15:63988323|64008672 (HERC1): n datasets	5	5	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.6 seven candidates; 19-set members: GSE133998;SRP156355;GSE248612;GSE121842;GSE171011
+§4.6 candidate chr19:23541232|23545527 (ZNF91): n datasets	5	5	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.6 seven candidates; 19-set members: GSE133998;GSE148036;GSE143797;GSE108735;GSE171011
+§4.6 candidate chr1:117944808|117963271 (MAN1A2): n datasets	5	5	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.6 seven candidates; 19-set members: GSE113230;GSE133998;GSE77509;GSE108735;GSE171011
+§4.6 candidate chr8:131164982|131193126 (ASAP1): n datasets	5	5	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.6 seven candidates; 19-set members: GSE133998;GSE77509;PRJNA553289;GSE121842;GSE108735
+§4.6 candidate chr22:46096162|46136418 (ATXN10): n datasets	5	4	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.6 seven candidates; 19-set members: GSE113230;SRP156355;PRJNA553289;GSE97239;GSE192410 | removed: GSE192410
+§4.6 candidate chr3:171965323|171969331 (FNDC3B): n datasets	5	4	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.6 seven candidates; 19-set members: GSE113230;GSE77509;GSE248612;GSE108735;GSE192410 | removed: GSE192410
+§4.6 candidate chr10:7318854|7327916 (SFMBT2): n datasets	5	3	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	§4.6 seven candidates; 19-set members: PRJNA553289;GSE143797;GSE108735;GSE192410;GSE192849 | removed: GSE192410;GSE192849
+§4.6 candidates still 5-of-5 in the 15 set	7/7	4/7	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+§4.6 candidates still >=4 in the 15 set	7/7	6/7	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	
+circRNAs at 5 datasets in the 15 set	-	chr1:117944808|117963271(MAN1A2);chr15:63988323|64008672(HERC1);chr19:23541232|23545527(ZNF91);chr8:131164982|131193126(ASAP1)	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	none are new vs the 19-set seven
+circRNAs at >=4 datasets (Fig 9c heatmap rows)	31	19	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	Figure 9c caption (circRNA count)

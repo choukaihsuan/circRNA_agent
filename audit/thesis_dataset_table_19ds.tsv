@@ -1,0 +1,20 @@
+accession	organ_site	cancer_type_label	n_tumor	n_normal	n_tested	n_sig	n_up	n_down	TypeI	TypeII	TypeI_pct	library_class	single_tool_rows_pct	in_cross_dataset_analysis	exclusion_reason
+GSE113230	breast	TNBC	3	3	6650	240	237	3	212	28	88.3	rRNA depletion	0.0	yes	
+GSE58135	breast	breast cancer, bulk	5	5	45	15	2	13	13	2	86.7	poly(A) selection	97.8	no	effective single-tool: 97.8% of consensus rows supported by 1 tool (config tools=ciriquant+dcc, min_tools=2); exclusion threshold >=97.8%
+GSE133998	breast	breast cancer, bulk	6	6	650	79	33	46	77	2	97.5	rRNA depletion	0.0	yes	
+SRP156355	breast	IDC	6	6	1397	152	19	133	144	8	94.7	not stated	0.0	yes	
+GSE77509	liver	HCC	6	6	124	41	5	36	36	5	87.8	rRNA depletion	0.0	yes	
+GSE130078	esophagus	ESCC	6	6	231	12	1	11	9	3	75.0	rRNA depletion	0.0	yes	
+GSE248612	stomach	gastric cancer	6	6	328	46	10	36	42	4	91.3	not stated	0.0	yes	
+GSE221107	prostate	prostate cancer	4	4	928	57	4	53	52	5	91.2	rRNA depletion	0.2	yes	
+PRJNA553289	lung	SCLC	6	6	476	117	23	94	110	7	94.0	not stated	0.0	yes	
+GSE229705	lung	LUAD	6	6	31	1	0	1	1	0	100.0	SPIA/Trio rRNA-transcript removal	100.0	no	effective single-tool: 100.0% of consensus rows supported by 1 tool (config tools=ciriquant, min_tools=1); exclusion threshold >=97.8%
+GSE148036	lung	LUAD	5	5	19	6	0	6	6	0	100.0	rRNA depletion	0.0	yes	
+GSE121842	colorectal	CRC	3	3	661	65	29	36	55	10	84.6	not stated	0.0	yes	
+GSE136569	pancreas	PDAC	5	5	7334	199	110	89	138	61	69.3	rRNA depletion	0.0	yes	
+GSE143797	nasopharynx	NPC	4	4	328	56	8	48	50	6	89.3	ncRNA-seq size fractionation	0.0	yes	
+GSE108735	kidney	RCC	7	7	57	55	55	0	47	8	85.5	ncRNA-seq size fractionation	0.0	yes	
+GSE171011	thyroid	PTC	4	4	2377	326	173	153	303	23	92.9	not stated	0.0	yes	
+GSE97239	bladder	bladder cancer	3	3	2719	140	121	19	106	34	75.7	rRNA depletion + RNase R	0.0	yes	
+GSE192410	ovary	ovarian cancer	3	3	7144	2346	62	2284	2044	302	87.1	not stated	100.0	no	effective single-tool: 100.0% of consensus rows supported by 1 tool (config tools=ciriquant, min_tools=1); exclusion threshold >=97.8%
+GSE192849	breast	node-positive breast cancer	3	3	10978	404	395	9	368	36	91.1	RNase R	100.0	no	effective single-tool: 100.0% of consensus rows supported by 1 tool (config tools=ciriquant, min_tools=1); exclusion threshold >=97.8%
