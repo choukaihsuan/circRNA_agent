@@ -126,11 +126,11 @@ add("circRNAs at 5 datasets in the 15 set", "-", ";".join("%s(%s)" % (k, genes.g
 add("circRNAs at >=4 datasets (Fig 9c heatmap rows)", r19[4], r15[4], SRC_DE, "Figure 9c caption (circRNA count)")
 
 with open(os.path.join(OUT, "thesis_numbers_15ds.tsv"), "w", newline="") as f:
-    w = csv.writer(f, delimiter="\t"); w.writerow(["item", "value_19_datasets", "value_15_datasets", "source", "location_in_v19"]); w.writerows(rows)
+    w = csv.writer(f, delimiter="\t", lineterminator="\n"); w.writerow(["item", "value_19_datasets", "value_15_datasets", "source", "location_in_v19"]); w.writerows(rows)
 
 # ---- dataset table (all 19 kept)
 with open(os.path.join(OUT, "thesis_dataset_table_19ds.tsv"), "w", newline="") as f:
-    w = csv.writer(f, delimiter="\t")
+    w = csv.writer(f, delimiter="\t", lineterminator="\n")
     w.writerow(["accession", "organ_site", "cancer_type_label", "n_tumor", "n_normal", "n_tested", "n_sig", "n_up", "n_down", "TypeI", "TypeII", "TypeI_pct", "library_class", "single_tool_rows_pct", "in_cross_dataset_analysis", "exclusion_reason"])
     for d in DS19:
         c = typ(d); u, n = dirs(d); sp = float(summ[d]["single_tool_rows_pct"])
