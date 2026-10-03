@@ -1,0 +1,34 @@
+accession	consensus.tools	consensus.min_tools	de.method	circbase_file	genome.hisat2_index(basename)	threads	paired_model_used	effective_min_tools(from n_tools)	single_tool_rows_pct	other_non_config_deviations
+GSE113230	ciriquant+dcc	2	edgeR_ciriquant	local_cache	hg19_hisat2_index	12	no	2	0.0	SRR7012366: RBM5-locus junction manually removed from Chimeric.out.junction before DCC (backup *.bak_pre_rbm5filter); -Nr 2 rerun 2026-07-17
+GSE58135	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	8	no	mixed(97.8% single)	97.8	DCC output deleted (cannot verify -Nr); adaptive fallback triggered; poly(A) library; 50 bp
+GSE133998	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	12	no	2	0.0	biologically paired (H36-H42) but analysed unpaired
+SRP156355	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	8	no	2	0.0	biologically paired (6 pairs) but analysed unpaired
+GSE77509	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	12	no	2	0.0	biologically paired (6 pairs) but analysed unpaired; only 1 of 4-5 split SRRs per sample used
+GSE130078	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	12	yes	2	0.0	
+GSE248612	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	12	no	2	0.0	biologically paired but analysed unpaired
+GSE221107	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	12	yes	2 (0.22% single-tool rows)	0.2	2 of 6 pairs (Pair 8, 11) excluded as degraded; count matrix column-subset by hand; adaptive fallback in 1 sample
+PRJNA553289	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	12	no	2	0.0	biologically paired but analysed unpaired
+GSE229705	ciriquant	1	limma	auto_download	hg19	12	yes	1	100.0	config says consensus.tools=[ciriquant], de.method=limma (de_results.tsv content is edgeR); 51 bp reads
+GSE148036	ciriquant+dcc	2	edgeR_ciriquant	auto_download	hg19	24	no	2	0.0	unpaired by design
+GSE121842	ciriquant+dcc	2	edgeR_ciriquant	local_cache	hg19_hisat2_index	24	no	2	0.0	biologically paired but analysed unpaired
+GSE136569	ciriquant+dcc	2	edgeR_ciriquant	local_cache	hg19_hisat2_index	18	yes	2	0.0	
+GSE143797	ciriquant+dcc	2	edgeR_ciriquant	local_cache	hg19_hisat2_index	24	no	2	0.0	unpaired by design
+GSE108735	ciriquant+dcc	2	edgeR_ciriquant	local_cache	hg19_hisat2_index	18	yes	2	0.0	
+GSE171011	ciriquant+dcc	2	edgeR_ciriquant	local_cache	hg19_hisat2_index	18	no	2	0.0	biologically paired (4 pairs) but analysed unpaired
+GSE97239	ciriquant+dcc	2	edgeR_ciriquant	local_cache	hg19_hisat2_index	18	yes	2	0.0	config file rewritten 2026-09-30 (after the 2026-07-30 run)
+GSE192410	ciriquant	1	edgeR_ciriquant	local_cache	hg19_hisat2_index	18	yes	1	100.0	DCC header-only bypass for 3 normal samples; all 6 samples CIRIquant-only since 2026-08-02 rebuild
+GSE192849	ciriquant	1	edgeR_ciriquant	local_cache	hg19_hisat2_index	18	yes	1	100.0	DCC header-only bypass for all 6 samples (RNase R junction-file O(n^2) stall)
+
+## classification	
+consensus.tools	RESULT-AFFECTING
+consensus.min_tools	RESULT-AFFECTING
+de.method	RESULT-AFFECTING (primary method label; de_results.tsv for GSE229705 is nonetheless edgeR content)
+circbase_file	HARMLESS-ish (annotation source; both are the frozen circBase hg19 file; auto-download date unrecoverable)
+genome.hisat2_index(basename)	HARMLESS (key only feeds utils.py:45; CIRIquant reads config/ciriquant.yaml hisat_index)
+threads	HARMLESS (resource only)
+download.max_concurrent	HARMLESS
+log_dir	HARMLESS
+notify.email_to	HARMLESS
+paired_model_used	RESULT-AFFECTING (design ~patient+condition vs ~condition)
+non-config deviations	RESULT-AFFECTING where they change inputs (junction removal, sample exclusion, DCC bypass)
+note	project YAML mtimes (2026-06-20 .. 2026-09-30) postdate several runs, so the YAML on disk may not be the one in force at run time; effective_min_tools is therefore taken from consensus_summary.tsv n_tools, not config

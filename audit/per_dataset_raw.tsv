@@ -1,0 +1,20 @@
+accession	n_tumor	n_normal	paired_model(patient_id)	read_len_mean_range	reads_per_sample_M(range,both mates)	config_tools	config_min_tools	consensus_rows	single_tool_rows_pct	effective_min_tools	DEC_total	DEC_with_any_2tool_support	TypeI_pct	DEC_in_n>=2	DEC_in_n>=3	DEC_in_n>=4	DEC_in_n>=5	DEC_in_n>=2_excl4single	DEC_in_n>=3_excl4single
+GSE113230	3	3	no	150-150	92-104	ciriquant+dcc	2	79052	0.0	2	240	240	88.3	91	23	10	3	48	13
+GSE58135	5	5	no	50-50	89-188	ciriquant+dcc	2	2556	97.8	mixed(97.8% single)	15	6	86.7	11	5	0	0	NA	NA
+GSE133998	6	6	no	150-150	76-94	ciriquant+dcc	2	40444	0.0	2	79	79	97.5	56	28	11	4	49	19
+SRP156355	6	6	no	100-101	67-121	ciriquant+dcc	2	40861	0.0	2	152	152	94.7	98	49	17	2	72	23
+GSE77509	6	6	no	100-100	23-60	ciriquant+dcc	2	9885	0.0	2	41	41	87.8	32	16	8	3	29	12
+GSE130078	6	6	yes	101-101	80-104	ciriquant+dcc	2	20933	0.0	2	12	12	75.0	9	5	1	0	8	4
+GSE248612	6	6	no	138-140	73-87	ciriquant+dcc	2	30578	0.0	2	46	46	91.3	35	16	9	2	30	11
+GSE221107	4	4	yes	150-150	98-123	ciriquant+dcc	2	39681	0.2	2 (0.22% single-tool rows)	57	57	91.2	18	7	0	0	11	6
+PRJNA553289	6	6	no	150-150	80-128	ciriquant+dcc	2	37609	0.0	2	117	117	94.0	82	37	11	3	67	24
+GSE229705	6	6	yes	51-51	80-120	ciriquant	1	6915	100.0	1	1	0	100.0	1	1	0	0	NA	NA
+GSE148036	5	5	no	142-147	45-48	ciriquant+dcc	2	1203	0.0	2	6	6	100.0	3	1	1	1	1	1
+GSE121842	3	3	no	150-150	72-98	ciriquant+dcc	2	17567	0.0	2	65	65	84.6	38	10	4	2	26	5
+GSE136569	5	5	yes	100-100	103-123	ciriquant+dcc	2	173037	0.0	2	199	199	69.3	64	16	3	0	22	5
+GSE143797	4	4	no	150-150	71-96	ciriquant+dcc	2	15439	0.0	2	56	56	89.3	37	16	8	2	33	15
+GSE108735	7	7	yes	150-150	80-113	ciriquant+dcc	2	19922	0.0	2	55	55	85.5	43	25	13	5	42	22
+GSE171011	4	4	no	150-150	107-131	ciriquant+dcc	2	68317	0.0	2	326	326	92.9	141	44	15	3	79	29
+GSE97239	3	3	yes	150-150	45-57	ciriquant+dcc	2	40375	0.0	2	140	140	75.7	37	9	2	1	19	5
+GSE192410	3	3	yes	150-150	83-122	ciriquant	1	102196	100.0	1	2346	0	87.1	325	61	11	3	NA	NA
+GSE192849	3	3	yes	150-150	113-179	ciriquant	1	126171	100.0	1	404	0	91.1	95	23	7	1	NA	NA
