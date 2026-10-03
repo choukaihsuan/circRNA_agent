@@ -50,11 +50,26 @@ commit 798f696
 
 調查確認此檔案改動僅新增`_dispCoord()`做顯示層轉換（1-based內部座標→0-based顯示，比照circBase慣例），不影響任何查詢/join用的circ_id實際值，與本次凍結範圍內其他工作無關聯，獨立commit。
 
-## 仍未提交、本次凍結刻意不處理的檔案
+## `a8dfd79` — Snakefile_multi WIP（ENA FTP路徑泛化，刻意不完成）
 
-| 檔案 | mtime | 狀態 |
-|---|---|---|
-| `benchmark/Snakefile_multi` | 2026-10-01起 | **已查明**：與compute_cost修正無關，是另一個已部分提交（`49b122d`）的「3-dataset RNase R benchmark expansion」功能的`_ena_fastq_base()` helper（ENA FTP路徑泛化），尚未完成、尚未提交；曾誤staged進compute_cost commit，已用`git restore --staged`排除。是否/何時完成這個功能並提交，是獨立待決定事項，不屬於本次凍結範圍 |
-| `CLAUDE.md` | 2026-10-02起多次 | 橫跨好幾個不同主題的文件更新（Table 2可重現性、compute_cost修正說明、GSE58135時間線），沒有單一commit訊息可以準確描述全部內容；等你指示要不要拆成多個commit |
+```
+commit a8dfd79
+```
 
-`scripts/web_ui.py`和`scripts/templates/cross_dataset.html`原列為「來源不明」，現已查明並分別提交於`5dfc55d`／`798f696`（見上）。
+`_ena_fastq_base()` helper，屬於另一個已部分提交（`49b122d`）的「3-dataset RNase R benchmark expansion」功能，尚未接上、未測試，commit訊息明確標註「不可執行」。刻意以WIP狀態提交而非繼續放在工作目錄——未提交檔案留在工作目錄正是這次compute_cost provenance問題的根源之一，而這個檔案是獨立的Snakefile、不被主流程引用，提交沒有風險。完成與提交時機是獨立待決定事項，排在論文定稿與其他修訂之後。
+
+## `c7e0559` — CLAUDE.md資料集事實校正 + Table2/compute_cost稽核紀錄
+
+```
+commit c7e0559
+```
+
+單一commit，涵蓋兩類先前未提交的文件更新（commit訊息已逐項列出）：
+1. **資料集事實校正**（依`audit/per_dataset_summary.tsv`、`audit/thesis_dataset_table_19ds.tsv`，非沿用文件舊敘述）：GSE229705讀長100bp→51bp；GSE58135補揭露poly(A)-selected建庫法；新增19組資料集讀長/library prep/strandedness線索/有效單工具比例/15組跨資料集分析納入與否的稽核校正表。
+2. **Table 2可重現性 + compute_cost修正紀錄**（本次session較早的調查成果，先前因「橫跨多主題」被擱置未提交）：版本號更正（CIRIquant/R/MultiQC）、CirComPara2/nf-core未實際執行的揭露、基因體來源查證、資料庫access date、compute_cost三個bug的修正說明與前後數字。
+
+## 本次凍結（2026-10-02～03）最終狀態：無遺留未提交檔案
+
+原列「來源不明」的`scripts/web_ui.py`、`scripts/templates/cross_dataset.html`已查明並分別提交於`5dfc55d`／`798f696`；原「多主題擱置」的`CLAUDE.md`已提交於`c7e0559`；原「無關但未完成」的`benchmark/Snakefile_multi`已以WIP狀態提交於`a8dfd79`。本次對話開始時的6個未提交檔案，現皆已入庫。
+
+**⚠️ 798f696（cross_dataset.html的circ_id顯示改0-based）與2f27d7b內混入的`_disp_coord()`（generate_report.py多處0-based顯示）仍待覆核**：調查確認論文Table 2/Figure 9不印`chr:start|end`格式座標（只用circBase ID或基因名），故不構成「論文vs網頁」的直接衝突；但這兩處改動本身互相之間、以及跟pipeline資料層（TSV、consensus_filter、rank_biomarkers，全部1-based）、跟18/19已發表report.html的主要顯示（表格/JSON，1-based）不一致。建議revert兩處的0-based轉換，回到顯示原始1-based circ_id，待使用者決定後執行。
