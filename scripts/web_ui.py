@@ -472,6 +472,7 @@ def require_login():
 # ── Auth routes ────────────────────────────────────────────────────────────────
 
 @app.route("/login", methods=["GET", "POST"])
+@csrf.exempt
 def login():
     sent = request.args.get("sent")
     error = ""
