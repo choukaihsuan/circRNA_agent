@@ -1239,28 +1239,40 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 | Accession | 讀長 (bp，PE 各端) | Library prep（GEO/SRA extract_protocol 原文節錄）| Strandedness 線索 | 有效單工具比例 | 15 組跨資料集分析 |
 |---|---|---|---|---|---|
 | GSE113230 | 150-150 | RiboMinus rRNA removal (GEO extract protocol) | 未載明 | 0.0% | ✅ 納入15組 |
-| GSE58135 | 50-50 | POLY(A)-SELECTED, Tn-RNA-seq non-stranded (GEO extract protocol) | non-stranded（建庫法載明） | 97.8% | ❌ 排除 |
-| GSE133998 | 150-150 | rRNA depletion (GEO) | 未載明 | 0.0% | ✅ 納入15組 |
-| SRP156355 | 100-101 | SRA: RNA-Seq / selection=other（rRNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
-| GSE77509 | 100-100 | TruSeq Stranded Total RNA, rRNA depletion (GEO) | stranded（建庫法載明） | 0.0% | ✅ 納入15組 |
-| GSE130078 | 101-101 | TruSeq Stranded Total RNA + Ribo-Zero (GEO) | stranded（建庫法載明） | 0.0% | ✅ 納入15組 |
+| GSE58135 | 50-50 | POLY(A)-SELECTED, Tn-RNA-seq non-stranded (GEO extract protocol) | unstranded（GSM 原文：non-stranded Tn-RNA-seq） | 97.8% | ❌ 排除 |
+| GSE133998 | 150-150 | rRNA depletion (GEO) | stranded（GSM 原文：strand-specific library；dUTP/方向未載明） | 0.0% | ✅ 納入15組 |
+| SRP156355 | 100-101 | SRA study abstract: 'rRNA depleted and stranded library'（study-level，非 GSM-level） | stranded（**study-level**：SRA STUDY_ABSTRACT 寫 "stranded library was synthesized"；無 GSM，非 GSM-level 證據，`evidence_level=SRA_study_abstract`） | 0.0% | ✅ 納入15組 |
+| GSE77509 | 100-100 | TruSeq Stranded Total RNA, rRNA depletion (GEO) | stranded（GSM 原文：TruSeq Stranded Total RNA） | 0.0% | ✅ 納入15組 |
+| GSE130078 | 101-101 | TruSeq Stranded Total RNA + Ribo-Zero (GEO) | stranded（GSM 原文：TruSeq Stranded Total RNA） | 0.0% | ✅ 納入15組 |
 | GSE248612 | 138-140 | GEO: standard Illumina protocols（rRNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
-| GSE221107 | 150-150 | Ribo-off rRNA depletion (GEO) | 未載明 | 0.2% | ✅ 納入15組（視為雙工具）|
-| PRJNA553289 | 150-150 | SRA: RNA-Seq / cDNA（rRNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE221107 | 150-150 | Ribo-off rRNA depletion (GEO) | stranded（GSM 原文：stranded RNA sequencing library；KC Stranded mRNA kit） | 0.2% | ✅ 納入15組（視為雙工具）|
+| PRJNA553289 | 150-150 | SRA: RNA-Seq / cDNA（rRNA depletion 未載明，UNVERIFIED） | 未載明（SRA 單獨提交，無 GSM/extract_protocol） | 0.0% | ✅ 納入15組 |
 | GSE229705 | **51-51**（原文件誤記100bp，已更正）| Trio RNA-Seq (SPIA) with final rRNA-transcript removal step (GEO) | 未載明 | 100.0% | ❌ 排除 |
 | GSE148036 | 142-147 | Ribo-Zero rRNA removal (GEO) | 未載明 | 0.0% | ✅ 納入15組 |
 | GSE121842 | 150-150 | GEO: standard Illumina protocols（rRNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
-| GSE136569 | 100-100 | Ribozero (GEO) | 未載明 | 0.0% | ✅ 納入15組 |
-| GSE143797 | 150-150 | ncRNA-Seq / size fractionation; dUTP stranded（rRNA depletion 未載明，UNVERIFIED） | stranded（建庫法載明） | 0.0% | ✅ 納入15組 |
+| GSE136569 | 100-100 | Ribozero series kit rRNA removal + linear RNA digested with RNase R (GSM extract_protocol 原文)，RNase R-treated | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE143797 | 150-150 | ncRNA-Seq / size fractionation; dUTP stranded（rRNA depletion 未載明，UNVERIFIED） | stranded（GSM 原文：dUTP 第二股合成） | 0.0% | ✅ 納入15組 |
 | GSE108735 | 150-150 | ncRNA-Seq / size fractionation（rRNA/linear-RNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
 | GSE171011 | 150-150 | GEO: standard Illumina protocols；rRNA reads僅in silico移除（library prep UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
-| GSE97239 | 150-150 | RiboZero rRNA removal + RNase R digestion (GEO)，RNase R-treated | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE97239 | 150-150 | RiboZero rRNA removal + RNase R digestion (GEO)，RNase R-treated | unstranded（**文字推定**：random primer 合成 cDNA，未描述 dUTP/strand 標記；非原文明載） | 0.0% | ✅ 納入15組 |
 | GSE192410 | 150-150 | GEO: none provided by the submitter（UNVERIFIED，完全未揭露建庫法）| 未載明 | 100.0% | ❌ 排除 |
-| GSE192849 | 150-150 | RNase R digestion + VAHTS Total RNAseq kit (GEO)，RNase R-treated | 未載明 | 100.0% | ❌ 排除 |
+| GSE192849 | 150-150 | RNase R digestion + VAHTS Total RNAseq kit (GEO)，RNase R-treated | stranded（GSM 原文：strand-specific，dUTP） | 100.0% | ❌ 排除 |
 
 **「未載明」的意思**：GEO/SRA metadata 本身沒有明確文字陳述該項（多半是 extract_protocol 欄位只寫「standard Illumina protocols」或完全空白），**不代表「已確認是另一種狀態」**；標成 UNVERIFIED 的 library prep 欄位同理。本文件下方各資料集段落若有更肯定的敘述（例如直接寫「rRNA-depleted」而未加註來源查證），以本表的 UNVERIFIED 標註為準。
 
-**Strandedness 完整稽核（DCC 固定 stranded 預設 vs. CIRIquant 固定 unstranded 預設，與各資料集真實 library type 的 mismatch 交叉表）尚未完成**，是獨立進行中的稽核項目，完成後另行更新本節。
+**配對設計稽核結果（2026-10-03，`audit/pairing_design_crosscheck.tsv`、`audit/pairing_pair_level_check.tsv`；樣本是否真配對 = GEO GSM 描述；實際 DE design = 以現行 `scripts/analysis.R` 邏輯重算並逐位比對已發表 `de_results.tsv`，差異 < 1e-6 者即為當時所用 design）**：**以下為實測，凡與本文件各資料集段落（例如「含 `patient_id` 欄」「配對設計」）衝突者以此為準。**
+- 實際用 `~patient+condition` 的 8 組：GSE130078、GSE221107、GSE136569、GSE108735、GSE97239（15 組內）＋ GSE229705、GSE192410、GSE192849（已排除）。其餘 11 組為 `~condition`。
+- **GSE77509、GSE248612、SRP156355、PRJNA553289 的 `sample_groups.csv` 沒有 `patient_id` 欄**，實際為 `~condition`（本文件這幾組段落稱「含 patient_id 欄／配對設計」不符實際），但 GEO/SRA 資料顯示它們的樣本本來就是同病人配對（GSE133998、GSE121842 同；GSE171011 為隱含）。
+- **GSE221107：`sample_groups.csv` 的 P16、P18 兩組與 GEO 樣本紀錄不符**——P16 = 腫瘤 PC15（64 歲）+ 正常 PN16（70 歲）、P18 = 腫瘤 PC17（63 歲）+ 正常 PN18（77 歲）；僅 P14、P20 為真配對。ENA 以兩條獨立路徑（SRX 與 sample alias）確認 SRR→GSM 對應。
+- GSE143797（NPC vs. 鼻咽炎）、GSE148036、GSE58135 的樣本本來就不是同病人配對。
+
+**Strandedness 稽核結果（2026-10-03，`audit/library_strandedness.tsv`、`audit/library_strandedness_mismatch.tsv`；每列有 `evidence_level`：GSM_extract_protocol / SRA_study_abstract / text_implied / not_stated，可依嚴格程度自行取捨；kit 名稱不當證據）**：19 組中 GSM 原文明載者 7 組（stranded 6：GSE133998、GSE77509、GSE130078、GSE221107、GSE143797、GSE192849；non-stranded 1：GSE58135）；另 GSE97239 為文字推定 unstranded（text_implied）、SRP156355 為 SRA 研究摘要層級 stranded（無 GSM）；其餘 10 組未載明。15 組中：GSM 原文明載 5 組、加上 text_implied 與 SRA 研究摘要共 7 組可判定。工具實際設定（`results-2026-07` 的 `circrna.smk`）：DCC 未帶 `-N`（預設 stranded，fr-firststrand）、CIRIquant 未帶 `-l`（預設 0 = unstranded）。
+- **方向 A（DCC stranded 預設 vs. 真實 unstranded）**：GSE58135（GSM 原文，已排除於 15 組）、GSE97239（text_implied）。
+- **方向 B（CIRIquant unstranded vs. 真實 stranded）**：GSE133998、GSE77509、GSE130078、GSE221107、GSE143797、GSE192849（已排除於 15 組）〔GSM 原文〕；SRP156355〔SRA 研究摘要〕。
+- **CIRIquant `-l` 的作用範圍（1.1.3 原始碼）**：只在 `circ.py:373-390`（`denovo_worker`）過濾 BSJ 候選 read 的 strand；`lib_type` 僅經 `main.py:197` → `circ.proc`(628) → `proc_denovo_bam`(296) 傳入，**`proc_genome_bam`（FSJ，406）、CIRI2 偵測與基因豐度均不接收此參數**。逐行證據見 `audit/ciriquant_library_type_scope.md`。
+- **方向 A（DCC stranded 預設 vs. 真實 unstranded）**：GSE58135（原文明載，已排除於 15 組）、GSE97239（文字推定）。
+- **方向 B（CIRIquant unstranded vs. 真實 stranded）**：GSE133998、GSE77509、GSE130078、GSE221107、GSE143797、GSE192849（後者已排除於 15 組）。
+- **CIRIquant `-l` 的作用範圍（1.1.3 原始碼）**：只在 `circ.py:373-390`（`denovo_worker`）過濾 BSJ 候選 read 的 strand；`lib_type` 僅經 `main.py:197` → `circ.proc`(628) → `proc_denovo_bam`(296) 傳入，**`proc_genome_bam`（FSJ，406）、CIRI2 偵測與基因豐度均不接收此參數**。逐行證據見 `audit/ciriquant_library_type_scope.md`。
 
 ---
 
@@ -2039,7 +2051,7 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 
 **✅ 完成（2026-07-13 18:11）。** 報告位置：`~/GSE121842_results/report.html`（server，13 MB）
 
-大腸直腸癌（colorectal cancer，CRC）手術切除組織，tumor vs. adjacent normal，3 對配對 T/N，6 samples（SRR8113703–SRR8113708）。TruSeq Stranded Total RNA + Ribo-Zero Gold，Illumina HiSeq X，150bp PE，~35–49M spots/sample。Wang et al. 2019（PMC6757124）。
+大腸直腸癌（colorectal cancer，CRC）手術切除組織，tumor vs. adjacent normal，3 對配對 T/N，6 samples（SRR8113703–SRR8113708）。Illumina HiSeq X（建庫法未於 GEO 記載；原「TruSeq Stranded + Ribo-Zero Gold」描述已於 2026-10-03 撤回），150bp PE，~35–49M spots/sample。Wang et al. 2019（PMC6757124）。
 
 | 步驟 | 狀態 |
 |------|------|
@@ -2067,7 +2079,7 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 - case/control label：`tumor` / `normal`
 - SRR 清單（3T + 3N）：SRR8113703（tumor-P454750）、SRR8113704（tumor-Pgzy）、SRR8113705（tumor-Pwzd）；SRR8113706（normal-P454750）、SRR8113707（normal-Pgzy）、SRR8113708（normal-Pwzd）
 - genome：hg19；配對設計（patient_id：P454750 / Pgzy / Pwzd）
-- Library：TruSeq Stranded Total RNA + Ribo-Zero Gold，150bp PE，Illumina HiSeq X
+- Library：150bp PE，Illumina HiSeq X；建庫法 **未於 GEO 12 筆 GSM 記載**（2026-10-03 查證：原文件「TruSeq Stranded Total RNA + Ribo-Zero Gold」無 GEO 依據，已撤回，strandedness 未載明）
 - Condition CSV：`/mnt/c/Users/User/Desktop/GSE121842_condition.csv`
 
 **Server config**（`config/projects/GSE121842.yaml`）路徑：
@@ -2125,7 +2137,7 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 - case/control label：`tumor` / `normal`
 - SRR 清單（5T + 5N）：SRR10030979–SRR10030983（PDAC1–5）；SRR10030984–SRR10030988（NAT1–5）
 - genome：hg19；配對設計（patient_id：P1–P5）
-- Library：Total RNA，150bp PE，Illumina HiSeq X Ten
+- Library：Ribozero 去 rRNA + RNase R 消化線性 RNA（GSM extract_protocol 原文；2026-10-03 查證，先前誤記為 Total RNA），150bp PE，Illumina HiSeq X Ten
 - GEO：GSE136569（PRJNA563024）
 
 **Server config**（`config/projects/GSE136569.yaml`）路徑：
