@@ -1,0 +1,81 @@
+Pipeline	Column	Old	New	Changed	Reason
+Our pipeline	Tool_combination	CIRIquant + STAR×3 + DCC (adaptive consensus)	CIRIquant + STAR×3 + DCC (adaptive consensus)	no	
+Our pipeline	CIRIquant_min	695.2	695.2	no	
+Our pipeline	STAR_min	98.6	180.4	YES	Snakefile compute_cost rule never passed --our-star-mate1/2-log, so only STAR_paired (98.6) was counted although Tool_combination says STAR×3; fixed by adding the two logs (98.6+34.6+47.2=180.4)
+Our pipeline	DCC_min	16.2	16.2	no	
+Our pipeline	CIRCexplorer2_min			no	
+Our pipeline	find_circ_min			no	
+Our pipeline	DE_min	1.1	1.1	no	
+Our pipeline	Alignment_wall_min	810.0	891.8	YES	follows STAR_min (+81.8 = 180.4-98.6); DE no longer involved
+Our pipeline	Consensus_wall_min	0.0	0.0	no	
+Our pipeline	Total_wall_min	811.1	891.8	YES	STAR mate1/mate2 now counted (+81.8) and DE_min (1.1) no longer folded in (-1.1): net +80.7
+Our pipeline	Peak_RAM_GB	48.8	48.8	no	
+Our pipeline	Parallel_Peak_RAM_GB	138.6	138.6	no	
+Our pipeline	CPU_cores	8	8	no	
+Our pipeline	CPU_hours	108.1	118.9	YES	follows Total_wall_min
+Our pipeline	Source	This study (measured with /usr/bin/time -v)	This study (measured with /usr/bin/time -v)	no	
+Our pipeline	Note	Adaptive consensus: slop=10 bp + BSJ/FSJ pseudo-circ QC; detection benchmarked single-sample (SRR444655, ~100 M read pairs); DE analysis (edgeR_ciriquant, incl. DESeq2+limma side-products computed in the same analysis.R call) benchmarked separately on GSE113230 (6-sample multi-sample DE run)	Adaptive consensus: slop=10 bp + BSJ/FSJ pseudo-circ QC; detection benchmarked single-sample (SRR444655, ~100 M read pairs); DE_min (edgeR_ciriquant, incl. DESeq2+limma side-products computed in the same analysis.R call) measured separately on GSE113230 (6-sample multi-sample DE run) — reported for reference only, NOT included in Total_wall_min/CPU_hours (different sample size than the single-sample detection benchmark)	YES	wording: DE_min reference-only
+CirComPara2_4tools	Tool_combination	CIRIquant + STAR×3+DCC + CIRCexplorer2 + find_circ (≥2/4 consensus, slop=10)	CIRIquant + STAR×3+DCC + CIRCexplorer2 + find_circ (≥2/4 consensus, slop=10)	no	
+CirComPara2_4tools	CIRIquant_min	695.2	695.2	no	
+CirComPara2_4tools	STAR_min	180.4	180.4	no	
+CirComPara2_4tools	DCC_min	16.2	16.2	no	
+CirComPara2_4tools	CIRCexplorer2_min	0.2	0.2	no	
+CirComPara2_4tools	find_circ_min	387.9	387.9	no	
+CirComPara2_4tools	DE_min	0.9	0.9	no	
+CirComPara2_4tools	Alignment_wall_min	1279.9	1279.9	no	
+CirComPara2_4tools	Consensus_wall_min	0.0	0.0	no	
+CirComPara2_4tools	Total_wall_min	1280.8	1279.9	YES	DE_min (0.9) no longer folded in
+CirComPara2_4tools	Peak_RAM_GB	48.8	48.8	no	
+CirComPara2_4tools	Parallel_Peak_RAM_GB	142.2	142.1	YES	likely: mate1/mate2 logs now parsed so their measured peak RAM replaces hard-coded fallback in _c4_parallel_ram (inferred, not separately verified)
+CirComPara2_4tools	CPU_cores	8	8	no	
+CirComPara2_4tools	CPU_hours	170.8	170.7	YES	follows Total_wall_min
+CirComPara2_4tools	Source	This study (measured with /usr/bin/time -v, SRR444655)	This study (measured with /usr/bin/time -v, SRR444655)	no	
+CirComPara2_4tools	Note	slop=10 bp, no BSJ/FSJ pseudo-circ QC; DE analysis reuses the nf-core/circrna row's DESeq2 timing (same algorithm on the same GSE113230 count matrix) since CirComPara2 conventionally pairs its detection output with DESeq2 (Gaffo et al. 2022 Brief Bioinform 23(1):bbab418), not an independently benchmarked run	slop=10 bp, no BSJ/FSJ pseudo-circ QC; DE_min reuses the nf-core/circrna row's DESeq2 timing (same algorithm on the same GSE113230 count matrix) since CirComPara2 conventionally pairs its detection output with DESeq2 (Gaffo et al. 2022 Brief Bioinform 23(1):bbab418) — reported for reference only, NOT included in Total_wall_min	YES	wording: DE_min reference-only
+nf-core/circrna	Tool_combination	CIRIquant + CIRCexplorer2 + find_circ (fixed ≥2/3 tools, exact)	CIRIquant + CIRCexplorer2 + find_circ (fixed ≥2/3 tools, exact)	no	
+nf-core/circrna	CIRIquant_min	695.2	695.2	no	
+nf-core/circrna	STAR_min	98.6	98.6	no	
+nf-core/circrna	DCC_min			no	
+nf-core/circrna	CIRCexplorer2_min	0.2	0.2	no	
+nf-core/circrna	find_circ_min	387.9	387.9	no	
+nf-core/circrna	DE_min	0.9	0.9	no	
+nf-core/circrna	Alignment_wall_min	970.1	1068.7	YES	STAR_paired (98.6) now added to nfcore_align (was omitted); 970.1+98.6=1068.7
+nf-core/circrna	Consensus_wall_min	113.2	113.2	no	
+nf-core/circrna	Total_wall_min	1084.2	1181.9	YES	STAR_paired added (+98.6) and DE_min (0.9) removed: net +97.7
+nf-core/circrna	Peak_RAM_GB	48.8	48.8	no	
+nf-core/circrna	Parallel_Peak_RAM_GB	82.4	82.4	no	
+nf-core/circrna	CPU_cores	8	8	no	
+nf-core/circrna	CPU_hours	144.6	157.6	YES	follows Total_wall_min
+nf-core/circrna	Source	This study (measured with /usr/bin/time -v, SRR444655)	This study (measured with /usr/bin/time -v, SRR444655)	no	
+nf-core/circrna	Note	CIRIquant shared with Our pipeline; CIRCexplorer2 uses existing STAR output; find_circ = bowtie2 map + anchor detection; 8 CPU cores; DE analysis (DESeq2, no BSJ/FSJ ratio capability) benchmarked separately on GSE113230 (6-sample multi-sample DE run)	CIRIquant and STAR_paired shared with Our pipeline; CIRCexplorer2 uses existing STAR output; find_circ = bowtie2 map + anchor detection; 8 CPU cores; DE_min (DESeq2, no BSJ/FSJ ratio capability) measured separately on GSE113230 (6-sample multi-sample DE run) — reported for reference only, NOT included in Total_wall_min	YES	wording: STAR_paired shared; DE_min reference-only
+circRNA-sponging	Tool_combination	STAR + DCC (single-tool, no consensus)	STAR + DCC (single-tool, no consensus)	no	
+circRNA-sponging	CIRIquant_min			no	
+circRNA-sponging	STAR_min			no	
+circRNA-sponging	DCC_min			no	
+circRNA-sponging	CIRCexplorer2_min			no	
+circRNA-sponging	find_circ_min			no	
+circRNA-sponging	DE_min			no	
+circRNA-sponging	Alignment_wall_min	45.0	45.0	no	
+circRNA-sponging	Consensus_wall_min	0.0	0.0	no	
+circRNA-sponging	Total_wall_min	55.0	55.0	no	
+circRNA-sponging	Peak_RAM_GB	32.0	32.0	no	
+circRNA-sponging	Parallel_Peak_RAM_GB	32.0	32.0	no	
+circRNA-sponging	CPU_cores	8	8	no	
+circRNA-sponging	CPU_hours	7.3	7.3	no	
+circRNA-sponging	Source	Hansen et al. 2023 Bioinformatics Advances 3:vbad088 (estimated)	Hansen et al. 2023 Bioinformatics Advances 3:vbad088 (estimated)	no	
+circRNA-sponging	Note	STAR 2-pass; DCC 0.4.x; 8-core server; no multi-tool consensus; wall time estimated from methods section — no Table provided	STAR 2-pass; DCC 0.4.x; 8-core server; no multi-tool consensus; wall time estimated from methods section — no Table provided	no	
+CLEAR	Tool_combination	CIRIquant (single-tool, no consensus step)	CIRIquant (single-tool, no consensus step)	no	
+CLEAR	CIRIquant_min			no	
+CLEAR	STAR_min			no	
+CLEAR	DCC_min			no	
+CLEAR	CIRCexplorer2_min			no	
+CLEAR	find_circ_min			no	
+CLEAR	DE_min			no	
+CLEAR	Alignment_wall_min	90.0	90.0	no	
+CLEAR	Consensus_wall_min	0.0	0.0	no	
+CLEAR	Total_wall_min	90.0	90.0	no	
+CLEAR	Peak_RAM_GB	16.0	16.0	no	
+CLEAR	Parallel_Peak_RAM_GB	16.0	16.0	no	
+CLEAR	CPU_cores	8	8	no	
+CLEAR	CPU_hours	12.0	12.0	no	
+CLEAR	Source	Literature estimate (2020 single-tool pipeline, custom framework)	Literature estimate (2020 single-tool pipeline, custom framework)	no	
+CLEAR	Note	CIRIquant only; no multi-tool consensus; wall time estimated based on CIRIquant single-sample throughput on comparable server	CIRIquant only; no multi-tool consensus; wall time estimated based on CIRIquant single-sample throughput on comparable server	no	

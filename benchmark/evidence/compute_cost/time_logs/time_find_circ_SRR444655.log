@@ -1,0 +1,23 @@
+	Command being timed: "sh -c set -o pipefail; python /home3/choukaihsuan/tools/find_circ/unmapped2anchors.py --fastq /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/find_circ/unmapped_concat_38269.fastq |             bowtie2 -p 8 --score-min=C,-15,0 --reorder                 -x /home3/choukaihsuan/reference/hg19/bowtie2_index/hg19 -U - |             python /home3/choukaihsuan/tools/find_circ/find_circ.py                 --genome=/home3/choukaihsuan/reference/hg19/hg19.fa                 --prefix=SRR444655                 --name=SRR444655                 --stats=/home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/find_circ/find_circ_stats.txt                 > /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/find_circ/splice_sites.bed                 2>> logs/bench/find_circ_SRR444655.log"
+	User time (seconds): 62739.50
+	System time (seconds): 1130.68
+	Percent of CPU this job got: 941%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:53:01
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3714104
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 21
+	Minor (reclaiming a frame) page faults: 479766804
+	Voluntary context switches: 8875492
+	Involuntary context switches: 64697
+	Swaps: 0
+	File system inputs: 2472
+	File system outputs: 1091568
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

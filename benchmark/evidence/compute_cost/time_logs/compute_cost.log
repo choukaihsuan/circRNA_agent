@@ -1,0 +1,6 @@
+[compute_cost] Written → /home3/choukaihsuan/GSE113230_results/benchmark/compute_cost.tsv
+  Our pipeline               total=891.8 min  RAM=48.8 GB  CPU-h=118.9
+  CirComPara2_4tools         total=1279.9 min  RAM=48.8 GB  CPU-h=170.7
+  nf-core/circrna            total=1181.9 min  RAM=48.8 GB  CPU-h=157.6
+  circRNA-sponging           total=55.0 min  RAM=32.0 GB  CPU-h=7.3
+  CLEAR                      total=90.0 min  RAM=16.0 GB  CPU-h=12.0

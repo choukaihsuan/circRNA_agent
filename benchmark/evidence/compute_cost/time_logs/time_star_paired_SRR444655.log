@@ -1,0 +1,23 @@
+	Command being timed: "sh -c STAR --runThreadN 8 --genomeDir /home3/choukaihsuan/reference/hg19/star_index              --readFilesIn /home3/choukaihsuan/GSE55872/trimmed/SRR444655_1.fastq.gz /home3/choukaihsuan/GSE55872/trimmed/SRR444655_2.fastq.gz              --readFilesCommand zcat              --outSAMtype BAM Unsorted              --outFileNamePrefix /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/              --outTmpDir /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/star_tmp/_STARtmp              --chimSegmentMin 5 --chimOutType Junctions              --chimJunctionOverhangMin 5              --alignSJDBoverhangMin 5              --outSAMattributes NH HI NM MD AS              > logs/bench/star_paired_SRR444655.log 2>&1              && samtools sort -@ 8 -m 2G                 -T /home3/choukaihsuan/timing_tmp/samtools_sort_SRR444655/sort                 /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/Aligned.out.bam                 -o /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/Aligned.sortedByCoord.out.bam              && samtools index /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/Aligned.sortedByCoord.out.bam              && rm -f /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/Aligned.out.bam"
+	User time (seconds): 38221.32
+	System time (seconds): 1728.05
+	Percent of CPU this job got: 675%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:38:35
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 29981392
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1
+	Minor (reclaiming a frame) page faults: 937746930
+	Voluntary context switches: 10662479
+	Involuntary context switches: 162492
+	Swaps: 0
+	File system inputs: 16272464
+	File system outputs: 130699992
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,23 @@
+	Command being timed: "Rscript /home3/choukaihsuan/circRNA_agent/benchmark/scripts/run_de_timed.R analysis_r=/home3/choukaihsuan/circRNA_agent/scripts/analysis.R matrix=/home3/choukaihsuan/GSE113230_results/circRNA/count_matrix.tsv groups=/home3/choukaihsuan/circRNA_agent/metadata/GSE113230/sample_groups.csv de_method=deseq2 fdr=0.05 lfc=1.0 tumor_label=tumor normal_label=normal out_de=/home3/choukaihsuan/GSE113230_results/benchmark/de/nfcore_deseq2_results.tsv out_de_edger=/home3/choukaihsuan/GSE113230_results/benchmark/de/nfcore_deseq2_edger_unused.tsv out_de_deseq=/home3/choukaihsuan/GSE113230_results/benchmark/de/nfcore_deseq2_only.tsv out_de_limma=/home3/choukaihsuan/GSE113230_results/benchmark/de/nfcore_limma_results.tsv out_volcano=/home3/choukaihsuan/GSE113230_results/benchmark/de/plots/nfcore_volcano.pdf out_heatmap=/home3/choukaihsuan/GSE113230_results/benchmark/de/plots/nfcore_heatmap.pdf out_pca=/home3/choukaihsuan/GSE113230_results/benchmark/de/plots/nfcore_pca.pdf log=logs/bench/de_deseq2_baseline.log"
+	User time (seconds): 53.78
+	System time (seconds): 2.12
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:55.91
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1046724
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 829056
+	Voluntary context switches: 58
+	Involuntary context switches: 83
+	Swaps: 0
+	File system inputs: 8
+	File system outputs: 52296
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

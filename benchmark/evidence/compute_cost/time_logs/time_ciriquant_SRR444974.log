@@ -1,0 +1,23 @@
+	Command being timed: "CIRIquant -t 8 -1 /home3/choukaihsuan/GSE55872/trimmed/SRR444974_1.fastq.gz -2 /home3/choukaihsuan/GSE55872/trimmed/SRR444974_2.fastq.gz --config /home3/choukaihsuan/circRNA_agent/config/ciriquant.yaml -o /home3/choukaihsuan/GSE55872_results/circRNA/SRR444974 -p SRR444974"
+	User time (seconds): 312105.09
+	System time (seconds): 81772.20
+	Percent of CPU this job got: 631%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 17:19:55
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 44918400
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 122
+	Minor (reclaiming a frame) page faults: 6555840790
+	Voluntary context switches: 150488964
+	Involuntary context switches: 399466
+	Swaps: 0
+	File system inputs: 94663784
+	File system outputs: 664074248
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

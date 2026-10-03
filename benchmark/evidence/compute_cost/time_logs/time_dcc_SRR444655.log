@@ -1,0 +1,23 @@
+	Command being timed: "sh -c ( cd /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/DCC && DCC /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/Chimeric.out.junction               -mt1 /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/mate1/Chimeric.out.junction               -mt2 /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/mate2/Chimeric.out.junction               -D -an /home3/choukaihsuan/reference/hg19/genes.gtf               -Pi -F -M -Nr 2 1               -G -B /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/Aligned.sortedByCoord.out.bam               -O /home3/choukaihsuan/GSE55872_results/circRNA/SRR444655/DCC               -T 8 )               > logs/bench/dcc_SRR444655.log 2>&1"
+	User time (seconds): 918.13
+	System time (seconds): 57.16
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 16:10.64
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 10315004
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 21499964
+	Voluntary context switches: 300628
+	Involuntary context switches: 1967
+	Swaps: 0
+	File system inputs: 8
+	File system outputs: 13031984
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
