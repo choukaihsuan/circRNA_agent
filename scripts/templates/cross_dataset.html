@@ -368,6 +368,13 @@
 </div>
 
 <script>
+// Convert 1-based circ_id start to 0-based for display, matching circBase convention.
+function _dispCoord(cid) {
+  var m = String(cid).match(/^(chr\w+):(\d+)\|(.+)$/);
+  if (!m) return cid;
+  return m[1] + ':' + (parseInt(m[2]) - 1) + '|' + m[3];
+}
+
 // ── Heatmap ──────────────────────────────────────────────────────────────────
 const HEATMAP = {{ heatmap_json | safe }};
 const ORGAN_GROUPS = {{ organ_groups_json | safe }};
@@ -474,7 +481,7 @@ function _drawHeatmap(dsNames, circIds, geneNames, cbIds, matrixRows) {
     const cb = cbIds[i];
     if (cb && cb !== 'novel') return cb;
     if (g && g !== '—') return `${g} (${id.split(':')[0]})`;
-    return id;
+    return _dispCoord(id);
   });
 
   // Replace null/undefined with NaN so Plotly renders them as grey (not-detected)
@@ -812,6 +819,11 @@ function applyLang() {
   if (UPSET_DATA && window.Plotly) { try { drawUpset(); } catch(e) { console.error('drawUpset error:', e); } }
 }
 applyLang();
+
+// Convert circ_id display to 0-based start (matching circBase convention)
+document.querySelectorAll('span.circ-id').forEach(function(el) {
+  el.textContent = _dispCoord(el.textContent);
+});
 
 // Initial filter count
 filterTable();
