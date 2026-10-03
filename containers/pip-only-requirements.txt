@@ -1,0 +1,19 @@
+# Packages from containers/pip-freeze.txt that are NOT managed by
+# containers/spec-file.linux-64.txt (verified by cross-referencing package
+# names against the conda explicit spec, then confirmed against the actual
+# runtime-importable version on the server for the ambiguous cases).
+# Install with: pip install -r pip-only-requirements.txt --no-deps
+Flask==2.2.5
+Flask-WTF==1.1.1
+itsdangerous==2.1.2
+kaleido==0.2.1
+lxml==5.4.0
+Markdown==3.3.7
+plotly==5.18.0
+pyliftover==0.4.1
+pysradb==2.2.2
+requests-ftp==0.3.1
+tenacity==8.2.3
+tqdm==4.68.2
+Werkzeug==2.2.3
+WTForms==3.0.1

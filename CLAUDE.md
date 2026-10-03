@@ -344,7 +344,7 @@ threads: 8
 | CPU | 96 cores |
 | RAM | 377 GB |
 | 磁碟 | /home3：345 GB 可用（2026-06-19；中間檔清理後）|
-| Conda env | `ciriquant`（CIRIquant 1.1.2, DCC 0.5.0, STAR 2.7.11a, HISAT2 2.2.1, BWA 0.7.18, samtools 1.18, snakemake 7.24.0, **aria2c 1.36.0**, sra-tools 2.11.0, pigz 2.8, FastQC 0.12.1, fastp 1.1.0, MultiQC 1.13；2026-10-01 以 `conda list -n ciriquant --export` 於 server 實測確認，更正先前誤記的 1.1.3/1.17）|
+| Conda env | `ciriquant`（CIRIquant 1.1.3, DCC 0.5.0, STAR 2.7.11a, HISAT2 2.2.1, BWA 0.7.18, samtools 1.18, snakemake 7.24.0, **aria2c 1.36.0**, sra-tools 2.11.0, pigz 2.8, FastQC 0.12.1, fastp 1.1.0, MultiQC 1.13）。**CIRIquant 版本三方查證（2026-10-03，server 實測）**：conda 登記顯示 `1.1.2 pypi_0`（登記紀錄過時）；`pip show CIRIquant` 為 1.1.3；`CIRIquant --version` 為 1.1.3。以 binary 與 pip metadata 為準，版本為 **1.1.3**。曾於 2026-10-01 因只讀 `conda list --export` 而誤改為 1.1.2（c7e0559），已於 2026-10-03 還原。|
 | Java | `/usr/bin/java`（不在 conda env 內，ciriquant.yaml 必須指定此路徑） |
 
 **SRA 下載優先順序**（`workflow/rules/download.smk`）：
@@ -959,7 +959,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `ciriquant.yaml` `ConfigError: File: bwa, not found` | `check_file()` 做字面路徑存在性檢查，`bwa: bwa`（相對路徑）不存在；必須填完整絕對路徑 | 在 `config/ciriquant.yaml` 的 `tools:` 區塊填 conda env 的完整路徑（如 `/home/choukaihsuan/miniconda3/envs/ciriquant/bin/bwa`）；`java: /usr/bin/java`、`perl: /usr/bin/perl` 亦需指定 |
 | `ciriquant.yaml` `ConfigError: Reference fasta need to be specified` | `config/ciriquant.yaml` 的 `reference:` 區塊鍵名錯誤；CIRIquant 期望 `fasta:`/`bwa_index:`/`hisat_index:`，而非 `genome:`/`hisat2_genome:`；若誤用 `database:` 作為頂層鍵則先報 `KeyError: 'reference'` | 正確 `reference:` 結構：`fasta: /path/hg19.fa`、`gtf: /path/genes.gtf`、`bwa_index: /path/hg19.fa`（BWA index prefix，附加 `.bwt` 驗證）、`hisat_index: /path/hg19_hisat2_index`（HISAT2 prefix，附加 `.1.ht2` 驗證）；server 路徑：`bwa_index: /home3/choukaihsuan/reference/hg19/hg19.fa`，`hisat_index: /home3/choukaihsuan/reference/hg19/hg19_hisat2_index` |
 | CIRIquant 看似「completed successfully」但 GTF 消失 | shell 最後一行 `rm -rf ... circ align gene` 成功（exit 0），掩蓋了 CIRIquant 本身失敗（exit 1）的 exit code；Snakemake 只看最終 exit code → 誤報成功 | 根本修法是修正 `ciriquant.yaml` 讓 CIRIquant 真正成功執行；若排查 CIRIquant 問題，需直接看 `logs/ciriquant/{srr}.log` 而非 Snakemake 的 job 狀態 |
-| CIRIquant 輸出 `.bed` 而非 `.bsj` | CIRIquant 1.1.2 bioconda 版本差異 | rule output 只宣告 `.gtf`，忽略 `.bed` |
+| CIRIquant 輸出 `.bed` 而非 `.bsj` | CIRIquant 1.1.3 bioconda 版本差異 | rule output 只宣告 `.gtf`，忽略 `.bed` |
 | multiqc ImportError TypedDict | multiqc 1.17 + markdown 3.6 不支援 Python 3.7 | `pip install markdown==3.3.7` |
 | Snakemake LockException | 前次執行被 kill 留下 lock | `snakemake --unlock` 後重跑 |
 | samtools sort "File exists" | 多個 CIRIquant 進程同時寫同一 sample 的暫存檔 | `pkill -f CIRIquant`，`rm -rf results/circRNA/`，重新跑 |
@@ -973,7 +973,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | DCC log 路徑失敗（`logs/dcc/SRR.log: No such file or directory`） | `cd {outdir}` 後 `> {log}` 的相對路徑從 outdir 解析 | 同上，subshell 讓 `> {log}` 在 parent shell 的 CWD（`~/circRNA_agent/`）執行 |
 | multiqc numpy 版本衝突（`numpy 1.16.4 < 1.17`） | conda env 安裝的 numpy 過舊，matplotlib 要求 ≥1.17 | `pip install 'numpy>=1.17'` 在 ciriquant env |
 | `consensus_filter.py` `TypeError: 'type' object is not subscriptable` | Python 3.7：module-level 的 `CoordMap = dict[tuple[...], ...]` 賦值在執行時求值，不能用內建 `dict`/`tuple` 做 subscript；`from __future__ import annotations` 只延遲 annotation 求值，**不影響普通賦值** | 改為 `from typing import Dict, Tuple; CoordMap = Dict[Tuple[str,int,int], float]` |
-| `parse_ciriquant` / `merge_counts.py` 回傳 0 筆 circRNA | CIRIquant 1.1.2 GTF 屬性欄用小寫 `bsj`/`fsj`，regex 搜尋大寫 `BSJ`/`FSJ` 全部未匹配 | 兩個 `re.search()` 加 `re.IGNORECASE` flag（`consensus_filter.py` 和 `merge_counts.py` 均適用） |
+| `parse_ciriquant` / `merge_counts.py` 回傳 0 筆 circRNA | CIRIquant 1.1.3 GTF 屬性欄用小寫 `bsj`/`fsj`，regex 搜尋大寫 `BSJ`/`FSJ` 全部未匹配 | 兩個 `re.search()` 加 `re.IGNORECASE` flag（`consensus_filter.py` 和 `merge_counts.py` 均適用） |
 | `parse_dcc` 回傳 0 筆 circRNA | `CircCoordinates` 只有座標（8 欄，無 count）；舊程式讀 col 3 得到 Gene 欄（字串），`float()` 失敗後全部 skip | `parse_dcc()` 改為優先讀同目錄的 `CircRNACount`（col 3 = junction count）；不存在時 fallback count=5 |
 | `analysis.R` `storage.mode(counts) <- "integer"` 失敗 | conda install r-pheatmap 後 dplyr 進入 env，data.frame subsetting 回傳 tibble-like 物件，`storage.mode` 不接受 | 在 `storage.mode` 之前加 `data.matrix(round(counts))` 轉為真正的 matrix（BSJ 和 FSJ 矩陣均需處理） |
 | `generate_report.py` `SyntaxError: from __future__ imports must occur at the beginning` | Snakemake `script:` wrapper 在 user 腳本前插入 ~11 行 setup code，將 `from __future__ import annotations` 推到第 12 行；Python 3.7 要求此 import 必須是第一行 | 移除 `from __future__ import annotations`；改用 `from typing import Optional`；所有 `str \| None` 改為 `Optional[str]` |
