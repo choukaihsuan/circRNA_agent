@@ -73,3 +73,24 @@ commit c7e0559
 原列「來源不明」的`scripts/web_ui.py`、`scripts/templates/cross_dataset.html`已查明並分別提交於`5dfc55d`／`798f696`；原「多主題擱置」的`CLAUDE.md`已提交於`c7e0559`；原「無關但未完成」的`benchmark/Snakefile_multi`已以WIP狀態提交於`a8dfd79`。本次對話開始時的6個未提交檔案，現皆已入庫。
 
 **⚠️ 798f696（cross_dataset.html的circ_id顯示改0-based）與2f27d7b內混入的`_disp_coord()`（generate_report.py多處0-based顯示）仍待覆核**：調查確認論文Table 2/Figure 9不印`chr:start|end`格式座標（只用circBase ID或基因名），故不構成「論文vs網頁」的直接衝突；但這兩處改動本身互相之間、以及跟pipeline資料層（TSV、consensus_filter、rank_biomarkers，全部1-based）、跟18/19已發表report.html的主要顯示（表格/JSON，1-based）不一致。建議revert兩處的0-based轉換，回到顯示原始1-based circ_id，待使用者決定後執行。
+
+## 歷史改寫紀錄（2026-10-03，推送前；本機 main 的 origin/main..HEAD 這段，共改寫兩次）
+
+原因：舊 `5b38d5b` 誤把整個 `audit/` 帶進 commit，含論文稿與其抽取檔。已從歷史移出論文稿、其全文抽取、論文圖、逐條論文稽核文件及其產生工具，以及所有產生出來的圖（規則見 `.gitignore`；判準：拿掉論文後仍有意義者留，成品圖表只追蹤腳本）。未推送過。
+
+**tag 與基準 commit 不受影響**：`results-2026-07`（annotated tag `88f54bd`）指向 `49b122d`，即 `origin/main`，在改寫範圍之外，未變動。`e085bc0`（compute_cost 修正）在範圍內但早於第一個被改動的 commit，hash 不變。
+
+舊（改寫前原 hash）→ 新（目前）對照：
+
+| 舊 hash | 新 hash | 說明 |
+|---|---|---|
+| 7154a69 | decfd7b | 跨資料集數字對照表與腳本（圖已移出追蹤） |
+| b403018 | ac74e99 | organ/cancer-type 說明文字修正 |
+| 5b38d5b | a438230 | audit 分析產物；訊息已改為實際內容 |
+| 116fc0b | 28d8742 | 論文風格 Fig 7/8/9 腳本（成品圖不追蹤） |
+| a8dfd79 | f71b361 | Snakefile_multi WIP（`_ena_fastq_base()` 未完成，不可執行） |
+| c7e0559 | 41a8c59 | CLAUDE.md 資料集事實校正 |
+| afa0e27 | d9852cf | 本檔先前版本 |
+| 49b122d、2f27d7b、eda5424、e085bc0、5dfc55d、798f696 | 不變 | |
+
+本檔以上文字中的 `5b38d5b`、`a8dfd79`、`c7e0559`、`116fc0b`、`afa0e27` 皆指改寫前的 hash，請依此表對照。

@@ -42,3 +42,22 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# audit/: keep software/analysis provenance only; paper drafts, their extractions/figures and
+# per-claim paper audits do not belong in this (public) repository
+audit/*.docx
+audit/paper*.txt
+audit/figs/
+audit/claims*
+audit/extra_claims.txt
+audit/audit_report.md
+audit/summary.md
+audit/unverifiable.md
+# generated figures/tables are not tracked, only the scripts that produce them
+audit/thesis_numbers/figs/
+# per-claim paper audit and the tools that produce it
+audit/verdicts_*.txt
+audit/build_claims.py
+audit/xref.json
+# analysis input data for audit/thesis_numbers (the global data/ rule above would otherwise hide it)
+!audit/thesis_numbers/data/
