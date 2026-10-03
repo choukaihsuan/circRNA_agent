@@ -1,0 +1,20 @@
+list	dataset	verdict_of_real_library	evidence_tier	tool_setting_used	excluded_from_15ds
+A: DCC run stranded (no -N) but library is unstranded	GSE58135	unstranded	explicit	DCC default = stranded (fr-firststrand)	yes
+A: DCC run stranded (no -N) but library is unstranded	GSE97239	unstranded	text-implied	DCC default = stranded (fr-firststrand)	no
+B: CIRIquant run unstranded (-l 0) but library is stranded	GSE133998	stranded	explicit	CIRIquant default -l 0	no
+B: CIRIquant run unstranded (-l 0) but library is stranded	GSE77509	stranded	explicit	CIRIquant default -l 0	no
+B: CIRIquant run unstranded (-l 0) but library is stranded	GSE130078	stranded	explicit	CIRIquant default -l 0	no
+B: CIRIquant run unstranded (-l 0) but library is stranded	GSE221107	stranded	explicit	CIRIquant default -l 0	no
+B: CIRIquant run unstranded (-l 0) but library is stranded	GSE143797	stranded	explicit	CIRIquant default -l 0	no
+B: CIRIquant run unstranded (-l 0) but library is stranded	GSE192849	stranded	explicit	CIRIquant default -l 0	yes
+C: strandedness 未載明 (cannot be checked)	GSE113230	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	SRP156355	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	GSE248612	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	PRJNA553289	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	GSE229705	未載明	未載明	-	yes
+C: strandedness 未載明 (cannot be checked)	GSE148036	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	GSE121842	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	GSE136569	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	GSE108735	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	GSE171011	未載明	未載明	-	no
+C: strandedness 未載明 (cannot be checked)	GSE192410	未載明	未載明	-	yes
