@@ -30,6 +30,22 @@ GENOME   = config["genome"]
 BENCH    = config["benchmark"]
 AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(workflow.snakefile)))
 
+def _ena_fastq_base(srr: str) -> str:
+    """ENA FTP fastq path, generalized for any accession digit-length."""
+    import re
+    m = re.match(r"^([A-Z]+)(\d+)$", srr)
+    digits = m.group(2)
+    prefix6 = srr[:6]
+    n = len(digits)
+    if n <= 6:
+        return f"https://ftp.sra.ebi.ac.uk/vol1/fastq/{prefix6}/{srr}"
+    elif n == 7:
+        return f"https://ftp.sra.ebi.ac.uk/vol1/fastq/{prefix6}/00{digits[-1]}/{srr}"
+    elif n == 8:
+        return f"https://ftp.sra.ebi.ac.uk/vol1/fastq/{prefix6}/0{digits[-2:]}/{srr}"
+    else:
+        return f"https://ftp.sra.ebi.ac.uk/vol1/fastq/{prefix6}/{digits[-3:]}/{srr}"
+
 def ds(name):
     return DATASETS[name]
 
@@ -58,7 +74,16 @@ rule m_download:
     params:
         raw_dir = lambda w: RAW(w),
         srr     = "{srr}",
-        ebi_base = lambda w: f"https://ftp.sra.ebi.ac.uk/vol1/fastq/{w.srr[:6]}/{w.srr}",
+        # ENA FTP layout: numeric part of the accession determines whether an
+        # extra subdirectory is needed (the original benchmark/Snakefile's
+        # bench_download only worked because SRR444655/974/SRR445016 all have
+        # 6-digit numeric parts, which need no extra subdir -- these new
+        # 8-digit accessions do).
+        #   6 digits: vol1/fastq/<acc[:6]>/<acc>/
+        #   7 digits: vol1/fastq/<acc[:6]>/00<last 1 digit>/<acc>/
+        #   8 digits: vol1/fastq/<acc[:6]>/0<last 2 digits>/<acc>/
+        #   9 digits: vol1/fastq/<acc[:6]>/<last 3 digits>/<acc>/
+        ebi_base = lambda w: _ena_fastq_base(w.srr),
     output:
         r1 = "results/benchmark_multi/{dataset}/.raw/{srr}_1.fastq.gz",
         r2 = "results/benchmark_multi/{dataset}/.raw/{srr}_2.fastq.gz",
