@@ -344,7 +344,7 @@ threads: 8
 | CPU | 96 cores |
 | RAM | 377 GB |
 | 磁碟 | /home3：345 GB 可用（2026-06-19；中間檔清理後）|
-| Conda env | `ciriquant`（CIRIquant 1.1.3, DCC 0.5.0, STAR 2.7.11a, HISAT2 2.2.1, BWA 0.7.18, samtools 1.18, snakemake 7.24.0, **aria2c 1.36.0**, sra-tools 2.11.0, pigz 2.8, FastQC 0.12.1, fastp 1.1.0, MultiQC 1.17） |
+| Conda env | `ciriquant`（CIRIquant 1.1.2, DCC 0.5.0, STAR 2.7.11a, HISAT2 2.2.1, BWA 0.7.18, samtools 1.18, snakemake 7.24.0, **aria2c 1.36.0**, sra-tools 2.11.0, pigz 2.8, FastQC 0.12.1, fastp 1.1.0, MultiQC 1.13；2026-10-01 以 `conda list -n ciriquant --export` 於 server 實測確認，更正先前誤記的 1.1.3/1.17）|
 | Java | `/usr/bin/java`（不在 conda env 內，ciriquant.yaml 必須指定此路徑） |
 
 **SRA 下載優先順序**（`workflow/rules/download.smk`）：
@@ -374,9 +374,29 @@ threads: 8
 `_find_tool("aria2c")` 搜尋優先順序：`sra_env` → `circrna` → **`ciriquant`**（已加入）→ `which()`。
 若 `srapath returned no S3 URL`（NCBI API 暫時失敗），重啟 pipeline 即可；S3 URL 通常幾分鐘後恢復。
 
-**R packages（安裝在 conda env `ciriquant` 的 r-base 4.2.2）**：
+**R packages（安裝在 conda env `ciriquant` 的 r-base 4.2.1，2026-10-01 實測更正先前誤記的 4.2.2；Bioconductor 3.16）**：
 r-ggplot2, r-pheatmap, r-rcolorbrewer, r-dplyr, r-ggrepel, r-tibble, r-tidyr,
 bioconductor-edger 3.40.0, bioconductor-deseq2 1.38.0, bioconductor-limma 3.54.0, bioconductor-qvalue 2.30.0, r-statmod
+
+---
+
+## 論文 Table 2（軟體與資料庫版本）可重現性紀錄（2026-10-01 server 實測）
+
+**Benchmark 對照組的本質**（寫論文前必讀，避免不實陳述）：CirComPara2_4tools 與 nfcore_3tools **並未執行原始 pipeline**（沒有跑 CirComPara2 的 SCons 流程，也沒有跑 nf-core/circrna 的 Nextflow 流程），而是用本專案自己的 `consensus_filter.py` 改變 `--min-tools`/`--slop`/`--max-junction-ratio` 參數去重現兩篇論文的共識策略（證據：`benchmark/Snakefile` 的 `circompara2_4tools_filter`／`nfcore_3tools_filter` rule 呼叫的都是同一支 `consensus_filter.py`，與 circDEX 自己的 `our_filter` rule 完全同源；`compute_cost.py` 對這兩者的運算成本也是用文獻值 fallback，而非實測）。Table 2 **不可列 CirComPara2 / nf-core/circrna / Nextflow 的版本號**，應標註「未執行，僅重現共識策略」。真正被實際執行、需要列版本的是這兩個模擬組底層呼叫的偵測工具：
+
+- **CIRCexplorer2 2.3.8**、**Bowtie2 2.5.4**（與 `conda list -n ciriquant --export` 一致，並經 `--version` 指令二次確認）
+- **find_circ**：commit `8655dca5`（2017-02-28，`github.com/marvin-jens/find_circ`），但本地有未提交 git 的 Python3 相容性手動 patch（`/home3/choukaihsuan/tools/find_circ/` 內同時留有 `find_circ.py.bak`/`find_circ_orig.py`，`find_circ.py` mtime 晚於 clone 時間）
+
+**參考基因體來源**（先前 CLAUDE.md 只寫「hg19」，方法學上不完整，現已確認）：
+- Genome FASTA：**UCSC hg19 goldenPath**（`chromFa.tar.gz` 內的 per-chromosome 檔案，命名含 `chrUn_gl000*`/`_random`/`_hap1-7` 為 UCSC 特有格式；檔案時間戳 2009-03-21）
+- Gene annotation：**GENCODE v19**（GRCh37, Ensembl 74），非 UCSC refGene——`genes.gtf` 檔頭直接寫明 `##provider: GENCODE`、`##date: 2013-12-05`，col2 來源欄為 `ENSEMBL`/`HAVANA`
+- CIRCexplorer2 專用的 refFlat 註解另外來自 UCSC `refFlat.txt`（server 上載入時間 2026-06-03，見 `benchmark/config_benchmark.yaml:46` 的下載指令註解），與主流程的 GENCODE v19 GTF 是兩份不同的註解來源，不要混為一談
+
+**資料庫 access date**：
+- **circBase**（`hsa_hg19_circRNA.txt`）：本地快取檔 `~/circRNA_agent/reference/circbase_hg19.txt`，mtime **2014-05-14**（符合 circBase.org 自2014年起停止更新的公開事實）。19 個已完成資料集中 8 個（GSE108735/113230/121842/136569/143797/171011/192410/192849/97239）的 `config/projects/{GSE}.yaml` 明確指向此快取檔；其餘 11 個 `circbase_file` 留空、跑 pipeline 當下自動下載到 `/tmp/circbase_hg19.txt`，但該暫存檔現已不存在，**無法回溯確切下載日期**——因 circBase 內容本身已凍結多年，兩種情況下載到的內容應相同，但論文方法學上這 11 個只能寫「auto-fetched at pipeline runtime, exact date not recoverable」
+- **CircInteractome**（`circinteractome.nia.nih.gov/api/v2/...`）與 **ENCORI/starBase**（`rnasysu.com/encori/api/...`）：兩者皆為**即時 API 查詢**，非下載快照，`predict_interactions.py` 內硬編 URL 可證；沒有「資料庫版本」概念，應寫 **"queried 2026-07-07 to 2026-08-03"**（取全部19個資料集 `de/interactions.json` 檔案 mtime 的最早與最晚值）
+
+**容器化的誠實狀態**：Docker image `choukaihsuan/circrna-pipeline:1.0.1` 的 digest 為 `sha256:690408357fd94425f647960c82377c33cc2f19794dd87b974bc5a98853716062`（Docker Hub Registry API v2 確認，單平台 manifest）。但 server 上雖有 `apptainer 1.4.1` 可執行檔，**找不到任何 `.sif` 檔**——19 個已完成資料集的結果全部是用 conda env `ciriquant` 直接在裸機上跑出來的，不是透過容器。Table 2／方法學如果列出 Docker image，必須註明這是「供他人重現用而發布」，不是產生論文數據當下所用的實際執行環境。
 
 **SSH 連線**：
 ```bash
@@ -830,7 +850,29 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - `de_edgeR_ciriquant_baseline` rule：Our pipeline 的 DE 耗時（edgeR_ciriquant 主方法，同一次 `analysis.R` 呼叫內副產出 DESeq2/limma）→ `compute_cost.tsv` 的 `DE_min` 欄
 - `de_deseq2_baseline` rule：nf-core 模擬對照組（DESeq2，無 FSJ offset）
 - **實測值**（GSE113230，6-sample，`-Nr 2` 全量重跑後的 count matrix）：Our pipeline DE_min = **1.1 min**；nf-core DE_min = **0.9 min**
-- **重要 caveat**：偵測步驟（CIRIquant/STAR/DCC/CIRCexplorer2/find_circ）用單樣本 SRR444655（GSE55872 ground truth）計時；DE 分析另外用 GSE113230 六樣本計時。兩者不是同一次端到端執行，`compute_cost.tsv` 的 Total 因此代表「單樣本偵測成本 + 多樣本 DE 成本」的組合，而非單一可重現的完整 pipeline run。`comparison_report.html` 的 Compute Cost 表格上方會顯示此 caveat 說明文字（`has_de` 判斷式）。
+- **2026-10-01 起 DE_min 不再折入 Total_wall_min**（見下方「compute_cost.py 三處修正」），僅作為獨立參考欄位保留；偵測步驟用單樣本 SRR444655 計時、DE 分析用 GSE113230 六樣本計時，兩者 n 不同，混進同一個「per-sample runtime」的 Total 是範疇錯誤，不只是精度問題。
+
+**compute_cost.py 三處修正與 log/tsv 對帳記錄（2026-10-01，論文 Figure 6(c) 查證後觸發）**：
+
+查證 Figure 6(c) 的 CirComPara2/nf-core 運算成本數字時，發現並修正三個問題：
+
+1. **CirComPara2_4tools 的 STAR mate1/mate2 時間先前是寫死值**（`compute_cost.py:352-353`的`step_times.get("star_mate1",34.6)`/`get("star_mate2",47.2)`），即使`logs/bench/time_star_mate1_SRR444655.log`（實測34.589min）和`time_star_mate2_SRR444655.log`（實測47.223min）就在同一個目錄裡，卻從未被讀取——根本原因是`benchmark/Snakefile`的`compute_cost`規則（原L802-825）從未傳入`--our-star-mate1-log`/`--our-star-mate2-log`這兩個CLI參數。已修正：Snakefile規則加上這兩個input+flag，連帶也修正了**Our pipeline自己的STAR_min**（因為同一組參數是共用的）——這條row的Tool_combination寫的是「STAR×3」，但先前因為同樣沒傳mate1/mate2 log，實際只算了paired一次，**circDEX自己的Total被低估了**（811.1→891.8 min，+80.7 min），不是對照組才有問題。
+2. **DE_min 不應折入 Total**（見上方DE分析時間段落）：已修正`our_row`/`nfcore_row`/`circompara2_4tools_row`三處，DE_min全部改為僅供參考、不加總進Total_wall_min與CPU_hours。
+3. **nf-core/circrna 的 Total 漏算了 STAR 時間**：`compute_cost.py`原L239-240的`nfcore_align`只加總`nfcore_times.get("ciriquant")+nfcore_times.get("fc_map")`，但`nfcore_times`這個dict的建構來源（`nfcore_logs`，原L216-221）根本沒有定義`"star"`這個key，所以STAR時間永遠不會被計入——即使`STAR_min`欄位本身有正確顯示98.6（來自另一個共用dict `step_times`），卻沒有真正加進Total。而nf-core/circrna的CIRCexplorer2是吃STAR的Chimeric.out.junction輸出，沒有STAR就跑不出CIRCexplorer2結果，這段時間理應算入。已修正為`nfcore_align`多加`step_times.get("star",0)`。
+
+**查證過程中額外發現的誠信問題（已修正，供日後參考）**：舊版`compute_cost.tsv`（mtime 2026-07-22 00:39）比產生它的`compute_cost.log`（mtime 2026-07-20 03:34）晚了近2天，兩者數字對不上一小塊（CirComPara2_4tools Total：log記1279.9，tsv卻是1280.8，差額剛好等於DE_min的0.9）——代表tsv在log產生之後又被重新跑過一次，但那次重跑沒有`tee`到log，導致事後無法用log文字直接證明該次重跑有沒有誤觸文獻fallback分支（L272的`"No nf-core time logs found; using Digby-Bell 2023..."`），只能靠數值反推佐證。**2026-10-01這次重跑已修正此操作疏失**：執行指令務必用`2>&1 | tee logs/bench/compute_cost.log`，且重跑後立刻確認log與tsv的mtime epoch完全一致（`stat -c %Y`兩者都是`1790824092`，已核對）。以後只要修改`compute_cost.py`或重新產生`compute_cost.tsv`，都要比照這個「log/tsv時間戳必須對得上」的檢查習慣。
+
+**修正前後數字比較**（僅重跑`compute_cost.py`本身，未重跑任何偵測工具）：
+
+| Pipeline | Total_wall（修正前） | Total_wall（修正後） | Δ | CPU-h（修正前）| CPU-h（修正後）| circDEX相對節省（修正前）| circDEX相對節省（修正後）|
+|---|---|---|---|---|---|---|---|
+| **Our pipeline (circDEX)** | 811.1 | **891.8** | +80.7 | 108.1 | 118.9 | — | — |
+| CirComPara2_4tools | 1280.8 | **1279.9** | −0.9 | 170.8 | 170.7 | 37.0% | **30.3%** |
+| nf-core/circrna | 1084.2 | **1181.9** | +97.7 | 144.6 | 157.6 | 25.2% | **24.5%** |
+
+circDEX相對節省 = `1 − Total_wall(circDEX) / Total_wall(對照組)`。**誠實結論**：修正後circDEX相對CirComPara2_4tools的時間優勢從37%縮小到30.3%——因為修正同時補回了circDEX自己先前漏算的STAR mate1/mate2成本（+80.7 min），這筆帳跑不掉；相對nf-core/circrna的優勢則大致持平（25.2%→24.5%），因為nf-core那邊漏算的STAR成本（+97.7 min）比circDEX自己補回的還多，兩邊同步墊高，相對差距變化不大。三列的Tool Breakdown逐欄加總均已核對等於Total_wall_min（Our：695.2+180.4+16.2=891.8；CirComPara2_4tools：695.2+180.4+16.2+0.2+387.9=1279.9；nf-core：695.2+98.6+0.2+387.9=1181.9）。
+
+Figure 6(c)／`comparison_report.html`的Compute Cost面板已用新`compute_cost.tsv`重新產生（2026-10-01 11:09，`generate_comparison_report.py`直接呼叫，未觸發Snakemake DAG、未重跑任何上游偵測或DE步驟）。
 
 ### 輸出報告
 
@@ -917,7 +959,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | `ciriquant.yaml` `ConfigError: File: bwa, not found` | `check_file()` 做字面路徑存在性檢查，`bwa: bwa`（相對路徑）不存在；必須填完整絕對路徑 | 在 `config/ciriquant.yaml` 的 `tools:` 區塊填 conda env 的完整路徑（如 `/home/choukaihsuan/miniconda3/envs/ciriquant/bin/bwa`）；`java: /usr/bin/java`、`perl: /usr/bin/perl` 亦需指定 |
 | `ciriquant.yaml` `ConfigError: Reference fasta need to be specified` | `config/ciriquant.yaml` 的 `reference:` 區塊鍵名錯誤；CIRIquant 期望 `fasta:`/`bwa_index:`/`hisat_index:`，而非 `genome:`/`hisat2_genome:`；若誤用 `database:` 作為頂層鍵則先報 `KeyError: 'reference'` | 正確 `reference:` 結構：`fasta: /path/hg19.fa`、`gtf: /path/genes.gtf`、`bwa_index: /path/hg19.fa`（BWA index prefix，附加 `.bwt` 驗證）、`hisat_index: /path/hg19_hisat2_index`（HISAT2 prefix，附加 `.1.ht2` 驗證）；server 路徑：`bwa_index: /home3/choukaihsuan/reference/hg19/hg19.fa`，`hisat_index: /home3/choukaihsuan/reference/hg19/hg19_hisat2_index` |
 | CIRIquant 看似「completed successfully」但 GTF 消失 | shell 最後一行 `rm -rf ... circ align gene` 成功（exit 0），掩蓋了 CIRIquant 本身失敗（exit 1）的 exit code；Snakemake 只看最終 exit code → 誤報成功 | 根本修法是修正 `ciriquant.yaml` 讓 CIRIquant 真正成功執行；若排查 CIRIquant 問題，需直接看 `logs/ciriquant/{srr}.log` 而非 Snakemake 的 job 狀態 |
-| CIRIquant 輸出 `.bed` 而非 `.bsj` | CIRIquant 1.1.3 bioconda 版本差異 | rule output 只宣告 `.gtf`，忽略 `.bed` |
+| CIRIquant 輸出 `.bed` 而非 `.bsj` | CIRIquant 1.1.2 bioconda 版本差異 | rule output 只宣告 `.gtf`，忽略 `.bed` |
 | multiqc ImportError TypedDict | multiqc 1.17 + markdown 3.6 不支援 Python 3.7 | `pip install markdown==3.3.7` |
 | Snakemake LockException | 前次執行被 kill 留下 lock | `snakemake --unlock` 後重跑 |
 | samtools sort "File exists" | 多個 CIRIquant 進程同時寫同一 sample 的暫存檔 | `pkill -f CIRIquant`，`rm -rf results/circRNA/`，重新跑 |
@@ -931,7 +973,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | DCC log 路徑失敗（`logs/dcc/SRR.log: No such file or directory`） | `cd {outdir}` 後 `> {log}` 的相對路徑從 outdir 解析 | 同上，subshell 讓 `> {log}` 在 parent shell 的 CWD（`~/circRNA_agent/`）執行 |
 | multiqc numpy 版本衝突（`numpy 1.16.4 < 1.17`） | conda env 安裝的 numpy 過舊，matplotlib 要求 ≥1.17 | `pip install 'numpy>=1.17'` 在 ciriquant env |
 | `consensus_filter.py` `TypeError: 'type' object is not subscriptable` | Python 3.7：module-level 的 `CoordMap = dict[tuple[...], ...]` 賦值在執行時求值，不能用內建 `dict`/`tuple` 做 subscript；`from __future__ import annotations` 只延遲 annotation 求值，**不影響普通賦值** | 改為 `from typing import Dict, Tuple; CoordMap = Dict[Tuple[str,int,int], float]` |
-| `parse_ciriquant` / `merge_counts.py` 回傳 0 筆 circRNA | CIRIquant 1.1.3 GTF 屬性欄用小寫 `bsj`/`fsj`，regex 搜尋大寫 `BSJ`/`FSJ` 全部未匹配 | 兩個 `re.search()` 加 `re.IGNORECASE` flag（`consensus_filter.py` 和 `merge_counts.py` 均適用） |
+| `parse_ciriquant` / `merge_counts.py` 回傳 0 筆 circRNA | CIRIquant 1.1.2 GTF 屬性欄用小寫 `bsj`/`fsj`，regex 搜尋大寫 `BSJ`/`FSJ` 全部未匹配 | 兩個 `re.search()` 加 `re.IGNORECASE` flag（`consensus_filter.py` 和 `merge_counts.py` 均適用） |
 | `parse_dcc` 回傳 0 筆 circRNA | `CircCoordinates` 只有座標（8 欄，無 count）；舊程式讀 col 3 得到 Gene 欄（字串），`float()` 失敗後全部 skip | `parse_dcc()` 改為優先讀同目錄的 `CircRNACount`（col 3 = junction count）；不存在時 fallback count=5 |
 | `analysis.R` `storage.mode(counts) <- "integer"` 失敗 | conda install r-pheatmap 後 dplyr 進入 env，data.frame subsetting 回傳 tibble-like 物件，`storage.mode` 不接受 | 在 `storage.mode` 之前加 `data.matrix(round(counts))` 轉為真正的 matrix（BSJ 和 FSJ 矩陣均需處理） |
 | `generate_report.py` `SyntaxError: from __future__ imports must occur at the beginning` | Snakemake `script:` wrapper 在 user 腳本前插入 ~11 行 setup code，將 `from __future__ import annotations` 推到第 12 行；Python 3.7 要求此 import 必須是第一行 | 移除 `from __future__ import annotations`；改用 `from typing import Optional`；所有 `str \| None` 改為 `Optional[str]` |
@@ -1002,6 +1044,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | Queue Worker 遇殘留 lock 直接失敗 | `kill -9` Snakemake 後 `.snakemake/locks/` 殘留；Queue Worker 下次啟動同一專案時碰到 `LockException`，`proc.wait()` 返回 rc=1 → 設 `failed`，不會自動重試 | `_run_queued_job` 在啟動 Snakemake 前先執行 `snakemake --unlock` 預清殘留 lock（已修正，2026-06-29） |
 | `config/projects/{GSE}.yaml` 的 `sra_cache_dir` / `tmp_dir` 繼承舊專案路徑 | `web_ui.py _update_paths_for_project()` 只更新 `raw_dir`/`trimmed_dir`/`results_dir`；PRJNA553289.yaml 的 `sra_cache_dir` 指向 `GSE77509/sra_cache`，`tmp_dir` 指向 `GSE323364/sra_tmp` | 手動 `sed -i` 修正目標路徑；長期解法：`_update_paths_for_project()` 加入 `download.sra_cache_dir` / `download.tmp_dir` 替換（參見現有 known issue 的修正說明） |
 | 登入頁錯誤訊息只有中文 | `login.html` 的 `{% if error %}` 只顯示中文錯誤；切換 EN 語言後錯誤仍顯示中文 | `login()` route 新增 `error_en` 欄位；`login.html` 加 `data-en="{{ error_en }}"` → lang switcher 自動替換為英文版錯誤訊息（2026-06-28） |
+| Web UI 登入頁「Bad Request - The CSRF tokens do not match」 | Flask-WTF 的 `CSRFProtect(app)` 對所有 POST 路由全域啟用 CSRF 驗證；`/login` POST 也受保護，但登入前 session 為空或過期，CSRF token 無法驗證，形成死鎖（無法登入 → 無法取得有效 session → CSRF 永遠失敗）| `/login` route 加 `@csrf.exempt` 裝飾器，讓公開登入頁免除 CSRF 驗證（登入本身無需 CSRF 保護，magic link 才是驗證機制）；已修正並同步至 server（2026-10-02） |
 | Circular Structure overlap annotation 字母重疊 | Solo mode（單分子可見）時 SVG 中出現兩組字母：per-arc site label（a/b/c）＋ overlap annotation letter（i/v，位於 midR=48 center hole 或 midR=164.5 miRNA ring）；使用者混淆 | 移除兩組 overlap annotation 的 `<circle>` + `<text>` badge（保留 boundary dash line）；只保留 `_arc_lbl` per-arc site labels（`generate_report.py`，2026-06-29） |
 | RBP site badge 不在 arc 上 | RBP arc（radius 90–113）在 exon ring 內部視覺上細不明顯；badge 放在 `(RBP_IN+RBP_OUT)/2=101.5` 看起來浮空 | Badge 改放在 exon ring 中心（`midR=(RIN+ROUT)/2=131.5`），直接覆蓋在 exon arc 上，角度指示 binding site 位置；進入 solo mode 時 arc 加 white stroke 1.5px 高亮（`generate_report.py`，2026-06-29） |
 | isoform_switching mock 腳本的 params key 錯誤（`isoform_fdr_cutoff` vs `fdr`）| `isoform_switching.R` 讀取 `snakemake@params[["fdr"]]`（Snakemake rule 傳的 key），但手動 mock 腳本傳 `isoform_fdr_cutoff = 0.1`；`snakemake@params[["fdr"]]` 回傳 NULL → `as.numeric(NULL)` = `numeric(0)` → `res$padj_within_gene < numeric(0)` = `logical(0)` → `res$is_switching <- logical(0)` 失敗（replacement has 0 rows, data has N rows）| mock 腳本 params 改為 `fdr = 0.1`；實際 Snakemake rule 不受影響（key 正確）|
@@ -1183,9 +1226,49 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 
 ---
 
+## 資料集特性稽核校正（2026-10-03，依 `audit/` TSV 與 GEO/SRA 原始 metadata 校正，取代下方內文中衝突的舊敘述）
+
+本節取代以下段落中任何與此表衝突的讀長／library prep／strandedness／有效單工具比例敘述，資料來源一律是 `audit/per_dataset_summary.tsv`（讀長、library prep，查核自 GEO extract_protocol 或 SRA metadata 原文，非沿用本文件舊敘述）與 `audit/thesis_dataset_table_19ds.tsv`（有效單工具比例、15 組跨資料集分析納入與否）。
+
+**兩項已確認的既有錯誤**：
+- **GSE229705 讀長原文件誤記為「100bp PE」，實際為 51bp PE**（GEO/SRA metadata 查證；本文件下方 GSE229705 段落已一併修正）。
+- **GSE58135 的 library prep 原文件從未揭露是 poly(A)-selected**（GEO extract protocol 原文：「POLY(A)-SELECTED, Tn-RNA-seq non-stranded」），而非 total RNA——此為論文 §2.13 poly(A) 排除準則本身明訂要排除的建庫方式，但 GSE58135 仍偵測到 1,607 個 circRNA 並留在 cohort 中，是一個需要在論文中明確揭露、而非沿用舊文件含糊帶過的方法學限制。
+
+**有效單工具比例 ≥ 97.8% 的 4 組（GSE58135、GSE229705、GSE192410、GSE192849）已排除於 15 資料集跨資料集重現分析之外**（詳見 `audit/recurrence_15ds.tsv`／`audit/permutation_15ds.tsv`）；GSE221107（0.2%）視為雙工具、保留。19 組完整結果仍保留作為敏感度比較，但主結果以 15 組為準。
+
+| Accession | 讀長 (bp，PE 各端) | Library prep（GEO/SRA extract_protocol 原文節錄）| Strandedness 線索 | 有效單工具比例 | 15 組跨資料集分析 |
+|---|---|---|---|---|---|
+| GSE113230 | 150-150 | RiboMinus rRNA removal (GEO extract protocol) | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE58135 | 50-50 | POLY(A)-SELECTED, Tn-RNA-seq non-stranded (GEO extract protocol) | non-stranded（建庫法載明） | 97.8% | ❌ 排除 |
+| GSE133998 | 150-150 | rRNA depletion (GEO) | 未載明 | 0.0% | ✅ 納入15組 |
+| SRP156355 | 100-101 | SRA: RNA-Seq / selection=other（rRNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE77509 | 100-100 | TruSeq Stranded Total RNA, rRNA depletion (GEO) | stranded（建庫法載明） | 0.0% | ✅ 納入15組 |
+| GSE130078 | 101-101 | TruSeq Stranded Total RNA + Ribo-Zero (GEO) | stranded（建庫法載明） | 0.0% | ✅ 納入15組 |
+| GSE248612 | 138-140 | GEO: standard Illumina protocols（rRNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE221107 | 150-150 | Ribo-off rRNA depletion (GEO) | 未載明 | 0.2% | ✅ 納入15組（視為雙工具）|
+| PRJNA553289 | 150-150 | SRA: RNA-Seq / cDNA（rRNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE229705 | **51-51**（原文件誤記100bp，已更正）| Trio RNA-Seq (SPIA) with final rRNA-transcript removal step (GEO) | 未載明 | 100.0% | ❌ 排除 |
+| GSE148036 | 142-147 | Ribo-Zero rRNA removal (GEO) | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE121842 | 150-150 | GEO: standard Illumina protocols（rRNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE136569 | 100-100 | Ribozero (GEO) | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE143797 | 150-150 | ncRNA-Seq / size fractionation; dUTP stranded（rRNA depletion 未載明，UNVERIFIED） | stranded（建庫法載明） | 0.0% | ✅ 納入15組 |
+| GSE108735 | 150-150 | ncRNA-Seq / size fractionation（rRNA/linear-RNA depletion 未載明，UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE171011 | 150-150 | GEO: standard Illumina protocols；rRNA reads僅in silico移除（library prep UNVERIFIED） | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE97239 | 150-150 | RiboZero rRNA removal + RNase R digestion (GEO)，RNase R-treated | 未載明 | 0.0% | ✅ 納入15組 |
+| GSE192410 | 150-150 | GEO: none provided by the submitter（UNVERIFIED，完全未揭露建庫法）| 未載明 | 100.0% | ❌ 排除 |
+| GSE192849 | 150-150 | RNase R digestion + VAHTS Total RNAseq kit (GEO)，RNase R-treated | 未載明 | 100.0% | ❌ 排除 |
+
+**「未載明」的意思**：GEO/SRA metadata 本身沒有明確文字陳述該項（多半是 extract_protocol 欄位只寫「standard Illumina protocols」或完全空白），**不代表「已確認是另一種狀態」**；標成 UNVERIFIED 的 library prep 欄位同理。本文件下方各資料集段落若有更肯定的敘述（例如直接寫「rRNA-depleted」而未加註來源查證），以本表的 UNVERIFIED 標註為準。
+
+**Strandedness 完整稽核（DCC 固定 stranded 預設 vs. CIRIquant 固定 unstranded 預設，與各資料集真實 library type 的 mismatch 交叉表）尚未完成**，是獨立進行中的稽核項目，完成後另行更新本節。
+
+---
+
 ## 目前執行進度（共 20 個資料集完成；0 個進行中）
 
 > **⚠️ GSE108735 資料集更正**：原標記為「TNBC」，實際確認為**腎細胞癌（Renal Cell Carcinoma，RCC）**，7 pairs tumor vs. 正常腎組織，ncRNA-Seq（SRR6439741–SRR6439754）。GSE171011 原標記為「TNBC」，實際為**甲狀腺乳突癌（Papillary Thyroid Cancer，PTC）**，4T+4N=8 samples，RNA-Seq（SRR14088791–SRR14088798）。
+
+> **📌 GSE58135（50bp）與「Read length ≥ 100bp」checklist 的時間先後（2026-10-02 查證，供論文引用）**：`Read length ≥ 100bp` 這條 checklist 規則是 **2026-06-08**（commit `c39737d`，"docs: add download speed benchmarks and GSE dataset selection guide to CLAUDE.md"）才寫進 CLAUDE.md 的，而 **GSE58135（50bp）完成於 2026-06-07**（commit `89429c9`，前一天）。因此 GSE58135 並非違反既有準則的刻意例外，而是該準則的歸納來源——checklist 裡「50bp PE｜❌ 不佳｜STAR chimeric 幾乎無法偵測BSJ」這一行，實質上就是從 GSE58135 的實測結果（CIRIquant vs. DCC 比例 ≈0.002，觸發 adaptive fallback 全部10/10樣本）歸納出來的。查無任何commit message或文件明確寫下「已知違反規則但刻意保留」的決策文字；該資料集留在最終19個資料集的cohort中是後續的決定，理由另見論文正文。
 
 ### GSE113230（三陰性乳癌）
 
@@ -1304,6 +1387,8 @@ score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + rbp_norm) /
 ### GSE58135（乳癌）
 
 **完成。** 報告位置：`~/GSE58135_results/report.html`（server）
+
+**⚠️ Library prep 更正（2026-10-03，依 GEO extract_protocol 原文查證）**：本文件先前各處敘述僅提及「50bp reads」，從未揭露 library selection 方式。GEO extract_protocol 原文為「POLY(A)-SELECTED, Tn-RNA-seq non-stranded」——即 **poly(A)-selected**，而非 total RNA。這正是本文件 Checklist 段落自己列出的排除條件（poly-A selection → circRNA 接近零），但 GSE58135 仍在此建庫方式下偵測到 1,607 個 circRNA 並留在 19 組 cohort 中。此為需要在論文 Methods/Limitations 中明確揭露的方法學限制，不應僅以「50bp讀長」帶過；詳見「資料集特性稽核校正」表。
 
 **特殊情況：50bp reads + CIRIquant/DCC 嚴重失衡**
 - Read length 50bp → STAR chimeric junction 偵測極差（DCC 僅 3–17 circRNA/sample）
@@ -1825,7 +1910,7 @@ SCLC 小細胞肺癌手術切除組織，tumor vs. adjacent normal，6 pairs（1
 
 **✅ 完成（2026-07-02 16:06）。** 報告位置：`~/GSE229705_results/report.html`（server，8.3MB）；本機備份：`/mnt/c/Users/User/Desktop/circRNA agent report/GSE229705_report.html`
 
-NYU LUAD 肺腺癌手術切除組織，tumor vs. adjacent normal，123 對配對，Illumina NovaSeq 6000，100bp PE，Total RNA（Trio RNA-Seq, Tecan Genomics, rRNA Deplete）。選 6 對（T/N 深度最平衡且總深度最高）。
+NYU LUAD 肺腺癌手術切除組織，tumor vs. adjacent normal，123 對配對，Illumina NovaSeq 6000，**51bp PE**（原文件誤記100bp，2026-10-03依GEO/SRA metadata更正，見「資料集特性稽核校正」表），Total RNA（Trio RNA-Seq, Tecan Genomics, rRNA Deplete）。選 6 對（T/N 深度最平衡且總深度最高）。
 
 **SRA Project**：PRJNA955664（SRP432629）；GEO：GSE229705（NYU Langone Health）。
 
@@ -1867,7 +1952,7 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 
 **主要數值結果**：
 - 偵測：consensus circRNAs → filterByExpr 後 **29 tested**（edgeR，配對設計 `~patient+condition` 自由度有限）
-- DE（edgeR_ciriquant）：**1 significant**（nominal p < 0.05；n=6 pairs + 100bp reads 偵測數少）
+- DE（edgeR_ciriquant）：**1 significant**（nominal p < 0.05；n=6 pairs + 51bp reads 偵測數少）
 - DE（DESeq2）：**162 significant**；DE（limma-voom）：**0 significant**
 - predict_interactions：union mode（三方法 top-50 聯集）
 - report：study_title = `LUAD Lung Adenocarcinoma — tumor vs. adjacent normal tissues, 6 pairs (NYU Langone Health, Sakata et al. 2024 Nature Genetics)`
@@ -2230,7 +2315,7 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | 編號 | 樣本類型 | 對比組 | Library | Read length | 樣本數 | 定序深度 | circRNA 偵測 | DE 顯著數（edgeR）| 評估 |
 |------|----------|--------|---------|-------------|--------|----------|-------------|-------------------|------|
 | **GSE113230** | 組織（TNBC tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 6（3T+3N）| ~100M reads/sample | 9,349（consensus）| **482** | ✅ 最佳示範 |
-| **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | **50bp PE** | 10（5T+5N）| ~50M reads/sample | 1,607（CIRIquant-only）| **15** | ⚠️ 50bp 讀長，DCC 失效→adaptive fallback |
+| **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | **Poly(A)-selected**（2026-10-03更正，原誤記Total RNA；見GSE58135段落）| **50bp PE** | 10（5T+5N）| ~50M reads/sample | 1,607（CIRIquant-only）| **15** | ⚠️ 50bp讀長+poly(A) selection雙重例外，DCC失效→adaptive fallback；排除於15組跨資料集分析（有效單工具比例97.8%）|
 | **GSE323364** | **細胞株**（MDA-MB-436 TNBC）| EPZ6438 vs. DMSO | Total RNA | 150bp PE | 6（3+3）| ~60M reads/sample | 中等 | **15** | ⚠️ 細胞株+藥物，DE 極少 |
 | **GSE133998** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N）| ~80M reads/sample | 10,979 | **84** | ✅ 配對設計，樣本數最多 |
 | **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 12（6T+6N）| avg 48M spots（~96M reads）| **14,697**（consensus）| **152** | ✅ 完成；6 對配對 T/N；Type_I 95% / Type_II 5%；predict_interactions union 247 circRNAs；report 8.2 MB |
@@ -2360,7 +2445,7 @@ cancer label：`tumor` / `normal`；genome：hg19
 - ⚠️ 查論文 Methods 是否有報告 RIN score（≥ 7 為佳）或 DV200（≥ 30%）；多數資料集不標示，無記錄不代表品質差，但鱗狀癌或 FFPE 樣本需特別留意
 
 **排除條件**：
-- poly-A selection → circRNA 接近零
+- poly-A selection → circRNA 接近零（**GSE58135 是此條件的一個記錄在案的反例**：2026-10-03查證GEO extract_protocol原文確認其為poly(A)-selected，卻仍偵測到1,607個circRNA並留在cohort中——代表此排除條件並非絕對，但該資料集的DE功率也確實極低(45 tested circRNAs)，且已排除於15組跨資料集重現分析，見GSE58135段落與「資料集特性稽核校正」表）
 - single-end reads → BSJ 偵測困難
 - < 30bp reads → 完全不可用
 - 鱗狀上皮癌（squamous）+ 未報告 RIN/purity → 高風險組合，DE 功率可能不足
