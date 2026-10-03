@@ -794,6 +794,8 @@ rule compute_cost:
         find_circ_log        = f"logs/bench/time_find_circ_{TOTAL_SRR}.log",
         de_edger_log         = "logs/bench/time_de_edger.log",
         de_deseq2_log        = "logs/bench/time_de_deseq2.log",
+        star_mate1_log       = f"logs/bench/time_star_mate1_{TOTAL_SRR}.log",
+        star_mate2_log       = f"logs/bench/time_star_mate2_{TOTAL_SRR}.log",
     output:
         RESULTS + "/compute_cost.tsv",
     log: "logs/bench/compute_cost.log"
@@ -802,6 +804,8 @@ rule compute_cost:
         python {AGENT_DIR}/benchmark/scripts/compute_cost.py \
             --our-ciriquant-log      {input.ciriquant_log} \
             --our-star-log           {input.star_log} \
+            --our-star-mate1-log     {input.star_mate1_log} \
+            --our-star-mate2-log     {input.star_mate2_log} \
             --our-dcc-log            {input.dcc_log} \
             --our-consensus-log      {input.consensus_log} \
             --nfcore-circexplorer2-log {input.circexplorer2_log} \

@@ -170,11 +170,14 @@ def main() -> None:
         print("[compute_cost] No time logs found; using estimated values.",
               file=sys.stderr)
 
-    # Fold DE analysis wall time (edgeR_ciriquant, measured separately on
-    # GSE113230) into the total. Kept as its own column so the report can
-    # render/label it distinctly and flag the differing benchmark dataset.
-    if our_de_wall is not None:
-        total_wall += our_de_wall
+    # DE analysis wall time (edgeR_ciriquant, measured separately on a
+    # 6-sample cohort, GSE113230) is reported as its own column (DE_min)
+    # but is deliberately NOT folded into Total_wall_min / CPU_hours: the
+    # detection steps above are a single-sample (SRR444655) benchmark, so
+    # mixing in a 6-sample-cohort DE measurement would make "per-sample
+    # runtime" (Figure 6 caption) a category error, not just a rounding
+    # nuance. Kept consistent across all three measured rows (Our pipeline,
+    # CirComPara2_4tools, nf-core/circrna) — see 2026-10 compute_cost fix.
 
     # Parallel execution peak RAM:
     # CIRIquant || STAR_paired || STAR_mate1 || STAR_mate2 run simultaneously
@@ -205,9 +208,11 @@ def main() -> None:
         "Note": (
             "Adaptive consensus: slop=10 bp + BSJ/FSJ pseudo-circ QC; "
             "detection benchmarked single-sample (SRR444655, ~100 M read pairs)"
-            + ("; DE analysis (edgeR_ciriquant, incl. DESeq2+limma side-products "
-               "computed in the same analysis.R call) benchmarked separately on "
-               "GSE113230 (6-sample multi-sample DE run)"
+            + ("; DE_min (edgeR_ciriquant, incl. DESeq2+limma side-products computed "
+               "in the same analysis.R call) measured separately on GSE113230 "
+               "(6-sample multi-sample DE run) — reported for reference only, "
+               "NOT included in Total_wall_min/CPU_hours (different sample size "
+               "than the single-sample detection benchmark)"
                if our_de_wall is not None else "")
         ),
     }
@@ -235,16 +240,26 @@ def main() -> None:
                 nfcore_peak_ram = t["peak_ram_gb"]
 
     if nfcore_has_real:
-        # CIRIquant shared with Our pipeline; find_circ = map + detect
+        # CIRIquant shared with Our pipeline; find_circ = map + detect.
+        # STAR_paired is ALSO shared with Our pipeline (reused from step_times,
+        # same dict populated above) and must be counted here: CIRCexplorer2
+        # consumes STAR's Chimeric.out.junction output, so nf-core/circrna
+        # cannot produce its detection result without paying this cost.
+        # Fixed 2026-10: previously omitted, making this row's Total_wall_min
+        # ~98.6 min too low relative to CirComPara2_4tools (which did include
+        # STAR via _c4_star_dcc) — an inconsistent, not-apples-to-apples
+        # comparison between the two simulated-pipeline rows.
         nfcore_align = (nfcore_times.get("ciriquant", 0)
+                        + step_times.get("star", 0)
                         + nfcore_times.get("fc_map", 0))
         nfcore_cons  = (nfcore_times.get("circexplorer2", 0)
                         + nfcore_times.get("fc_detect", 0))
         nfcore_total = nfcore_align + nfcore_cons
         nfcore_source = "This study (measured with /usr/bin/time -v, SRR444655)"
         nfcore_note = (
-            "CIRIquant shared with Our pipeline; CIRCexplorer2 uses existing STAR output; "
-            "find_circ = bowtie2 map + anchor detection; 8 CPU cores"
+            "CIRIquant and STAR_paired shared with Our pipeline; CIRCexplorer2 "
+            "uses existing STAR output; find_circ = bowtie2 map + anchor "
+            "detection; 8 CPU cores"
         )
         nfcore_cores = 8
         nfcore_peak_ram = round(nfcore_peak_ram, 1) if nfcore_peak_ram else 26.0
@@ -272,10 +287,11 @@ def main() -> None:
         print("[compute_cost] No nf-core time logs found; using Digby-Bell 2023 literature values.",
               file=sys.stderr)
 
-    # Fold DE analysis wall time (DESeq2, measured separately on GSE113230,
-    # analysis.R run without fsj_matrix so edgeR_ciriquant is skipped) into total.
-    if nfcore_de_wall is not None:
-        nfcore_total = round(nfcore_total + nfcore_de_wall, 1)
+    # DE analysis wall time (DESeq2, measured separately on GSE113230,
+    # analysis.R run without fsj_matrix so edgeR_ciriquant is skipped) is
+    # reported in DE_min but NOT folded into nfcore_total — see rationale
+    # above our_row's DE handling (single-sample detection vs. 6-sample DE).
+    nfcore_total = round(nfcore_total, 1)
 
     # Digby-Bell et al. (2023) BMC Bioinformatics 24:430
     # https://doi.org/10.1186/s12859-023-05509-y
@@ -303,8 +319,9 @@ def main() -> None:
         "Source":               nfcore_source,
         "Note": (
             nfcore_note
-            + ("; DE analysis (DESeq2, no BSJ/FSJ ratio capability) benchmarked "
-               "separately on GSE113230 (6-sample multi-sample DE run)"
+            + ("; DE_min (DESeq2, no BSJ/FSJ ratio capability) measured "
+               "separately on GSE113230 (6-sample multi-sample DE run) — "
+               "reported for reference only, NOT included in Total_wall_min"
                if nfcore_de_wall is not None else "")
         ),
     }
@@ -372,12 +389,13 @@ def main() -> None:
                      step_times.get("star_mate2", 47.2))
     _c4_dcc_only  = step_times.get("dcc", 17.9)
     # CirComPara2 (Gaffo et al. 2022) conventionally pairs its detection output
-    # with DESeq2 for differential expression. Rather than re-benchmark DESeq2
-    # on a separate count matrix, reuse nf-core_row's DESeq2 timing directly:
-    # both rows' DE step runs the identical algorithm on the identical
-    # GSE113230 count matrix (see de_deseq2_baseline rule), so the wall time
-    # is the same measurement, not an independent one.
-    _c4_total_with_de = _c4_total + (nfcore_de_wall if nfcore_de_wall is not None else 0)
+    # with DESeq2 for differential expression. DE_min reuses nf-core_row's
+    # DESeq2 timing (same algorithm on the same GSE113230 count matrix, see
+    # de_deseq2_baseline rule) purely for reference — it is NOT folded into
+    # Total_wall_min/CPU_hours (single-sample detection benchmark vs.
+    # 6-sample-cohort DE measurement; see rationale above our_row's DE
+    # handling). Fixed 2026-10: previously folded in, which also meant two
+    # different "pipelines" shared Total-affecting digits from one measurement.
     circompara2_4tools_row = {
         "Pipeline":          "CirComPara2_4tools",
         "Tool_combination":  "CIRIquant + STAR×3+DCC + CIRCexplorer2 + find_circ (≥2/4 consensus, slop=10)",
@@ -389,19 +407,19 @@ def main() -> None:
         "DE_min":               round(nfcore_de_wall, 1) if nfcore_de_wall is not None else None,
         "Alignment_wall_min":   round(_c4_total, 1),
         "Consensus_wall_min":   0.0,
-        "Total_wall_min":       round(_c4_total_with_de, 1),
+        "Total_wall_min":       round(_c4_total, 1),
         "Peak_RAM_GB":          _c4_ram,
         "Parallel_Peak_RAM_GB": _c4_parallel_ram,
         "CPU_cores":            _c4_cores,
-        "CPU_hours":            round(_c4_total_with_de / 60 * _c4_cores, 1),
+        "CPU_hours":            round(_c4_total / 60 * _c4_cores, 1),
         "Source": "This study (measured with /usr/bin/time -v, SRR444655)",
         "Note": (
             "slop=10 bp, no BSJ/FSJ pseudo-circ QC"
-            + ("; DE analysis reuses the nf-core/circrna row's DESeq2 timing "
+            + ("; DE_min reuses the nf-core/circrna row's DESeq2 timing "
                "(same algorithm on the same GSE113230 count matrix) since "
                "CirComPara2 conventionally pairs its detection output with "
-               "DESeq2 (Gaffo et al. 2022 Brief Bioinform 23(1):bbab418), "
-               "not an independently benchmarked run"
+               "DESeq2 (Gaffo et al. 2022 Brief Bioinform 23(1):bbab418) — "
+               "reported for reference only, NOT included in Total_wall_min"
                if nfcore_de_wall is not None else "")
         ),
     }
