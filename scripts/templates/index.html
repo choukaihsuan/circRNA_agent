@@ -1042,6 +1042,27 @@
         </div>
       </div>
 
+      <!-- Biomarker filter (cross-method + effect-size stability) -->
+      <div style="font-size:13px;color:#555;margin:6px 0 10px;font-weight:600">
+        <span data-en="Biomarker filter">生物標記篩選</span>
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:13px;margin-bottom:12px">
+        <label data-en="Cross-method requirement">跨方法要求
+          <select name="cross_method_min">
+            <option value="3" {% if config.get('de', {}).get('biomarker', {}).get('cross_method_min', 3) == 3 %}selected{% endif %}>三方法皆顯著（預設）</option>
+            <option value="2" {% if config.get('de', {}).get('biomarker', {}).get('cross_method_min', 3) == 2 %}selected{% endif %}>至少兩方法</option>
+            <option value="1" {% if config.get('de', {}).get('biomarker', {}).get('cross_method_min', 3) == 1 %}selected{% endif %}>僅主方法</option>
+          </select>
+        </label>
+        <label data-en="Stability threshold (min ratio)">效應量穩定門檻（最小留一比值）
+          <input type="number" name="stability_min_ratio" step="0.05" min="0.05" max="1"
+                 value="{{ config.get('de', {}).get('biomarker', {}).get('stability_min_ratio', 0.5) }}"
+                 style="width:70px">
+        </label>
+        <span style="font-size:12px;color:#888" data-en="A candidate is unstable if any leave-one-sample-out run flips the sign of log2FC or falls below this fraction of the full-data |log2FC|.">
+          留一後符號翻轉或 |log2FC| 低於此比例者判為不穩定。</span>
+      </div>
+
       <!-- Primary display method selector -->
       <div style="font-size:13px;color:#555;margin-bottom:8px;font-weight:600">
         <span data-en="Primary display method in report">報告預設顯示方法（主方法）</span>

@@ -35,7 +35,7 @@ import io
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent))
 
-from flask import (Flask, jsonify, redirect, render_template,
+from flask import (Flask, abort, jsonify, redirect, render_template,
                    request, session, url_for)
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -1176,6 +1176,21 @@ def update():
     # DE method
     cfg.setdefault("de", {})
     cfg["de"]["method"] = request.form.get("de_method", "edgeR_ciriquant")
+
+    # Biomarker filter: cross-method requirement and effect-size stability threshold.
+    # Invalid values are rejected (400), never silently replaced by a default.
+    bm_cfg = cfg["de"].setdefault("biomarker", {})
+    cm_raw = request.form.get("cross_method_min", "3")
+    if cm_raw not in ("1", "2", "3"):
+        abort(400, description="cross_method_min must be 1, 2 or 3")
+    bm_cfg["cross_method_min"] = int(cm_raw)
+    try:
+        smr = float(request.form.get("stability_min_ratio", "0.5"))
+    except ValueError:
+        abort(400, description="stability_min_ratio must be a number")
+    if not (0.0 < smr <= 1.0):
+        abort(400, description="stability_min_ratio must be in (0, 1]")
+    bm_cfg["stability_min_ratio"] = smr
 
     # Numeric params
     cfg["consensus"]["min_bsj_reads"]    = int(request.form.get("min_bsj", 2))
