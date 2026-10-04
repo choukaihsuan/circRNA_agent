@@ -35,7 +35,7 @@ configfile: "benchmark/config_benchmark.yaml"
 shell.executable("bash")
 
 # ─── Config aliases ───────────────────────────────────────────────────────────
-GS55   = config["gse55872"]
+GS55   = config["srp011042"]   # key renamed from gse55872 (label only; paths unchanged)
 GS113  = config["gse113230"]
 BENCH  = config["benchmark"]
 GENOME = config["genome"]

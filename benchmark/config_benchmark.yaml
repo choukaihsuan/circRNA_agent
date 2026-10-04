@@ -9,8 +9,10 @@
 # or download + trim manually before starting the benchmark).
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── GSE55872 (RNase R ground truth dataset, Hs68 cell line, hg19) ────────────
-gse55872:
+# ── SRP011042 (CircleSeq in Human Fibroblasts; RNase R ground truth, hg19) ─────
+# Key renamed from gse55872 (2026-10-04). Directory names below (GSE55872_results, GSE55872/raw)
+# are historical and kept on purpose: the existing outputs live there.
+srp011042:
   total_rna: SRR444655          # total RNA (ground truth reference)
   rnaser:
     - SRR444974                 # RNase R replicate 1
