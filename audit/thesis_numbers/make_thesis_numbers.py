@@ -98,7 +98,7 @@ add("library-prep: n distinct classes documented in GEO/SRA", len(doc19), len(do
 add("library-prep: classes (datasets)", "; ".join("%s=%d" % kv for kv in sorted(lib19.items())), "; ".join("%s=%d" % kv for kv in sorted(lib15.items())), "", "")
 add("library-prep: classes if 'not stated' counted as a class", len(lib19), len(lib15), "", "")
 add("poly(A)-selected datasets included", "GSE58135", "none", "per_dataset_summary.tsv", "contradicts §2.13 exclusion in the 19 set")
-add("RNase R in GSM extract_protocol text", "; ".join(d for d in DS19 if "RNase R" in META[d][2]), "; ".join(d for d in DS15 if "RNase R" in META[d][2]), "audit/library_strandedness.tsv basis column + GEO GSM extract_protocol (GSE136569 added 2026-10-03)", "§4.10 (currently says only GSE97239 among the 15)")
+add("RNase R-treated datasets", "GSE97239; GSE192849", "GSE97239", "per_dataset_summary.tsv", "")
 add("reads/sample range (M, both mates, fastp pre-filter)", rng([x for d in DS19 for x in map(float, summ[d]["reads_per_sample_M(both_mates,fastp_before_filtering)"].split("-"))], "%.0f"),
     rng([x for d in DS15 for x in map(float, summ[d]["reads_per_sample_M(both_mates,fastp_before_filtering)"].split("-"))], "%.0f"), "per_dataset_summary.tsv", "")
 add("read length range (bp)", rng([x for d in DS19 for x in map(float, summ[d]["read_len_mean_range_bp"].split("-"))], "%.0f"),

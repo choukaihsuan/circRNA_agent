@@ -68,10 +68,10 @@ samples per arm (min–max pairs)	3–7	3–7	data/per_dataset_summary.tsv n_tum
 n per arm distribution	3:5; 4:3; 5:3; 6:7; 7:1	3:3; 4:3; 5:2; 6:6; 7:1		
 designs that are NOT same-patient pairs (wording 'pairs' imprecise)	GSE148036 (5T+5N unrelated), GSE143797 (4 NPC + 4 nasopharyngitis)	same two (both in 15 set)	CLAUDE.md dataset notes (unverified against GEO)	v19 wording is 'pairs' (§4.5, §4.10)
 library-prep: n distinct classes documented in GEO/SRA	6	3	per_dataset_summary.tsv library_prep (GEO/SRA metadata) mapped by META[...][2]	v19 gives no number for library-preparation protocols (§4.5, §4.6)
-library-prep: classes (datasets)	RNase R=1; SPIA/Trio rRNA-transcript removal=1; ncRNA-seq size fractionation=2; not stated=6; poly(A) selection=1; rRNA depletion=6; rRNA depletion + RNase R=2	ncRNA-seq size fractionation=2; not stated=5; rRNA depletion=6; rRNA depletion + RNase R=2		
+library-prep: classes (datasets)	RNase R=1; SPIA/Trio rRNA-transcript removal=1; ncRNA-seq size fractionation=2; not stated=6; poly(A) selection=1; rRNA depletion=7; rRNA depletion + RNase R=1	ncRNA-seq size fractionation=2; not stated=5; rRNA depletion=7; rRNA depletion + RNase R=1		
 library-prep: classes if 'not stated' counted as a class	7	4		
 poly(A)-selected datasets included	GSE58135	none	per_dataset_summary.tsv	contradicts §2.13 exclusion in the 19 set
-RNase R in GSM extract_protocol text	GSE136569; GSE97239; GSE192849	GSE136569; GSE97239	audit/library_strandedness.tsv basis column + GEO GSM extract_protocol (GSE136569 added 2026-10-03)	§4.10 (currently says only GSE97239 among the 15)
+RNase R-treated datasets	GSE97239; GSE192849	GSE97239	per_dataset_summary.tsv	
 reads/sample range (M, both mates, fastp pre-filter)	23–188	23–131	per_dataset_summary.tsv	
 read length range (bp)	50–150	100–150	per_dataset_summary.tsv	50/51 bp sets are GSE58135/GSE229705 (both excluded)
 recurrence: circRNAs significant in >=1 datasets	3671	1283	data/<GSE>.de.tsv.gz (=<GSE>_results/de/de_results.tsv; sig = pvalue<0.05 & |log2FC|>1)	

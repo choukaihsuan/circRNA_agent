@@ -11,7 +11,7 @@ PRJNA553289	lung	SCLC	6	6	476	117	23	94	110	7	94.0	not stated	0.0	yes
 GSE229705	lung	LUAD	6	6	31	1	0	1	1	0	100.0	SPIA/Trio rRNA-transcript removal	100.0	no	effective single-tool: 100.0% of consensus rows supported by 1 tool (config tools=ciriquant, min_tools=1); exclusion threshold >=97.8%
 GSE148036	lung	LUAD	5	5	19	6	0	6	6	0	100.0	rRNA depletion	0.0	yes	
 GSE121842	colorectal	CRC	3	3	661	65	29	36	55	10	84.6	not stated	0.0	yes	
-GSE136569	pancreas	PDAC	5	5	7334	199	110	89	138	61	69.3	rRNA depletion + RNase R	0.0	yes	
+GSE136569	pancreas	PDAC	5	5	7334	199	110	89	138	61	69.3	rRNA depletion	0.0	yes	
 GSE143797	nasopharynx	NPC	4	4	328	56	8	48	50	6	89.3	ncRNA-seq size fractionation	0.0	yes	
 GSE108735	kidney	RCC	7	7	57	55	55	0	47	8	85.5	ncRNA-seq size fractionation	0.0	yes	
 GSE171011	thyroid	PTC	4	4	2377	326	173	153	303	23	92.9	not stated	0.0	yes	
