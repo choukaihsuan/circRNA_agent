@@ -1,0 +1,16 @@
+accession	tested	pvalue_rule_sig_lfc1	auto_resolves_to	auto_rule_sig_lfc1	note
+GSE113230	6650	240	pvalue<0.05 (min q=0.476; 0 q<0.2)	240	
+GSE133998	650	79	qvalue<0.2 (1 q<0.2)	1	
+GSE108735	57	55	pvalue<0.05 (qvalue() error)	55	qvalue() error: "missing or infinite values in inputs are not allowed"; analysis.R catches it and falls back to nominal p
+GSE143797	328	56	qvalue<0.2 (90 q<0.2)	90	
+GSE148036	19	6	qvalue<0.2 (6 q<0.2)	6	
+GSE171011	2377	326	qvalue<0.2 (2 q<0.2)	2	
+GSE121842	661	65	qvalue<0.2 (3 q<0.2)	3	
+GSE248612	328	46	qvalue<0.2 (48 q<0.2)	48	
+GSE77509	124	41	qvalue<0.2 (68 q<0.2)	68	
+PRJNA553289	476	117	qvalue<0.2 (117 q<0.2)	117	
+SRP156355	1397	152	qvalue<0.2 (98 q<0.2)	98	
+GSE130078	231	12	qvalue<0.2 (1 q<0.2)	1	
+GSE136569	7334	199	pvalue<0.05 (min q=1.000; 0 q<0.2)	199	
+GSE221107	928	57	pvalue<0.05 (min q=0.573; 0 q<0.2)	57	
+GSE97239	2719	140	pvalue<0.05 (min q=0.585; 0 q<0.2)	140	
