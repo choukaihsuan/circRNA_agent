@@ -213,6 +213,103 @@ def _resolve_sig(de: pd.DataFrame, de_sig_by: str, fdr: float):
     return "padj", fdr
 
 
+LOO_FILES = {"edgeR": "edger.tsv", "DESeq2": "deseq2.tsv", "limma": "limma.tsv"}
+LOO_VERIFY_TOL = 1e-6
+
+
+def _read_de(path: str) -> pd.DataFrame:
+    t = pd.read_csv(path, sep="\t")
+    if "log2FC" not in t.columns and "log2FoldChange" in t.columns:
+        t = t.rename(columns={"log2FoldChange": "log2FC"})
+    t["circ_id"] = t["circ_id"].astype(str)
+    return t
+
+
+def _sig_mask(t: pd.DataFrame, de_sig_by: str, fdr: float, lfc: float) -> pd.Series:
+    col, thr = _resolve_sig(t, de_sig_by, fdr)
+    return t[col].notna() & (t[col] < thr) & (t["log2FC"].abs() > lfc)
+
+
+def _effect_stability(cands_ids: list, loo_dir: str, published: dict, min_ratio: float) -> pd.DataFrame:
+    """Per-candidate, per-method effect-size stability under leave-one-sample-out.
+
+    unstable (per method) = any dropped-sample run with sign(l) != sign(full), or |l| < min_ratio*|full|.
+    Runs where the circRNA is absent (not testable) are counted in absent_<m> and do not set flags.
+    Before any flag is used, the NONE (full-data) LOO run must reproduce the published log2FC of
+    every candidate within LOO_VERIFY_TOL; otherwise this raises instead of ranking on a wrong baseline.
+    """
+    base = Path(loo_dir)
+    if not (base / "NONE").is_dir():
+        sys.exit(f"[rank] ERROR: --loo-dir {loo_dir} has no NONE run")
+    drops = sorted(p.name for p in base.iterdir() if p.is_dir() and p.name != "NONE")
+    if not drops:
+        sys.exit(f"[rank] ERROR: --loo-dir {loo_dir} has no dropped-sample runs")
+    out = pd.DataFrame(index=pd.Index(cands_ids, name="circ_id"))
+    for m, fname in LOO_FILES.items():
+        full = pd.read_csv(base / "NONE" / fname, sep="\t").set_index("circ_id")
+        absent_full = [c for c in cands_ids if c not in full.index]
+        if absent_full:
+            sys.exit(f"[rank] ERROR: {len(absent_full)} candidates absent from {m} full LOO run "
+                     f"(e.g. {absent_full[:3]}); refusing to rank")
+        f = full.loc[cands_ids, "log2FC"].astype(float)
+        pub_tab = published[m].set_index("circ_id")
+        pub = pub_tab["log2FC"].reindex(cands_ids).astype(float)
+        pub_p = pub_tab["pvalue"].reindex(cands_ids).astype(float)
+        p_full = full.loc[cands_ids, "pvalue"].astype(float)
+        dev = (f - pub).abs()
+        dev_p = (p_full - pub_p).abs()
+        # Tolerance gate on BOTH log2FC and p-value; the actual maxima are always printed.
+        # Exact equality is not required (DESeq2 reproduces to ~1e-9).
+        print(f"[rank] LOO gate {m}: max|dlog2FC|={dev.max():.3g} max|dp|={dev_p.max():.3g} "
+              f"(tol {LOO_VERIFY_TOL:g})", file=sys.stderr)
+        if dev.isna().any() or dev_p.isna().any() \
+                or (dev > LOO_VERIFY_TOL).any() or (dev_p > LOO_VERIFY_TOL).any():
+            n_bad = int(((dev > LOO_VERIFY_TOL) | (dev_p > LOO_VERIFY_TOL) | dev.isna() | dev_p.isna()).sum())
+            sys.exit(f"[rank] ERROR: {m} full LOO run deviates from published results for {n_bad} candidates "
+                     f"(max|dlog2FC|={dev.max():.3g}, max|dp|={dev_p.max():.3g}, tol {LOO_VERIFY_TOL:g}); "
+                     f"refusing to rank")
+        ratios, flips, shrinks, absent = [], pd.Series(0, index=cands_ids), pd.Series(0, index=cands_ids), pd.Series(0, index=cands_ids)
+        for d in drops:
+            t = pd.read_csv(base / d / fname, sep="\t").set_index("circ_id")
+            l = t["log2FC"].reindex(cands_ids).astype(float)
+            present = l.notna()
+            absent += (~present).astype(int)
+            flips += (present & (l * f < 0)).astype(int)
+            r = l.abs() / f.abs()
+            shrinks += (present & (r < min_ratio)).astype(int)
+            ratios.append(r.rename(d))
+        min_r = pd.concat(ratios, axis=1).min(axis=1, skipna=True)
+        out[f"minratio_{m}"] = min_r.values
+        out[f"sign_flip_{m}"] = flips.values
+        out[f"drop_gt_{m}"] = shrinks.values
+        out[f"absent_{m}"] = absent.values
+        out[f"stable_{m}"] = ((flips == 0) & (shrinks == 0)).values
+    out["effect_stable"] = out[[f"stable_{m}" for m in LOO_FILES]].all(axis=1)
+    return out.reset_index()
+
+
+def _write_status(path, status, n_candidates, n_three, n_pass, stability_run, loo_dir,
+                  cross_method_min, stability_min_ratio) -> None:
+    """Explicit run status (JSON). Written whenever --status-json is given, including the
+    empty-result cases, so an empty table is never mistaken for a successful run."""
+    if not path:
+        return
+    import json as _json
+    doc = {
+        "status": status,
+        "n_candidates": int(n_candidates),
+        "n_three_method_sig": int(n_three),
+        "n_pass_default": int(n_pass),
+        "stability_run": bool(stability_run),
+        "loo_dir": loo_dir or None,
+        "cross_method_min": int(cross_method_min),
+        "stability_min_ratio": float(stability_min_ratio),
+    }
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(_json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    print(f"[rank] status={status} → {path}", file=sys.stderr)
+
+
 def rank_biomarkers(
     de_file:           str,
     annot_file:        str,
@@ -227,6 +324,11 @@ def rank_biomarkers(
     fc_cap:            float = 5.0,
     component_weights: dict  = None,
     fully_evaluated_output: str = None,
+    loo_dir:           str   = "",
+    stability_min_ratio: float = 0.5,
+    cross_method_min:  int   = 3,
+    write_run_params:  bool  = True,
+    status_json:       str   = None,
 ) -> None:
     de    = pd.read_csv(de_file,    sep="\t")
     annot = pd.read_csv(annot_file, sep="\t")
@@ -265,9 +367,14 @@ def rank_biomarkers(
     )
     sig = merged.loc[sig_mask].copy()
 
+    # No significant circRNA: write a HEADER-ONLY table plus an explicit status, and
+    # exit 0 only as a report of that status (never write the full DE table as candidates).
     if sig.empty:
-        print("[rank] No significant circRNAs; writing empty output.", file=sys.stderr)
-        merged.to_csv(output, sep="\t", index=False)
+        print("[rank] WARNING: no significant circRNAs; writing header-only output.", file=sys.stderr)
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        merged.iloc[0:0].to_csv(output, sep="\t", index=False)
+        _write_status(status_json, "no_significant_circrna", 0, 0, 0, bool(loo_dir), loo_dir,
+                      cross_method_min, stability_min_ratio)
         return
 
     # ── Interaction counts (optional) ─────────────────────────────────────────
@@ -293,36 +400,73 @@ def rank_biomarkers(
     sig["biomarker_score"] = _compute_weighted_score(sig, sig_col, sig_cap, fc_cap, component_weights)
 
     # ── n_sig_methods: count across all three DE methods ──────────────────────
+    # Strict: an unreadable or missing other-method table is an error, not a warning,
+    # because the cross-method flag below must not silently fall back to fewer methods.
     sig["n_sig_methods"] = 1  # primary method is always 1 (these are already sig)
-    for other_file in [de_deseq2, de_limma]:
-        if not other_file or not Path(other_file).exists():
+    published = {"edgeR": de}
+    n_methods_available = 1
+    for name, other_file in [("DESeq2", de_deseq2), ("limma", de_limma)]:
+        if not other_file:
             continue
-        try:
-            other = pd.read_csv(other_file, sep="\t")
-            if "log2FC" not in other.columns and "log2FoldChange" in other.columns:
-                other = other.rename(columns={"log2FoldChange": "log2FC"})
-            o_col, o_thr = _resolve_sig(other, de_sig_by, fdr)
-            if o_col in other.columns and "log2FC" in other.columns and "circ_id" in other.columns:
-                other_ids = set(other.loc[
-                    other[o_col].notna() &
-                    (other[o_col] < o_thr) &
-                    (other["log2FC"].abs() > lfc), "circ_id"
-                ].tolist())
-                sig.loc[sig["circ_id"].isin(other_ids), "n_sig_methods"] += 1
-        except Exception as e:
-            print(f"[rank] warning: could not read {other_file}: {e}", file=sys.stderr)
+        if not Path(other_file).exists():
+            sys.exit(f"[rank] ERROR: {name} DE table given but missing: {other_file}")
+        other = _read_de(other_file)
+        published[name] = other
+        n_methods_available += 1
+        other_ids = set(other.loc[_sig_mask(other, de_sig_by, fdr, lfc), "circ_id"].tolist())
+        sig.loc[sig["circ_id"].astype(str).isin(other_ids), "n_sig_methods"] += 1
 
+    if cross_method_min > n_methods_available:
+        sys.exit(f"[rank] ERROR: --cross-method-min {cross_method_min} but only "
+                 f"{n_methods_available} DE method table(s) supplied (--de-deseq2/--de-limma)")
     sig["n_sig_methods"] = sig["n_sig_methods"].astype(int)
+    sig["three_method_sig"] = sig["n_sig_methods"] >= cross_method_min
     counts = sig["n_sig_methods"].value_counts().sort_index()
     for n, c in counts.items():
         print(f"[rank]   {c} circRNAs significant in {n}/3 method(s)", file=sys.stderr)
 
+    # ── Effect-size stability (filter first, then test) ──────────────────────
+    # Scores are normalised over the full significant set and are NOT recomputed on
+    # the survivors. LOO is evaluated only for three-method candidates. The LOO fits
+    # themselves are dataset-wide (one fit per dropped sample), so their cost does not
+    # depend on how many candidates are tested.
+    sig["effect_stable"] = pd.NA
+    stability_run = bool(loo_dir)
+    if stability_run:
+        pub_tables = {k: v.assign(circ_id=v["circ_id"].astype(str)) for k, v in published.items()}
+        survivors = sig.loc[sig["three_method_sig"], "circ_id"].astype(str).tolist()
+        if survivors:
+            stab = _effect_stability(survivors, loo_dir, pub_tables, stability_min_ratio)
+            sig["circ_id"] = sig["circ_id"].astype(str)
+            sig = sig.drop(columns=["effect_stable"]).merge(stab, on="circ_id", how="left")
+            sig["effect_stable"] = sig["effect_stable"].astype("boolean")
+        else:
+            sig["circ_id"] = sig["circ_id"].astype(str)
+        print(f"[rank] stability: {len(survivors)} three-method candidates tested "
+              f"(min ratio {stability_min_ratio}) from {loo_dir}", file=sys.stderr)
+        sig["pass_default"] = sig["three_method_sig"] & sig["effect_stable"].fillna(False).astype(bool)
+    else:
+        sig["pass_default"] = sig["three_method_sig"]
+        print("[rank] stability NOT run (no --loo-dir): pass_default = three-method only",
+              file=sys.stderr)
+    sig["pass_default"] = sig["pass_default"].astype(bool)
+
     sig = sig.sort_values("biomarker_score", ascending=False)
     sig.insert(sig.columns.get_loc("biomarker_score") + 1, "rank",
                range(1, len(sig) + 1))
+    passing = sig["pass_default"]
+    sig["rank_default"] = pd.NA
+    sig.loc[passing, "rank_default"] = list(range(1, int(passing.sum()) + 1))
 
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     sig.to_csv(output, sep="\t", index=False)
+    n_pass = int(passing.sum())
+    status = "ok" if n_pass > 0 else "no_candidates_pass"
+    if n_pass == 0:
+        print(f"[rank] WARNING: 0 of {len(sig)} candidates pass the default filter "
+              f"(status=no_candidates_pass); all candidates are still written", file=sys.stderr)
+    _write_status(status_json, status, len(sig), int(sig["three_method_sig"].sum()), n_pass,
+                  stability_run, loo_dir, cross_method_min, stability_min_ratio)
     print(
         f"[rank] {len(sig)} biomarker candidates → {output}\n"
         f"[rank] top score: {sig['biomarker_score'].iloc[0]:.3f}  "
@@ -330,7 +474,8 @@ def rank_biomarkers(
         file=sys.stderr,
     )
 
-    _write_interaction_coverage(output, sig)
+    if write_run_params:
+        _write_interaction_coverage(output, sig)
 
     if fully_evaluated_output:
         # Evidence-level-consistent ranking: only candidates where every
@@ -386,6 +531,21 @@ def main() -> None:
                         help="JSON dict: {component: {enabled, weight}} for sig/fc/conf/"
                              "known/mirna/rbp. Default: all enabled, weight 1.0 (equal, "
                              "this paper's setting).")
+    parser.add_argument("--loo-dir", default="",
+                        help="Directory from scripts/loo_stability.R (NONE/ + one dir per dropped "
+                             "sample). If given, effect-size stability is tested for three-method "
+                             "candidates; otherwise effect_stable is NA.")
+    parser.add_argument("--stability-min-ratio", type=float, default=0.5,
+                        help="A dropped-sample run fails if |log2FC_run| < ratio*|log2FC_full| "
+                             "(default 0.5, i.e. a drop of more than 50%%). Sign flips always fail.")
+    parser.add_argument("--cross-method-min", type=int, default=3, choices=[1, 2, 3],
+                        help="Minimum number of DE methods (of those supplied) in which a candidate "
+                             "must be significant to count as cross-method (default 3 = all supplied).")
+    parser.add_argument("--no-run-params", action="store_true",
+                        help="Do not write interaction coverage into <results>/run_params.yaml. "
+                             "Required for v2 runs so published results directories are not modified.")
+    parser.add_argument("--status-json", default=None,
+                        help="Write an explicit run status JSON (status, counts, parameters) here.")
     args = parser.parse_args()
 
     component_weights = None
@@ -412,6 +572,11 @@ def main() -> None:
         sig_cap            = args.sig_cap,
         fc_cap             = args.fc_cap,
         component_weights  = component_weights,
+        loo_dir            = args.loo_dir,
+        stability_min_ratio = args.stability_min_ratio,
+        cross_method_min   = args.cross_method_min,
+        write_run_params   = not args.no_run_params,
+        status_json        = args.status_json,
         fully_evaluated_output = (
             args.fully_evaluated_output
             or (str(Path(args.output).with_name(
