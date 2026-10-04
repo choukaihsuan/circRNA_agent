@@ -63,3 +63,6 @@ audit/xref.json
 !audit/thesis_numbers/data/
 benchmark/partner_comparison.tsv
 benchmark/er_sensitivity.tsv
+benchmark/weight_sensitivity.tsv
+benchmark/weight_sensitivity_summary.tsv
+audit/table2_components_GSE133998.tsv
