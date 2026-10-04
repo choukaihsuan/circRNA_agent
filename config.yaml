@@ -40,7 +40,7 @@ de:
   method: edgeR_ciriquant
   fdr_cutoff: 0.05
   log2fc_cutoff: 1.0
-  de_sig_by: auto            # auto = q<0.2 (Storey) then p<0.05; pvalue/padj = fixed
+  de_sig_by: pvalue          # pvalue = nominal p<0.05 (paper §2.6/§2.7); auto = q<0.2 (Storey) then p<0.05
   fsj_concordance_lfc: 0.0  # min |logFC_fsj| for Type II concordance; 0=direction-only (recommended)
   isoform_fdr_cutoff: 0.1   # within-gene FDR for isoform switching (less strict than global)
   delta_iui_cutoff: 0.1     # minimum |ΔIUI| to call switching
