@@ -61,3 +61,4 @@ audit/build_claims.py
 audit/xref.json
 # analysis input data for audit/thesis_numbers (the global data/ rule above would otherwise hide it)
 !audit/thesis_numbers/data/
+benchmark/partner_comparison.tsv
