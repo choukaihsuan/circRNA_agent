@@ -1119,6 +1119,7 @@ python scripts/notify.py --event failure --project GSE113230 --rule dcc --log lo
 ## 重要的 Snakemake 行為
 
 - **rerun trigger 有多種，不只 .smk code-hash**：mtime 是預設的 rerun trigger 之一。上游設定檔（例如 `config/ciriquant.yaml`）被 touch 過，會使其下游 job 全部被判為過期並重跑（2026-10-04 dry-run 實測：整個上游鏈被重新規劃）。這與上方 .smk code-hash 是同類的第二種機制，來源不同。`config/ciriquant.yaml` 同時裝機器本地工具路徑與科學性參考路徑，目前不可安全地 `ancient()`；拆檔是獨立議題。
+- **dry-run 的「無待執行 job」必須先驗證目標路徑**：Snakemake 的目標字串必須與 configfile 的 `results_dir` 完全一致（`~/x_results` 與 `/home3/choukaihsuan/x_results` 是不同字串，`/home` 為 `/home3` 的 symlink 但 Snakemake 不做等價比對）。路徑不符時，`Nothing to be done` 證明的只是「這個不存在的目標不需要做事」，不是「管線不需要重跑」。2026-10-04 因此誤判一次。
 - **只跑指定 rule 時用 `--allowed-rules`**：上游缺輸入會報錯（MissingRule／MissingInput），而不是靜默重跑上游。報告批次使用 `--allowed-rules loo_stability rank_biomarkers_v2 generate_report`。
 
 
