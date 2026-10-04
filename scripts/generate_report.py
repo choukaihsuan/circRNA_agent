@@ -1174,209 +1174,130 @@ def _isoform_section(switching_file: Optional[str],
 """
 
 
-def _compute_bm_table_data(
-    de: pd.DataFrame,
-    p_col: str,
-    sig_thr: float,
-    lfc: float,
-    bm_lookup: dict,
-    sig_sets_all: Optional[dict] = None,
-) -> Optional[dict]:
-    """Compute all significant biomarker rows for one DE method (stored in ALL_DE_METHODS[m].bm_table); JS slices to displayed N."""
-    if p_col not in de.columns or "log2FC" not in de.columns or "circ_id" not in de.columns:
-        return None
-    mask = de[p_col].notna() & (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
-    sig = de[mask].copy()
-    if sig.empty:
-        return None
-    n_total = len(sig)
-    sig["_sig_v"] = sig[p_col].apply(lambda p: min(-math.log10(max(p, 1e-10)), 10))
-    sig["_fc_v"]  = sig["log2FC"].abs().clip(upper=5)
-    def _mn(s):
-        mn, mx = s.min(), s.max()
-        return (s - mn) / (mx - mn + 1e-10)
-    sig["_sig_n"] = _mn(sig["_sig_v"])
-    sig["_fc_n"]  = _mn(sig["_fc_v"])
-    use_ixn = any(bm_lookup.get(str(r), {}).get("n_mirna", 0) > 0 for r in sig["circ_id"])
-    ndim = 6.0 if use_ixn else 4.0
-    # Normalize mirna/rbp within the current sig set to avoid cross-set scaling artifacts
-    _sig_mirna_mx = max((float(bm_lookup.get(str(c), {}).get("n_mirna", 0)) for c in sig["circ_id"]), default=1) or 1
-    _sig_rbp_mx   = max((float(bm_lookup.get(str(c), {}).get("n_rbp",   0)) for c in sig["circ_id"]), default=1) or 1
-    scores_list = []
-    for _, r in sig.iterrows():
-        lu = bm_lookup.get(str(r["circ_id"]), {})
-        mirna_n = float(lu.get("n_mirna", 0)) / _sig_mirna_mx if use_ixn else 0.0
-        rbp_n   = float(lu.get("n_rbp",   0)) / _sig_rbp_mx   if use_ixn else 0.0
-        base = r["_sig_n"] + r["_fc_n"] + lu.get("conf_n", 0) + lu.get("known", 0)
-        if use_ixn:
-            base += mirna_n + rbp_n
-        scores_list.append(round(float(base) / ndim, 4))
-    sig["_score"] = scores_list
-    all_sig = sig_sets_all or {}
-    all_methods = list(all_sig.keys())
-    if all_methods:
-        sig["_n_sig"] = sig["circ_id"].apply(
-            lambda cid: sum(1 for m in all_methods if str(cid) in all_sig[m])
-        )
-    else:
-        sig["_n_sig"] = 1
-    sig_top = sig.sort_values("_score", ascending=False).reset_index(drop=True)
-    cols = ["rank", "circ_id", "log2FC", "n_mirna", "n_rbp",
-            "biomarker_score", "n_sig_methods", "in_circbase", "circbase_id", "circbase_gene", "Type"]
-    rows = []
-    for i, r in sig_top.iterrows():
-        cid = str(r["circ_id"])
-        lu = bm_lookup.get(cid, {})
-        rows.append([
-            int(i) + 1,
-            cid,
-            round(float(r.get("log2FC", 0)), 2),
-            int(lu.get("n_mirna", 0)),
-            int(lu.get("n_rbp", 0)),
-            round(float(r.get("_score", 0)), 3),
-            int(r.get("_n_sig", 1)),
-            int(lu.get("in_circbase", 0)),
-            lu.get("circbase_id", ""),
-            (lambda _g, _n: _g if _g and _g.lower() not in ("none","nan","novel","intergenic","") else (_n if _n and _n.lower() not in ("none","nan","novel","intergenic","") else ""))(lu.get("circbase_gene",""), lu.get("gene_name","")),
-            (lambda _tv, _lu: (
-                str(_tv) if (_tv is not None and _tv == _tv and str(_tv).lower() not in ("nan","none","na",""))
-                else (_lu.get("type_edger") or "—")
-            ))(r.get("Type") if "Type" in r.index else None, lu),
-        ])
-    return {"cols": cols, "rows": rows, "n_total": n_total}
+_CAND_COLS = ["rank", "circ_id", "gene_name", "log2FC", "n_mirna", "n_rbp", "biomarker_score",
+              "n_sig_methods", "three_method_sig", "min_ratio", "effect_stable",
+              "mr_evaluated", "in_circbase", "circbase_id", "circbase_gene", "Type"]
 
 
-def _biomarker_section(biomarker_file: Optional[str],
+def _candidate_bm_table(path: str) -> dict:
+    """Biomarker table for one DE method, read from a rank_biomarkers.py v2 candidate file.
+
+    Single source of truth: nothing is scored, filtered or normalised here. The only
+    derived values are display formats (check marks, rounding) and the minimum
+    leave-one-sample-out ratio across methods (a display summary of minratio_* columns).
+    Raises if the file or its status is missing or lacks the v2 columns.
+    """
+    import json as _json
+    status_p = str(path)[:-4] + ".status.json" if str(path).endswith(".tsv") else str(path) + ".status.json"
+    if not Path(path).exists():
+        raise SystemExit(f"[report] ERROR: biomarker candidate file missing: {path}")
+    if not Path(status_p).exists():
+        raise SystemExit(f"[report] ERROR: status file missing for {path} (expected {status_p})")
+    status = _json.loads(Path(status_p).read_text(encoding="utf-8")).get("status", "")
+    bm = pd.read_csv(path, sep="\t")
+    need = ["rank", "rank_default", "pass_default", "three_method_sig", "effect_stable", "biomarker_score"]
+    miss = [c for c in need if c not in bm.columns]
+    if miss:
+        raise SystemExit(f"[report] ERROR: {path} lacks v2 columns {miss}; regenerate with rank_biomarkers.py")
+    ratio_cols = [c for c in bm.columns if c.startswith("minratio_")]
+    min_ratio = bm[ratio_cols].min(axis=1, skipna=True) if ratio_cols else pd.Series(None, index=bm.index)
+
+    def _bool(v, yes="✓", no="✗"):
+        if v is None or (isinstance(v, float) and v != v) or v is pd.NA:
+            return ""
+        return yes if bool(v) else no
+
+    def _num(v, nd):
+        try:
+            f = float(v)
+            return None if f != f else round(f, nd)
+        except (TypeError, ValueError):
+            return None
+
+    def _txt(v, default="—"):
+        s_ = "" if v is None or (isinstance(v, float) and v != v) else str(v)
+        return s_ if s_ and s_.lower() not in ("nan", "none", "na") else default
+
+    def _rowlist(r, rank_value):
+        return [
+            int(rank_value),
+            str(r["circ_id"]),
+            _txt(r.get("gene_name"), "—"),
+            _num(r.get("log2FC"), 2),
+            int(r.get("n_mirna") or 0) if _num(r.get("n_mirna"), 0) is not None else 0,
+            int(r.get("n_rbp") or 0) if _num(r.get("n_rbp"), 0) is not None else 0,
+            _num(r.get("biomarker_score"), 3),
+            int(r.get("n_sig_methods") or 1),
+            _bool(r.get("three_method_sig")),
+            _num(r.get("_min_ratio"), 3),
+            _bool(r.get("effect_stable")),
+            _bool(r.get("interaction_queried"), "✓", "—"),
+            int(r.get("in_circbase") or 0),
+            _txt(r.get("circbase_id")),
+            _txt(r.get("circbase_gene")),
+            _txt(r.get("Type")),
+        ]
+
+    bm["_min_ratio"] = min_ratio.values
+    all_df = bm.sort_values("rank")
+    all_rows = [_rowlist(r, r["rank"]) for _, r in all_df.iterrows()]
+    pass_df = bm[bm["pass_default"] == True]  # noqa: E712 (boolean column)
+    pass_df = pass_df.sort_values("rank_default")
+    pass_rows = [_rowlist(r, r["rank_default"]) for _, r in pass_df.iterrows()]
+    return {"cols": _CAND_COLS, "rows": pass_rows, "all_rows": all_rows,
+            "n_total": int(len(bm)), "n_pass": int(len(pass_rows)), "status": status}
+
+
+def _biomarker_section(candidate_file: str,
                        interactions: Optional[dict] = None,
                        iso_lookup: Optional[dict] = None) -> str:
-    if not biomarker_file or not Path(biomarker_file).exists():
-        return ""
-    try:
-        bm = pd.read_csv(biomarker_file, sep="\t")
-    except Exception:
-        return ""
-    if bm.empty:
-        return ""
-    show_cols = [c for c in ["rank", "circ_id", "log2FC", "n_mirna", "n_rbp",
-                              "biomarker_score", "n_sig_methods",
-                              "in_circbase", "circbase_id", "circbase_gene", "Type"]
-                 if c in bm.columns]
-    has_interactions = "n_mirna" in bm.columns and (bm["n_mirna"].max() + bm["n_rbp"].max()) > 0
-    if has_interactions:
-        score_desc = "Score = mean of: −log₁₀(p-value), |log₂FC|, confidence score, circBase bonus, #miRNA binders, #RBP binders (each normalised 0–1; 6D)."
-    else:
-        score_desc = "Score = mean of: −log₁₀(p-value), |log₂FC|, confidence score, circBase known bonus (each normalised 0–1; 4D)."
-
-    # ── Interaction (miRNA/RBP) query coverage disclosure (2026-10) ────────────
-    # predict_interactions.py only queries a fixed top-N union (~150-250
-    # circRNAs), independent of how many circRNAs are actually significant.
-    # For a candidate never in that union, mirna/rbp are excluded from its
-    # score (not treated as 0) -- see rank_biomarkers.py _compute_weighted_score.
-    # That is correct, but it means candidates differ in how many components
-    # their score is actually based on; make that visible rather than implicit.
-    coverage_html = ""
-    if "interaction_queried" in bm.columns:
-        n_sig_total   = len(bm)
-        n_queried     = int(bm["interaction_queried"].sum())
-        coverage_pct  = round(n_queried / n_sig_total * 100, 1) if n_sig_total else 0.0
-        warn = coverage_pct < 80
-        bg = "#fff3e0" if warn else "#f4f8ff"
-        border = "#f0b868" if warn else "#d0e4f7"
-        warn_line = (
-            f'<div style="margin-top:4px;font-size:12px;color:#8a5a00">'
-            f'⚠ <span data-en="Coverage below 80%: miRNA/RBP binder counts are only directly comparable among the {n_queried} candidates that were actually queried. See the &dagger; mark in the table below.">'
-            f'覆蓋率低於80%：miRNA/RBP binder數量只在實際被查詢過的{n_queried}個候選之間可直接比較，表格中標示&dagger;者請留意。</span></div>'
-            if warn else ""
-        )
-        coverage_html = f"""
-  <div style="margin:6px 0 10px;padding:8px 12px;background:{bg};border:1px solid {border};border-radius:6px;font-size:13px">
-    <span data-en="miRNA/RBP components evaluated for {n_queried} of {n_sig_total} candidates ({coverage_pct}%)">
-    miRNA/RBP 兩個分量實際被評估的候選數：{n_queried} / {n_sig_total}（{coverage_pct}%）</span>
-    {warn_line}
+    """Static (initial) biomarker block for the primary method, read from its candidate file."""
+    bt = _candidate_bm_table(candidate_file)
+    n_pass, n_total = bt["n_pass"], bt["n_total"]
+    cols = bt["cols"]
+    rows_df = pd.DataFrame(bt["rows"], columns=cols)
+    # Score description describes the actual six components (the file is the source)
+    score_desc = ("Score = mean of six components S (−log₁₀ p), F (|log₂FC|), C (confidence), "
+                  "K (circBase), M (#miRNA), R (#RBP); each normalised over the edgeR significant set. "
+                  "Default view: candidates passing the cross-method rule AND effect-size stability; "
+                  "the toggle shows every candidate. min_ratio = smallest leave-one-sample-out "
+                  "|log2FC| ratio across the three methods (a candidate is unstable below 0.5 or on sign flip).")
+    banner = ""
+    if n_pass == 0:
+        banner = ('<div id="bm-no-pass" style="margin:8px 0;padding:10px 12px;background:#fff3e0;'
+                  'border:1px solid #f0b868;border-radius:6px;font-size:13px;color:#8a5a00">'
+                  '<span data-en="No candidate in this dataset passed the cross-method and stability filter. '
+                  'Use &quot;All candidates&quot; to inspect the unfiltered list.">'
+                  '本資料集沒有通過篩選的候選（三方法一致且效應量穩定）。可切換「全部候選」檢視未篩選清單。</span></div>')
+    toggle = f"""
+  <div id="bm-view-bar" style="display:flex;align-items:center;gap:8px;margin:10px 0 6px;flex-wrap:wrap">
+    <span style="font-size:12px;color:#666" data-en="View:">檢視：</span>
+    <button id="bm-view-pass" class="bm-view-btn" onclick="setBmView('pass')"
+      style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;background:#2c6fad;color:white;cursor:pointer"
+      data-count="{n_pass}">通過者（{n_pass}）</button>
+    <button id="bm-view-all" class="bm-view-btn" onclick="setBmView('all')"
+      style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;background:white;color:#555;cursor:pointer"
+      data-count="{n_total}">全部候選（{n_total}）</button>
   </div>"""
-
-    n_total = len(bm)
-    bm_top = bm.head(30).copy()
-    # Fix circbase_gene: replace "None"/"nan"/"novel" with gene_name from iso_lookup
-    if "circbase_gene" in bm_top.columns and iso_lookup:
-        _BAD_GENE = {"none", "nan", "novel", "intergenic", ""}
-        def _fix_cbg(row):
-            cg = str(row.get("circbase_gene", "") or "")
-            if cg.lower() in _BAD_GENE:
-                gn = iso_lookup.get(str(row.get("circ_id", "")), {}).get("gene_name", "") if iso_lookup else ""
-                return gn if gn and gn.lower() not in _BAD_GENE else "—"
-            return cg
-        bm_top["circbase_gene"] = bm_top.apply(_fix_cbg, axis=1)
-    disp = _fmt_floats(bm_top[show_cols].copy())
-    _not_queried_ids = (set(bm_top.loc[~bm_top["interaction_queried"], "circ_id"].astype(str))
-                        if "interaction_queried" in bm_top.columns else set())
-    if "circ_id" in disp.columns and interactions is not None:
+    shown_df = rows_df.copy()
+    if "circ_id" in shown_df.columns and interactions is not None:
         def _link(v: str) -> str:
             tip = "in interaction data" if str(v) in interactions else "no interaction data pre-fetched"
-            dagger = ' <span title="miRNA/RBP not queried for this candidate; score renormalized over the remaining components">&dagger;</span>' if str(v) in _not_queried_ids else ""
             return (f'<a class="circ-link" onclick="showCircDetail(\'{v}\')" '
-                    f'title="{tip}">{_disp_coord(v)}</a>{dagger}')
-        disp["circ_id"] = disp["circ_id"].astype(str).apply(_link)
-    if "circbase_id" in disp.columns:
-        disp["circbase_id"] = disp["circbase_id"].apply(_cb_link)
-
-    raw_html = disp.to_html(index=False, classes="table", border=0, na_rep="—", escape=False)
-    # Inject data-nsig into body <tr> tags.
-    # pandas renders the header as <tr style="text-align: right;"> which does NOT
-    # match plain <tr>, so every matched <tr> is a body row — no header skip needed.
-    if "n_sig_methods" in bm_top.columns:
-        import re as _re
-        nsig_vals = bm_top["n_sig_methods"].tolist()
-        _idx = [0]
-        def _inject(m):
-            v = nsig_vals[_idx[0]] if _idx[0] < len(nsig_vals) else 1
-            _idx[0] += 1
-            fw = 'font-weight:bold;' if int(v) >= 3 else ''
-            return f'<tr data-nsig="{v}" style="{fw}">'
-        raw_html = _re.sub(r'<tr>', _inject, raw_html)
-
+                    f'title="{tip}">{_disp_coord(v)}</a>')
+        shown_df["circ_id"] = shown_df["circ_id"].astype(str).apply(_link)
+    if "circbase_id" in shown_df.columns:
+        shown_df["circbase_id"] = shown_df["circbase_id"].apply(_cb_link)
+    raw_html = shown_df.to_html(index=False, classes="table", border=0, na_rep="—", escape=False)
     table_html = _dl_wrap(raw_html, "tbl_biomarker", "biomarker_candidates.csv")
-
-    # Build filter UI (only when n_sig_methods column exists)
-    filter_ui = ""
-    if "n_sig_methods" in bm.columns:
-        n3 = int((bm.head(30)["n_sig_methods"] == 3).sum())
-        n2 = int((bm.head(30)["n_sig_methods"] >= 2).sum())
-        filter_ui = f"""
-  <div id="bm-filter-bar" style="display:flex;align-items:center;gap:8px;margin:10px 0 6px;flex-wrap:wrap">
-    <span style="font-size:12px;color:#666" data-en="Show:">顯示：</span>
-    <button class="bm-filter-btn active" onclick="filterBiomarker(0)"
-      style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
-             background:#2c6fad;color:white;cursor:pointer" data-en="All ({min(n_total,30)})" data-count="{min(n_total,30)}" data-filter="0">全部（{min(n_total,30)}）</button>
-    <button class="bm-filter-btn" onclick="filterBiomarker(2)"
-      style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
-             background:white;color:#555;cursor:pointer" data-en="≥ 2 methods ({n2})" data-count="{n2}" data-filter="2">≥ 2 方法顯著（{n2}）</button>
-    <button class="bm-filter-btn" onclick="filterBiomarker(3)"
-      style="font-size:12px;padding:3px 12px;border:1px solid #bbb;border-radius:12px;
-             background:white;color:#555;cursor:pointer" data-en="All 3 methods ({n3})" data-count="{n3}" data-filter="3">3 方法均顯著（{n3}）</button>
-    <span style="font-size:11px;color:#999;margin-left:4px" data-en="n_sig_methods = significant in 1/2/3 DE methods">n_sig_methods = 1/2/3 種 DE 方法中顯著</span>
-  </div>
-  <script>
-  function filterBiomarker(minN) {{
-    document.querySelectorAll('.bm-filter-btn').forEach(function(b) {{
-      b.style.background = 'white'; b.style.color = '#555';
-    }});
-    event.currentTarget.style.background = '#2c6fad';
-    event.currentTarget.style.color = 'white';
-    var rows = document.querySelectorAll('#tbl_biomarker tbody tr');
-    rows.forEach(function(r) {{
-      var n = parseInt(r.getAttribute('data-nsig') || '1');
-      r.style.display = (minN === 0 || n >= minN) ? '' : 'none';
-    }});
-  }}
-  </script>"""
+    wrap_display = "none" if n_pass == 0 else "block"
 
     return f"""
-  <h2 id="biomarker-section-title">Biomarker Candidates (top 30 by composite score)</h2>
+  <h2 id="biomarker-section-title">Biomarker Candidates</h2>
   <p style="font-size:13px;color:#555;margin-bottom:8px;">{score_desc}</p>
-  {coverage_html}
-  <div style="display:flex;align-items:center;gap:10px;margin:20px 0 4px;flex-wrap:wrap">
-    <h3 style="font-size:14px;color:#444;margin:0">Biomarker Candidates</h3>
+  {banner}
+  {toggle}
+  <div style="display:flex;align-items:center;gap:10px;margin:12px 0 4px;flex-wrap:wrap">
     <div style="display:flex;align-items:center;gap:6px;background:#f4f8ff;padding:6px 12px;border-radius:6px;border:1px solid #d0e4f7">
       <span style="font-size:13px" data-en="Show top">顯示前</span>
       <input type="number" id="bm-n-input" value="30" min="1" max="{n_total}"
@@ -1389,8 +1310,7 @@ def _biomarker_section(biomarker_file: Optional[str],
     </div>
   </div>
   <p style="font-size:12px;color:#666">&#128204; Click a <strong>circ_id</strong> to view exon diagram, miRNA and RBP binding sites.</p>
-  {filter_ui}
-  {table_html}
+  <div id="bm-table-wrap" style="display:{wrap_display}">{table_html}</div>
 """
 
 
@@ -1672,6 +1592,21 @@ def _enrich_de(de: pd.DataFrame,
     return de
 
 
+_BM_METHOD_SUFFIX = {"edgeR_ciriquant": "edgeR", "deseq2": "DESeq2", "limma": "limma"}
+
+
+def _resolve_biomarker_files(anchor: str) -> dict:
+    """Per-method candidate files next to the anchor file. Missing file is an error."""
+    d = Path(anchor).parent
+    out = {}
+    for key, suffix in _BM_METHOD_SUFFIX.items():
+        p = d / f"biomarker_candidates_v2_{suffix}.tsv"
+        if not p.exists():
+            raise SystemExit(f"[report] ERROR: {p} missing; run rank_biomarkers.py --primary-method {suffix}")
+        out[key] = str(p)
+    return out
+
+
 def build_report(
     de_file:        str,
     matrix_file:    str,
@@ -1683,7 +1618,7 @@ def build_report(
     fdr:            float = 0.05,
     lfc:            float = 1.0,
     de_method:      str   = "deseq2",
-    biomarker_file: Optional[str] = None,
+    biomarker_files: Optional[dict] = None,
     switching_file: Optional[str] = None,
     groups_file:    Optional[str] = None,
     de_sig_by:      str   = "auto",
@@ -1947,118 +1882,15 @@ def build_report(
     if de_method not in de_lookup_venn:
         de_lookup_venn[de_method] = de
 
-    # ── Build bm_lookup for per-method score distribution ──────────────────────
-    _bm_lookup: dict = {}
-    if biomarker_file and Path(biomarker_file).exists():
-        try:
-            _bm_df = pd.read_csv(biomarker_file, sep="\t")
-            _conf_vals = pd.to_numeric(_bm_df.get("confidence_score", pd.Series()), errors="coerce").fillna(0)
-            _mirna_vals = pd.to_numeric(_bm_df.get("n_mirna", pd.Series(0)), errors="coerce").fillna(0)
-            _rbp_vals   = pd.to_numeric(_bm_df.get("n_rbp",   pd.Series(0)), errors="coerce").fillna(0)
-            _conf_mn, _conf_mx = _conf_vals.min(), _conf_vals.max()
-            _mirna_mx = _mirna_vals.max(); _rbp_mx = _rbp_vals.max()
-            for _, _br in _bm_df.iterrows():
-                _cid = str(_br.get("circ_id", ""))
-                if not _cid: continue
-                _c = float(pd.to_numeric(_br.get("confidence_score", 0), errors="coerce") or 0)
-                _type_raw = _br.get("Type", "")
-                _type_edger = "" if (
-                    _type_raw is None or _type_raw != _type_raw or
-                    str(_type_raw).lower() in ("nan", "none", "na", "")
-                ) else str(_type_raw)
-                _bm_lookup[_cid] = {
-                    "conf_n":  (_c - _conf_mn) / (_conf_mx - _conf_mn + 1e-10),
-                    "known":   float(int(_br.get("in_circbase", 0) or 0)),
-                    "mirna_n": float(_br.get("n_mirna", 0) or 0) / (_mirna_mx + 1e-10),
-                    "rbp_n":   float(_br.get("n_rbp",   0) or 0) / (_rbp_mx   + 1e-10),
-                    # Raw display values for bm_table
-                    "n_mirna":       int(float(_br.get("n_mirna",       0) or 0)),
-                    "n_rbp":         int(float(_br.get("n_rbp",         0) or 0)),
-                    "in_circbase":   int(float(_br.get("in_circbase",   0) or 0)),
-                    "circbase_id":   str(_br.get("circbase_id",   "") or ""),
-                    "circbase_gene": str(_br.get("circbase_gene", "") or ""),
-                    "type_edger":    _type_edger,
-                }
-        except Exception:
-            pass
-
-    # Override n_mirna / n_rbp from current interactions.json (may be newer than biomarker_candidates.tsv)
-    # rank_biomarkers.py counts only entries where in_circ=True (or CircInteractome source).
-    # After predict_interactions re-run with --gtf, more ENCORI entries have in_circ=True.
-    def _is_in_circ_entry(e: dict) -> bool:
-        return e.get("source") == "CircInteractome" or bool(e.get("in_circ", False))
-    if interactions:
-        for _oc, _olu in _bm_lookup.items():
-            if _oc in interactions:
-                _ixn = interactions[_oc]
-                _nm = len(set(m.get("miRNAName", "") for m in _ixn.get("mirna", [])
-                              if m.get("miRNAName") and _is_in_circ_entry(m)))
-                _nr = len(set(r.get("RBPName", "") for r in _ixn.get("rbp", [])
-                              if r.get("RBPName") and _is_in_circ_entry(r)))
-                _olu["n_mirna"] = _nm
-                _olu["n_rbp"]   = _nr
-        # Recompute pre-normalized mirna_n / rbp_n in _bm_lookup after override
-        _ixn_mirna_mx = max((_bm_lookup[c].get("n_mirna", 0) for c in _bm_lookup), default=1) or 1
-        _ixn_rbp_mx   = max((_bm_lookup[c].get("n_rbp",   0) for c in _bm_lookup), default=1) or 1
-        for _olu in _bm_lookup.values():
-            _olu["mirna_n"] = _olu.get("n_mirna", 0) / _ixn_mirna_mx
-            _olu["rbp_n"]   = _olu.get("n_rbp",   0) / _ixn_rbp_mx
-
-    # Supplement _bm_lookup from circbase_annotated.tsv + interactions
-    # for circRNAs significant in DESeq2/limma but not in edgeR biomarker_candidates.tsv
-    _mirna_mx_lk = max((_bm_lookup[c].get("n_mirna", 0) for c in _bm_lookup), default=1) or 1
-    _rbp_mx_lk   = max((_bm_lookup[c].get("n_rbp",   0) for c in _bm_lookup), default=1) or 1
-    try:
-        if circbase_file and Path(circbase_file).exists():
-            _cb_df = pd.read_csv(circbase_file, sep="\t")
-            _cb_conf_vals = pd.to_numeric(_cb_df.get("confidence_score", pd.Series()), errors="coerce").fillna(0)
-            _cb_conf_mn = _cb_conf_vals.min(); _cb_conf_mx = _cb_conf_vals.max()
-            for _, _cbr in _cb_df.iterrows():
-                _cid2 = str(_cbr.get("circ_id", "") or "")
-                if not _cid2 or _cid2 in _bm_lookup:
-                    continue
-                _cc = float(pd.to_numeric(_cbr.get("confidence_score", 0), errors="coerce") or 0)
-                _nm = 0; _nr = 0
-                if interactions and _cid2 in interactions:
-                    _nm = len(interactions[_cid2].get("mirna", []))
-                    _nr = len(interactions[_cid2].get("rbp",   []))
-                _bm_lookup[_cid2] = {
-                    "conf_n":  (_cc - _cb_conf_mn) / (_cb_conf_mx - _cb_conf_mn + 1e-10),
-                    "known":   float(int(_cbr.get("in_circbase", 0) or 0)),
-                    "mirna_n": _nm / (_mirna_mx_lk + 1e-10),
-                    "rbp_n":   _nr / (_rbp_mx_lk   + 1e-10),
-                    "n_mirna": _nm, "n_rbp": _nr,
-                    "in_circbase":   int(float(_cbr.get("in_circbase",   0) or 0)),
-                    "circbase_id":   str(_cbr.get("circbase_id",   "") or ""),
-                    "circbase_gene": str(_cbr.get("circbase_gene", "") or ""),
-                }
-    except Exception:
-        pass
-
-    # Backfill gene_name into _bm_lookup from _iso_lookup so circbase_gene column
-    # can fall back to GTF host gene when circBase has no gene annotation (e.g. "None").
-    for _bid in _bm_lookup:
-        if _bid in _iso_lookup:
-            _bm_lookup[_bid].setdefault("gene_name", _iso_lookup[_bid].get("gene_name", ""))
-
-    # Compute per-method bm_table (top-30 biomarker ranking) for dynamic table update
-    # Primary method (de already enriched)
-    if de_method not in all_de_data:
-        all_de_data[de_method] = {}
-    all_de_data[de_method]["bm_table"] = _compute_bm_table_data(
-        de, p_col, sig_thr, lfc, _bm_lookup, sig_sets_venn
-    )
-    # Alternate methods (use de_lookup_venn which stores enriched DFs from the first loop)
-    for _mkey2, _m_enr_de in de_lookup_venn.items():
-        if _mkey2 == de_method or _mkey2 not in all_de_data:
-            continue
-        try:
-            _m_pcol3, _m_thr3, _ = _eff_sig(_m_enr_de, de_sig_by, fdr)
-            all_de_data[_mkey2]["bm_table"] = _compute_bm_table_data(
-                _m_enr_de, _m_pcol3, _m_thr3, lfc, _bm_lookup, sig_sets_venn
-            )
-        except Exception:
-            pass
+    # ── Biomarker tables: read from rank_biomarkers candidate files (single source) ──
+    # Nothing is re-scored here. Each method's table comes from its own
+    # biomarker_candidates_v2_<method>.tsv (+ status JSON).
+    if not biomarker_files:
+        raise SystemExit("[report] ERROR: biomarker_files not supplied (per-method rank_biomarkers outputs)")
+    for _mk, _bpath in biomarker_files.items():
+        if _mk not in all_de_data:
+            all_de_data[_mk] = {}
+        all_de_data[_mk]["bm_table"] = _candidate_bm_table(_bpath)
 
     all_de_methods_js = _json.dumps(all_de_data, ensure_ascii=False)
     venn_html = _venn_3_svg(sig_sets_venn, lfc, de_lookup_venn) if len(sig_sets_venn) >= 2 else ""
@@ -2085,7 +1917,7 @@ def build_report(
         groups_file, tumor_label, normal_label,
         results_dir=results_dir, study_title=study_title)
     type_html      = _type_section(sig)
-    biomarker_html = _biomarker_section(biomarker_file, interactions=interactions, iso_lookup=_iso_lookup)
+    biomarker_html = _biomarker_section(biomarker_files[de_method], interactions=interactions, iso_lookup=_iso_lookup)
     isoform_html   = _isoform_section(switching_file,
                                        isoform_file=isoform_file,
                                        circbase_file=circbase_file,
@@ -3317,29 +3149,26 @@ function _renderDETables(method, md) {{
   _makeSortable('de-dn-table');
 }}
 
+let _bmView = 'pass';
+let _CUR_BM_METHOD = null;
+function setBmView(v) {{
+  _bmView = v;
+  if (_CUR_BM_METHOD) _renderBiomarkerTable(_CUR_BM_METHOD, ALL_DE_METHODS[_CUR_BM_METHOD]);
+}}
 function _renderBiomarkerTable(method, md) {{
+  _CUR_BM_METHOD = method;
   const bt = md && md.bm_table;
   const tbody = document.querySelector('#tbl_biomarker tbody');
-  if (!tbody || !bt || !bt.rows || !bt.rows.length) {{
-    // Fallback: gray out rows not significant under this method
+  if (!tbody || !bt || !bt.cols) {{
     _updateBiomarkerHighlight(md && md.sig_ids || []);
     return;
   }}
-  const cols = bt.cols || [];
-  const mLabels = {{'edgeR_ciriquant':'edgeR (FSJ offset)','deseq2':'DESeq2','limma':'limma-voom'}};
-  // Respect top-N input
+  const cols = bt.cols;
+  const src = _bmView === 'all' ? bt.all_rows : bt.rows;
   const _bmInp = document.getElementById('bm-n-input');
   const _bmN = _bmInp ? Math.max(1, parseInt(_bmInp.value) || 30) : 30;
-  const displayRows = bt.rows.slice(0, _bmN);
-  // Renumber rank column (index 0 = 'rank')
-  const rankIdx = cols.indexOf('rank');
-  const rows = displayRows.map((row, i) => {{
-    const r = [...row];
-    if (rankIdx >= 0) r[rankIdx] = i + 1;
-    return r;
-  }});
-  tbody.innerHTML = rows.map(row => {{
-    const nsigIdx = cols.indexOf('n_sig_methods');
+  const nsigIdx = cols.indexOf('n_sig_methods');
+  tbody.innerHTML = src.slice(0, _bmN).map(row => {{
     const nsig = nsigIdx >= 0 ? (parseInt(row[nsigIdx]) || 1) : 1;
     const fw = nsig >= 3 ? 'font-weight:bold;' : '';
     const cells = row.map((v, i) => {{
@@ -3351,29 +3180,25 @@ function _renderBiomarkerTable(method, md) {{
       }}
       if (col === 'log2FC' && v != null) return `<td>${{(+v).toFixed(2)}}</td>`;
       if (col === 'biomarker_score' && v != null) return `<td>${{(+v).toFixed(3)}}</td>`;
+      if (col === 'min_ratio' && v != null) return `<td>${{(+v).toFixed(3)}}</td>`;
       if (col === 'circbase_id') return `<td>${{_cbLink(v)}}</td>`;
       if (v === '' || v == null) return '<td>—</td>';
       return `<td>${{v}}</td>`;
     }}).join('');
     return `<tr data-nsig="${{nsig}}" style="${{fw}}">${{cells}}</tr>`;
   }}).join('');
-  // Reset filter buttons to 全部 + update counts
-  const allRows = [...tbody.querySelectorAll('tr')];
-  const n_all = allRows.length;
-  const n2 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 2).length;
-  const n3 = allRows.filter(r => (parseInt(r.getAttribute('data-nsig')||'1')) >= 3).length;
-  document.querySelectorAll('.bm-filter-btn').forEach((b, i) => {{
-    b.style.background = 'white'; b.style.color = '#555';
-    if (i === 0) {{ b.textContent = _LS[_LANG||'zh'].bmAll(n_all); b.style.background = '#2c6fad'; b.style.color = 'white'; }}
-    else if (i === 1) b.textContent = _LS[_LANG||'zh'].bm2(n2);
-    else if (i === 2) b.textContent = _LS[_LANG||'zh'].bm3(n3);
-  }});
-  // Update section headings
+  const wrap = document.getElementById('bm-table-wrap');
+  if (wrap) wrap.style.display = (_bmView === 'all' || bt.n_pass > 0) ? 'block' : 'none';
+  const banner = document.getElementById('bm-no-pass');
+  if (banner) banner.style.display = (bt.n_pass === 0 && _bmView === 'pass') ? 'block' : 'none';
+  const bp = document.getElementById('bm-view-pass'), ba = document.getElementById('bm-view-all');
+  if (bp) {{ bp.textContent = `通過者（${{bt.n_pass}}）`; bp.style.background = _bmView === 'pass' ? '#2c6fad' : 'white'; bp.style.color = _bmView === 'pass' ? 'white' : '#555'; }}
+  if (ba) {{ ba.textContent = `全部候選（${{bt.n_total}}）`; ba.style.background = _bmView === 'all' ? '#2c6fad' : 'white'; ba.style.color = _bmView === 'all' ? 'white' : '#555'; }}
+  const mLabels = {{'edgeR_ciriquant':'edgeR (FSJ offset)','deseq2':'DESeq2','limma':'limma-voom'}};
   const bm_h2 = document.getElementById('biomarker-section-title');
-  if (bm_h2) bm_h2.textContent = `Biomarker Candidates (top ${{n_all}} by composite score) [${{mLabels[method]||method}}]`;
+  if (bm_h2) bm_h2.textContent = `Biomarker Candidates [${{mLabels[method] || method}}]`;
   const bmStatus = document.getElementById('bm-n-status');
-  if (bmStatus) {{ const tot=bt.rows.length; bmStatus.textContent=n_all<tot?`${{n_all}} / ${{tot}} shown`:''; }}
-  // Re-attach sort listeners (tbody was rebuilt)
+  if (bmStatus) {{ const tot = src.length; bmStatus.textContent = _bmN < tot ? `${{Math.min(_bmN, tot)}} / ${{tot}} shown` : ''; }}
   _makeSortable('tbl_biomarker');
 }}
 
@@ -4143,7 +3968,7 @@ if "snakemake" in dir():
         fdr            = float(snakemake.params.fdr),           # type: ignore[name-defined]
         lfc            = float(snakemake.params.lfc),           # type: ignore[name-defined]
         de_method      = str(snakemake.params.de_method),       # type: ignore[name-defined]
-        biomarker_file = snakemake.input.biomarkers,            # type: ignore[name-defined]
+        biomarker_files = _resolve_biomarker_files(snakemake.input.biomarkers),  # type: ignore[name-defined]
         switching_file = snakemake.input.switching,             # type: ignore[name-defined]
         groups_file    = getattr(snakemake.input, "groups", None),  # type: ignore[name-defined]
         de_sig_by      = str(getattr(snakemake.params, "de_sig_by", "auto")),   # type: ignore[name-defined]
