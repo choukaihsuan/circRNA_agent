@@ -1,0 +1,177 @@
+kind	name	default	help	defined_in	line
+R	de_method	"deseq2"	snakemake params read in analysis.R	scripts/analysis.R	71
+R	de_sig_by	auto (from config.de.de_sig_by; code fallback in rule)	snakemake params read in analysis.R; passed by workflow/rules/de.smk	scripts/analysis.R	35
+R	deseq2_size_factor_type	"poscounts"	snakemake params read in analysis.R	scripts/analysis.R	58
+R	fdr	0.05 (from config.de.fdr_cutoff; code fallback in rule)	snakemake params read in analysis.R; passed by workflow/rules/de.smk	scripts/analysis.R	31
+R	filter_expr_min_count	5L	snakemake params read in analysis.R	scripts/analysis.R	50
+R	filter_expr_min_total_count	15L	snakemake params read in analysis.R	scripts/analysis.R	53
+R	fsj_concordance_lfc	0.0 (from config.de.fsj_concordance_lfc; code fallback in rule)	snakemake params read in analysis.R; passed by workflow/rules/de.smk	scripts/analysis.R	42
+R	heatmap_top_n	10 (from config.de.heatmap_top_n; code fallback in rule)	snakemake params read in analysis.R; passed by workflow/rules/de.smk	scripts/analysis.R	44
+R	lfc	1.0 (from config.de.log2fc_cutoff; code fallback in rule)	snakemake params read in analysis.R; passed by workflow/rules/de.smk	scripts/analysis.R	32
+R	normal_label	normal (from config.de.normal_label; code fallback in rule)	snakemake params read in analysis.R; passed by workflow/rules/de.smk	scripts/analysis.R	34
+R	paired_design_override	"auto"	snakemake params read in analysis.R	scripts/analysis.R	65
+R	tumor_label	tumor (from config.de.tumor_label; code fallback in rule)	snakemake params read in analysis.R; passed by workflow/rules/de.smk	scripts/analysis.R	33
+argparse	--adaptive	False	Enable adaptive fallback: if one tool detects far fewer circRNAs than another (< --adaptive-ratio), automatically lower min_tools to 1 to avoid near-zero recall	scripts/consensus_filter.py	346
+argparse	--adaptive-ratio	0.1	Threshold for adaptive fallback: if min(tool_counts) / max(tool_counts) < ratio, trigger single-tool mode (default: 0.1)	scripts/consensus_filter.py	350
+argparse	--annot	(required)	circBase-annotated summary TSV	scripts/rank_biomarkers.py	523
+argparse	--case-label	tumor	Label for the case/treatment group (default: tumor)	scripts/prepare_metadata.py	272
+argparse	--circbase	(not given)	circbase_annotated.tsv for circBase ID lookup	scripts/predict_interactions.py	800
+argparse	--circbase-file	(not given)	Local circBase hg19 file (auto-downloaded if absent)	scripts/annotate_circbase.py	208
+argparse	--circexplorer2	(not given)	CIRCexplorer2 back_spliced_junction.bed or known_circ.txt (optional)	scripts/consensus_filter.py	327
+argparse	--ciri2	(not given)	CIRI2 output text file (optional)	scripts/consensus_filter.py	325
+argparse	--cirique	(not given)	CIRIquant GTF output (optional)	scripts/consensus_filter.py	324
+argparse	--clip-exp-num	1	ENCORI: min CLIP experiments (1=all, 2=moderate, 3=high)	scripts/predict_interactions.py	808
+argparse	--cluster	(not given)	Snakemake --cluster submit command	scripts/agent.py	132
+argparse	--components-json	(not given)	JSON dict: {component: {enabled, weight}} for sig/fc/conf/known/mirna/rbp. Default: all enabled, weight 1.0 (equal, this paper's setting).	scripts/rank_biomarkers.py	549
+argparse	--control-label	normal	Label for the control group (default: normal)	scripts/prepare_metadata.py	274
+argparse	--cores	8	CPU cores (default: 8)	scripts/agent.py	129
+argparse	--count-matrix	(required)	BSJ count matrix TSV (row names: chrom:start|end)	scripts/assign_isoforms.py	283
+argparse	--cross-method-min	3	Minimum number of DE methods (of those supplied) in which a candidate must be significant to count as cross-method (default 3 = all supplied).	scripts/rank_biomarkers.py	560
+argparse	--datasets	[]	Dataset names to combine with --results-root	scripts/cross_dataset_biomarkers.py	199
+argparse	--dcc	(not given)	DCC CircCoordinates file (optional)	scripts/consensus_filter.py	326
+argparse	--de	(required)		scripts/predict_interactions.py	797
+argparse	--de	(required)	DE results TSV (from analysis.R)	scripts/rank_biomarkers.py	522
+argparse	--de-deseq2	(not given)	DESeq2 DE results TSV	scripts/predict_interactions.py	805
+argparse	--de-deseq2		DESeq2 DE results TSV (optional; for n_sig_methods)	scripts/rank_biomarkers.py	527
+argparse	--de-edger	(not given)	edgeR DE results TSV	scripts/predict_interactions.py	804
+argparse	--de-edger		edgeR DE table (required unless edgeR is the primary, in which case --de is used)	scripts/rank_biomarkers.py	566
+argparse	--de-limma	(not given)	limma DE results TSV	scripts/predict_interactions.py	806
+argparse	--de-limma		limma DE results TSV (optional; for n_sig_methods)	scripts/rank_biomarkers.py	528
+argparse	--de-sig-by	auto	Significance column: auto=cascade (q<0.2→p<0.05), pvalue/padj/qvalue=fixed	scripts/rank_biomarkers.py	531
+argparse	--dry-run	(not given)	Show Snakemake plan without executing	scripts/agent.py	131
+argparse	--event	(required)	通知類型	scripts/notify.py	219
+argparse	--exclude	GSE192410	Dataset to drop for the sensitivity analysis	scripts/run_permutation.py	253
+argparse	--fc-cap	5.0	Cap for |log2FC| in fc_norm component (default: 5)	scripts/rank_biomarkers.py	539
+argparse	--fdr	0.05		scripts/rank_biomarkers.py	529
+argparse	--filter-bed	(not given)	High-confidence BED files for filtering (optional)	scripts/merge_counts.py	104
+argparse	--find-circ	(not given)	find_circ splice_sites.bed output (optional)	scripts/consensus_filter.py	329
+argparse	--fully-evaluated-only	(not given)	Also write <output>_fully_evaluated.tsv (or --fully-evaluated-output path) containing only candidates with interaction_queried=True, re-ranked within that evidence-consistent subset. Does not replace the main --output file.	scripts/rank_biomarkers.py	541
+argparse	--fully-evaluated-output	(not given)	Output path for the fully-evaluated-only TSV (default: <output> with _fully_evaluated inserted before the extension)	scripts/rank_biomarkers.py	546
+argparse	--groups	metadata/sample_groups.csv		scripts/prepare_metadata.py	269
+argparse	--gse	(not given)	GEO or SRA accession: GSE113230 / PRJNA808398 / SRP156355	scripts/agent.py	126
+argparse	--gse	(not given)	GEO accession (e.g. GSE113230)	scripts/download_geo.py	238
+argparse	--gtf	(required)	Genome annotation GTF	scripts/assign_isoforms.py	287
+argparse	--gtf	(not given)	Reference GTF for exon boundary lengths (optional)	scripts/predict_interactions.py	802
+argparse	--gtfs	(required)	CIRIquant GTF files	scripts/merge_counts.py	100
+argparse	--host	0.0.0.0		scripts/web_ui.py	2050
+argparse	--inputs	[]	biomarker_candidates.tsv paths (name inferred from *_results/ path); or NAME=path pairs to set the name explicitly	scripts/cross_dataset_biomarkers.py	194
+argparse	--interactions		interactions.json from predict_interactions (optional; adds miRNA/RBP dimensions)	scripts/rank_biomarkers.py	525
+argparse	--interactive	(not given)	Manually assign tumor/normal labels	scripts/agent.py	130
+argparse	--interactive	(not given)	Prompt user for each sample's condition	scripts/prepare_metadata.py	270
+argparse	--iso	(required)		scripts/predict_interactions.py	798
+argparse	--isoforms		isoform_groups.tsv (assign_isoforms.py): adds gene_name and region to the candidate file	scripts/rank_biomarkers.py	568
+argparse	--jobs	50	Max concurrent cluster jobs	scripts/agent.py	133
+argparse	--lfc	1.0		scripts/rank_biomarkers.py	530
+argparse	--log		Pipeline log 檔路徑（failure 用）	scripts/notify.py	228
+argparse	--loo-dir		Directory from scripts/loo_stability.R (NONE/ + one dir per dropped sample). If given, effect-size stability is tested for three-method candidates; otherwise effect_stable is NA.	scripts/rank_biomarkers.py	553
+argparse	--max-junction-ratio	1.0	Max BSJ/FSJ ratio for CIRIquant pseudo-circ QC (default: 1.0)	scripts/consensus_filter.py	339
+argparse	--metadata	metadata/library_info.csv		scripts/prepare_metadata.py	268
+argparse	--metadata-root	metadata	Root dir holding per-dataset subdirs (default: metadata)	scripts/validate_condition_labels.py	144
+argparse	--min-bsj	2	Minimum BSJ reads per tool before voting (default: 2)	scripts/consensus_filter.py	337
+argparse	--min-confidence	0.0	Minimum confidence score threshold after voting (default: 0.0). Removes low-evidence circRNAs to improve precision.	scripts/consensus_filter.py	354
+argparse	--min-datasets	2	Recurrence threshold to flag/report (default 2)	scripts/cross_dataset_biomarkers.py	205
+argparse	--min-tools	2	Minimum tools that must agree (default: 2)	scripts/consensus_filter.py	333
+argparse	--n-perm	10000		scripts/run_permutation.py	255
+argparse	--no-run-params	(not given)	Do not write interaction coverage into <results>/run_params.yaml. Required for v2 runs so published results directories are not modified.	scripts/rank_biomarkers.py	570
+argparse	--out	(required)	Output isoform groups TSV	scripts/assign_isoforms.py	288
+argparse	--out	(not given)	Output recurrence TSV	scripts/cross_dataset_biomarkers.py	207
+argparse	--out	metadata/library_info.csv	Output CSV path	scripts/download_geo.py	240
+argparse	--out	(required)		scripts/predict_interactions.py	799
+argparse	--out	(not given)	Optional TSV of every sample's verdict	scripts/validate_condition_labels.py	146
+argparse	--out-dir	(not static)		scripts/run_permutation.py	252
+argparse	--output	(required)	Output annotated TSV	scripts/annotate_circbase.py	206
+argparse	--output	(required)	Output BED file	scripts/consensus_filter.py	331
+argparse	--output	(required)	Output BSJ count matrix TSV	scripts/merge_counts.py	101
+argparse	--output	(required)	Output ranked TSV	scripts/rank_biomarkers.py	524
+argparse	--output-fsj	(not given)	Output FSJ count matrix TSV (optional)	scripts/merge_counts.py	102
+argparse	--port	5000		scripts/web_ui.py	2051
+argparse	--primary-method	edgeR	Which method's table is --de (the scored table). The cross-method flag and LOO gate are the same whichever method is primary.	scripts/rank_biomarkers.py	563
+argparse	--profile	(not given)	Snakemake profile directory	scripts/agent.py	134
+argparse	--program-num	2	ENCORI: min prediction programs agreeing	scripts/predict_interactions.py	810
+argparse	--project	circRNA	專案 ID（如 GSE113230）	scripts/notify.py	222
+argparse	--qc-bsj-threshold	5	BSJ count threshold: only apply ratio QC when BSJ < this value (default: 5). High-BSJ circRNAs are exempt from ratio filtering.	scripts/consensus_filter.py	342
+argparse	--report		report.html 路徑（success 用）	scripts/notify.py	224
+argparse	--reset	(not given)	Remove existing groups file first	scripts/agent.py	143
+argparse	--results-root	(not given)	Root holding {DATASET}_results/de/biomarker_candidates.tsv	scripts/cross_dataset_biomarkers.py	197
+argparse	--rule	unknown	失敗的 rule 名稱（failure 用）	scripts/notify.py	226
+argparse	--runinfo	(not given)	Path to NCBI SRA RunInfo.csv	scripts/agent.py	128
+argparse	--runinfo	(not given)	Path to NCBI SRA RunInfo.csv	scripts/download_geo.py	239
+argparse	--seed	20260930		scripts/run_permutation.py	256
+argparse	--sig-cap	10.0	Cap for -log10(p) in sig_norm component (default: 10)	scripts/rank_biomarkers.py	537
+argparse	--slop	10	Coordinate tolerance in bp (default: 10)	scripts/annotate_circbase.py	207
+argparse	--slop	10	Coordinate tolerance in bp (default: 10)	scripts/consensus_filter.py	335
+argparse	--slop	10	bp tolerance when matching novel circRNAs across datasets (default 10)	scripts/cross_dataset_biomarkers.py	201
+argparse	--stability-min-ratio	0.5	A dropped-sample run fails if |log2FC_run| < ratio*|log2FC_full| (default 0.5, i.e. a drop of more than 50%%). Sign flips always fail.	scripts/rank_biomarkers.py	557
+argparse	--stats	{}	統計 JSON，如 '{"n_sig":10,"n_up":6,"n_down":4}'	scripts/notify.py	230
+argparse	--status-json	(not given)	Write an explicit run status JSON (status, counts, parameters) here.	scripts/rank_biomarkers.py	573
+argparse	--summary	(required)	One or more consensus_summary.tsv files from consensus_filter.py	scripts/annotate_circbase.py	204
+argparse	--summary	(required)	Output summary TSV file	scripts/consensus_filter.py	332
+argparse	--top-n	0	Only consider each dataset's top-N ranked candidates (0 = all, default)	scripts/cross_dataset_biomarkers.py	203
+argparse	--top-n	50		scripts/predict_interactions.py	807
+argparse	--use-pvalue	(not given)	(not static)	scripts/rank_biomarkers.py	536
+audit-note	config.de.de_sig_by (published projects)	pvalue (20 of 20 files)	observed 2026-10-04 on server: grep de_sig_by ~/circRNA_agent/config/projects/*.yaml; config.yaml default is auto -- the two disagree	config/projects/ (server)	0
+config	config.circbase_file		leave empty for auto-download; or set local path	config.yaml	85
+config	config.ciriquant_config	config/ciriquant.yaml		config.yaml	1
+config	config.consensus.adaptive	true	default True matches what every published dataset actually ran with	config.yaml	31
+config	config.consensus.adaptive_ratio	0.1		config.yaml	34
+config	config.consensus.max_junction_ratio	1.0		config.yaml	29
+config	config.consensus.min_bsj_reads	2		config.yaml	26
+config	config.consensus.min_confidence	0.0	consensus_filter.py --min-confidence; previously never wired into circrna.smk	config.yaml	35
+config	config.consensus.min_tools	2		config.yaml	27
+config	config.consensus.qc_bsj_threshold	5	only apply ratio QC when BSJ < this; high-BSJ circRNAs exempt	config.yaml	30
+config	config.consensus.slop	10		config.yaml	28
+config	config.de.biomarker.components.conf	{ enabled: true, weight: 1.0 }		config.yaml	68
+config	config.de.biomarker.components.fc	{ enabled: true, weight: 1.0 }		config.yaml	67
+config	config.de.biomarker.components.known	{ enabled: true, weight: 1.0 }		config.yaml	69
+config	config.de.biomarker.components.mirna	{ enabled: true, weight: 1.0 }		config.yaml	70
+config	config.de.biomarker.components.rbp	{ enabled: true, weight: 1.0 }		config.yaml	71
+config	config.de.biomarker.components.sig	{ enabled: true, weight: 1.0 }		config.yaml	66
+config	config.de.biomarker.fc_cap	5	|log2FC| cap in rank_biomarkers.py fc_norm; was hardcoded	config.yaml	59
+config	config.de.biomarker.sig_cap	10	-log10(p) cap in rank_biomarkers.py sig_norm; was hardcoded	config.yaml	58
+config	config.de.de_sig_by	auto	auto = q<0.2 (Storey) then p<0.05; pvalue/padj = fixed	config.yaml	43
+config	config.de.delta_iui_cutoff	0.1	minimum |ΔIUI| to call switching	config.yaml	46
+config	config.de.deseq2_size_factor_type	poscounts	estimateSizeFactors(type=); was unconditionally hardcoded in analysis.R	config.yaml	55
+config	config.de.encori_clip_exp_num	1	min CLIP experiments (1=all, 2=moderate, 3=high confidence)	config.yaml	49
+config	config.de.encori_program_num	2	min prediction programs agreeing	config.yaml	50
+config	config.de.fdr_cutoff	0.05		config.yaml	41
+config	config.de.filter_expr_min_count	5	edgeR filterByExpr min.count; was hardcoded in analysis.R	config.yaml	53
+config	config.de.filter_expr_min_total_count	15	edgeR filterByExpr min.total.count (edgeR's own implicit default, now explicit)	config.yaml	54
+config	config.de.fsj_concordance_lfc	0.0	min |logFC_fsj| for Type II concordance; 0=direction-only (recommended)	config.yaml	44
+config	config.de.heatmap_top_n	10	top N up + N down circRNAs shown in heatmap	config.yaml	47
+config	config.de.interaction_top_n	50	top N circRNAs to query ENCORI for interactions	config.yaml	48
+config	config.de.isoform_fdr_cutoff	0.1	within-gene FDR for isoform switching (less strict than global)	config.yaml	45
+config	config.de.log2fc_cutoff	1.0		config.yaml	42
+config	config.de.method	edgeR_ciriquant		config.yaml	40
+config	config.de.normal_label	normal		config.yaml	51
+config	config.de.paired_design_override	auto	auto = detect patient_id column; force_paired/force_unpaired to override	config.yaml	56
+config	config.de.tumor_label	tumor		config.yaml	52
+config	config.download.ascp_speed	500m		config.yaml	77
+config	config.download.max_concurrent	2		config.yaml	73
+config	config.download.retry	3		config.yaml	74
+config	config.download.sra_cache_dir	/home/choukaihsuan/sra_cache		config.yaml	75
+config	config.download.tmp_dir	/home/choukaihsuan/sra_tmp		config.yaml	76
+config	config.genome.bwa_index	/mnt/d/ref/hg19/bwa_index/hg19		config.yaml	79
+config	config.genome.fasta	/mnt/d/ref/hg19/hg19.fa		config.yaml	80
+config	config.genome.gtf	/mnt/d/ref/hg19/hg19.gtf		config.yaml	81
+config	config.genome.hisat2_index	/mnt/d/ref/hg19/hisat2_index/hg19		config.yaml	82
+config	config.genome.species	hg19		config.yaml	83
+config	config.genome.star_index	/mnt/d/ref/hg19/star_index		config.yaml	84
+config	config.groups	metadata/sample_groups.csv		config.yaml	86
+config	config.log_dir	logs		config.yaml	87
+config	config.metadata	metadata/library_info.csv		config.yaml	88
+config	config.project_id	GSE113230		config.yaml	89
+config	config.raw_dir	/mnt/d/circRNA_data/raw_fastq		config.yaml	90
+config	config.results_dir	/mnt/d/circRNA_results/GSE113230		config.yaml	91
+config	config.threads	8		config.yaml	92
+config	config.tools.ciriquant.anchor	5	-a/--anchor: min anchor length for junction alignment	config.yaml	14
+config	config.tools.ciriquant.no_gene	false	--no-gene: skip stringtie gene abundance (speed only; no effect on circRNA calls)	config.yaml	13
+config	config.tools.dcc.count_threshold	2	-Nr arg 1	config.yaml	18
+config	config.tools.dcc.end_tol	5	-E	config.yaml	22
+config	config.tools.dcc.filter_mito	true	-M	config.yaml	20
+config	config.tools.dcc.filter_recommended	true	-F	config.yaml	21
+config	config.tools.dcc.max_length	1000000	-m	config.yaml	23
+config	config.tools.dcc.min_length	30	-n	config.yaml	24
+config	config.tools.dcc.replicate_threshold	1	-Nr arg 2	config.yaml	19
+config	config.tools.dcc.threads	4	-T; was hardcoded in circrna.smk. benchmark/config_benchmark.yaml pins this	config.yaml	16
+config	config.trimmed_dir	/mnt/d/circRNA_data/trimmed		config.yaml	93
+config	config.use_container	false	set true when running with --use-singularity	config.yaml	2
