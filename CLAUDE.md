@@ -2097,7 +2097,7 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 | DCC | ✅ 10/10 完成（SRR10030983 DCC 於 2026-07-21 23:53 完成）|
 | consensus_filter / merge_counts | ✅ 完成（count_matrix.tsv 3.1MB，Jul 21 23:57）|
 | assign_isoforms / annotate_circbase | ✅ 完成（isoform_groups.tsv 9.1MB；circbase_annotated.tsv 5.6MB，耗時 ~75 min）|
-| DE analysis | ✅ 完成（三方法全跑：edgeR **199** / DESeq2 **14,163** / limma **2,340** significant）|
+| DE analysis | ✅ 完成（三方法全跑：edgeR **199** / DESeq2 **472** / limma **2,340** significant，依 p<0.05 且 \|log2FC\|≥1；DESeq2 數字依現行 de_results_deseq2.tsv 核對，舊版 14,163 無法重現）|
 | predict_interactions（union mode）| ✅ 完成（interactions.json 12MB，244 circRNAs）|
 | isoform_switching | ✅ 完成（**76 events**，within-gene FDR < 0.1，共 67,811 rows）|
 | rank_biomarkers | ✅ 完成（199 candidates，biomarker_candidates.tsv 47KB）|
@@ -2106,7 +2106,7 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 **主要數值結果**：
 - 偵測：consensus circRNAs 共 **173,037**（10 樣本總計）；filterByExpr 後 **7,334 tested**
 - DE（edgeR_ciriquant）：**199 significant**（nominal p < 0.05，|log2FC| > 1）；上調 110 / 下調 89；**138 Type_I (69.3%) / 61 Type_II (30.7%)**
-- DE（DESeq2）：14,163 significant；DE（limma-voom）：2,340 significant
+- DE（DESeq2）：472 significant（依現行 de_results_deseq2.tsv，p<0.05 且 |log2FC|≥1；原記 14,163 無法重現）；DE（limma-voom）：2,340 significant
 - Isoform switching：76 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
 - Biomarker candidates：199 個；Top circRNAs：chr7:155465561|155473602（log2FC=4.93，p=0.025）、chr2:240929491|240946787（log2FC=5.46，p=0.0012）
 
