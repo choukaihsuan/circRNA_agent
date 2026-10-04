@@ -256,6 +256,18 @@ rule rank_biomarkers_v2:
         cross_method_min    = config["de"].get("biomarker", {}).get("cross_method_min", 3),
         stability_min_ratio = config["de"].get("biomarker", {}).get("stability_min_ratio", 0.5),
         loo_dir             = RESULTS_DIR + "/de/loo",
+        # Same wiring as the rank_biomarkers rule: emit --components-json only when the
+        # weights differ from the equal-weight default (default output is unchanged).
+        components_arg = (
+            lambda w: (
+                "--components-json " + __import__("shlex").quote(__import__("json").dumps(
+                    config["de"]["biomarker"]["components"]))
+                if config["de"].get("biomarker", {}).get("components")
+                   != {k: {"enabled": True, "weight": 1.0} for k in
+                       ("sig", "fc", "conf", "known", "mirna", "rbp")}
+                else ""
+            )
+        ),
     log: "logs/rank_biomarkers_v2_{method}.log"
     shell:
         "python scripts/rank_biomarkers.py --de {params.results_dir}/de/{params.primary} "
@@ -265,7 +277,7 @@ rule rank_biomarkers_v2:
         "--output {output.candidates} --status-json {output.status} "
         "--fdr {params.fdr} --lfc {params.lfc} --de-sig-by {params.de_sig_by} "
         "--loo-dir {params.loo_dir} --cross-method-min {params.cross_method_min} "
-        "--stability-min-ratio {params.stability_min_ratio} > {log} 2>&1"
+        "--stability-min-ratio {params.stability_min_ratio} {params.components_arg} > {log} 2>&1"
 
 
 rule generate_report:
