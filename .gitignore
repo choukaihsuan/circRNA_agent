@@ -66,3 +66,4 @@ benchmark/er_sensitivity.tsv
 benchmark/weight_sensitivity.tsv
 benchmark/weight_sensitivity_summary.tsv
 audit/table2_components_GSE133998.tsv
+benchmark/component_stage1.tsv
