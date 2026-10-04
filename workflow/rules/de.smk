@@ -200,6 +200,74 @@ rule predict_interactions:
         """
 
 
+# ─── Effect-size stability (leave-one-sample-out) and per-method candidate tables ───
+# Added 2026-10: the LOO fits are dataset-wide and shared by all three primary methods.
+# New outputs only (no change to the rank_biomarkers rule above), so published datasets
+# are not scheduled for upstream reruns; see the dry-run record in audit/.
+import csv as _csv
+_LOO_SAMPLES = [r["srr_id"] for r in _csv.DictReader(open(config["groups"], encoding="utf-8"))]
+_LOO_OUT = ([f"{RESULTS_DIR}/de/loo/{d}/{m}.tsv" for d in ["NONE"] + _LOO_SAMPLES
+             for m in ("edger", "deseq2", "limma")]
+            + [f"{RESULTS_DIR}/de/loo/run_info.tsv"])
+_BM_V2_PRIMARY = {"edgeR": "de_results.tsv", "DESeq2": "de_results_deseq2.tsv",
+                  "limma": "de_results_limma.tsv"}
+
+
+rule loo_stability:
+    """Leave-one-sample-out runs of the three DE chains (mirrors analysis.R; paired if patient_id)."""
+    input:
+        matrix = RESULTS_DIR + "/circRNA/count_matrix.tsv",
+        fsj    = RESULTS_DIR + "/circRNA/fsj_count_matrix.tsv",
+        groups = config["groups"],
+    output:
+        _LOO_OUT
+    params:
+        results_dir  = RESULTS_DIR,
+        out_dir      = RESULTS_DIR + "/de/loo",
+        tumor        = config["de"]["tumor_label"],
+        normal       = config["de"]["normal_label"],
+    log: "logs/loo_stability.log"
+    shell:
+        "Rscript scripts/loo_stability.R {params.results_dir} {input.groups} {params.out_dir} "
+        "{params.tumor} {params.normal} > {log} 2>&1"
+
+
+rule rank_biomarkers_v2:
+    """Candidate table for one primary method: cross-method flag + LOO stability; default view = passing."""
+    input:
+        de_edger     = RESULTS_DIR + "/de/de_results.tsv",
+        de_deseq2    = RESULTS_DIR + "/de/de_results_deseq2.tsv",
+        de_limma     = RESULTS_DIR + "/de/de_results_limma.tsv",
+        annot        = RESULTS_DIR + "/circRNA/circbase_annotated.tsv",
+        isoforms     = RESULTS_DIR + "/circRNA/isoform_groups.tsv",
+        interactions = RESULTS_DIR + "/de/interactions.json",
+        loo          = _LOO_OUT,
+    output:
+        candidates = RESULTS_DIR + "/de/biomarker_candidates_v2_{method}.tsv",
+        status     = RESULTS_DIR + "/de/biomarker_candidates_v2_{method}.status.json",
+    wildcard_constraints:
+        method = "edgeR|DESeq2|limma"
+    params:
+        results_dir         = RESULTS_DIR,
+        primary             = lambda w: _BM_V2_PRIMARY[w.method],
+        fdr                 = config["de"]["fdr_cutoff"],
+        lfc                 = config["de"]["log2fc_cutoff"],
+        de_sig_by           = config["de"].get("de_sig_by", "pvalue"),
+        cross_method_min    = config["de"].get("biomarker", {}).get("cross_method_min", 3),
+        stability_min_ratio = config["de"].get("biomarker", {}).get("stability_min_ratio", 0.5),
+        loo_dir             = RESULTS_DIR + "/de/loo",
+    log: "logs/rank_biomarkers_v2_{method}.log"
+    shell:
+        "python scripts/rank_biomarkers.py --de {params.results_dir}/de/{params.primary} "
+        "--primary-method {wildcards.method} --de-edger {input.de_edger} "
+        "--de-deseq2 {input.de_deseq2} --de-limma {input.de_limma} "
+        "--annot {input.annot} --isoforms {input.isoforms} --interactions {input.interactions} "
+        "--output {output.candidates} --status-json {output.status} "
+        "--fdr {params.fdr} --lfc {params.lfc} --de-sig-by {params.de_sig_by} "
+        "--loo-dir {params.loo_dir} --cross-method-min {params.cross_method_min} "
+        "--stability-min-ratio {params.stability_min_ratio} > {log} 2>&1"
+
+
 rule generate_report:
     """Build a self-contained HTML summary report."""
     input:
@@ -207,7 +275,11 @@ rule generate_report:
         de_edger = RESULTS_DIR + "/de/de_results_edgeR_ciriquant.tsv",
         de_deseq = RESULTS_DIR + "/de/de_results_deseq2.tsv",
         de_limma = RESULTS_DIR + "/de/de_results_limma.tsv",
-        biomarkers     = RESULTS_DIR + "/de/biomarker_candidates.tsv",
+        biomarkers_edger  = RESULTS_DIR + "/de/biomarker_candidates_v2_edgeR.tsv",
+        biomarkers_deseq2 = RESULTS_DIR + "/de/biomarker_candidates_v2_DESeq2.tsv",
+        biomarkers_limma  = RESULTS_DIR + "/de/biomarker_candidates_v2_limma.tsv",
+        biomarker_status  = expand(RESULTS_DIR + "/de/biomarker_candidates_v2_{m}.status.json",
+                                   m=["edgeR", "DESeq2", "limma"]),
         matrix         = RESULTS_DIR + "/circRNA/count_matrix.tsv",
         volcano        = RESULTS_DIR + "/plots/volcano.pdf",
         heatmap        = RESULTS_DIR + "/plots/heatmap.pdf",

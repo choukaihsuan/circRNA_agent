@@ -1592,21 +1592,6 @@ def _enrich_de(de: pd.DataFrame,
     return de
 
 
-_BM_METHOD_SUFFIX = {"edgeR_ciriquant": "edgeR", "deseq2": "DESeq2", "limma": "limma"}
-
-
-def _resolve_biomarker_files(anchor: str) -> dict:
-    """Per-method candidate files next to the anchor file. Missing file is an error."""
-    d = Path(anchor).parent
-    out = {}
-    for key, suffix in _BM_METHOD_SUFFIX.items():
-        p = d / f"biomarker_candidates_v2_{suffix}.tsv"
-        if not p.exists():
-            raise SystemExit(f"[report] ERROR: {p} missing; run rank_biomarkers.py --primary-method {suffix}")
-        out[key] = str(p)
-    return out
-
-
 def build_report(
     de_file:        str,
     matrix_file:    str,
@@ -3968,7 +3953,9 @@ if "snakemake" in dir():
         fdr            = float(snakemake.params.fdr),           # type: ignore[name-defined]
         lfc            = float(snakemake.params.lfc),           # type: ignore[name-defined]
         de_method      = str(snakemake.params.de_method),       # type: ignore[name-defined]
-        biomarker_files = _resolve_biomarker_files(snakemake.input.biomarkers),  # type: ignore[name-defined]
+        biomarker_files = {"edgeR_ciriquant": snakemake.input.biomarkers_edger,   # type: ignore[name-defined]
+                           "deseq2": snakemake.input.biomarkers_deseq2,           # type: ignore[name-defined]
+                           "limma": snakemake.input.biomarkers_limma},            # type: ignore[name-defined]
         switching_file = snakemake.input.switching,             # type: ignore[name-defined]
         groups_file    = getattr(snakemake.input, "groups", None),  # type: ignore[name-defined]
         de_sig_by      = str(getattr(snakemake.params, "de_sig_by", "auto")),   # type: ignore[name-defined]
