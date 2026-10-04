@@ -288,6 +288,24 @@ def _effect_stability(cands_ids: list, loo_dir: str, published: dict, min_ratio:
     return out.reset_index()
 
 
+def _write_run_params_filter(output: str, primary_method: str, cross_method_min: int, loo_dir: str,
+                             stability_min_ratio: float, stability_max_candidates: int) -> None:
+    """Record the biomarker filter settings in <results>/run_params.yaml (under biomarker_filter)."""
+    run_params_path = Path(output).parent.parent / "run_params.yaml"
+    existing = {}
+    if run_params_path.exists():
+        existing = yaml.safe_load(run_params_path.read_text(encoding="utf-8")) or {}
+    existing["biomarker_filter"] = {
+        "primary_method": primary_method,
+        "cross_method_min": int(cross_method_min),
+        "stability_min_ratio": float(stability_min_ratio),
+        "stability_max_candidates": int(stability_max_candidates),
+        "loo_dir": loo_dir or None,
+        "output": Path(output).name,
+    }
+    run_params_path.write_text(yaml.safe_dump(existing, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
 def _write_status(path, status, n_candidates, n_three, n_pass, stability_run, loo_dir,
                   cross_method_min, stability_min_ratio) -> None:
     """Explicit run status (JSON). Written whenever --status-json is given, including the
@@ -332,6 +350,7 @@ def rank_biomarkers(
     cross_method_min:  int   = 3,
     write_run_params:  bool  = True,
     status_json:       str   = None,
+    stability_max_candidates: int = 500,
 ) -> None:
     de    = pd.read_csv(de_file,    sep="\t")
     annot = pd.read_csv(annot_file, sep="\t")
@@ -454,6 +473,10 @@ def rank_biomarkers(
     if stability_run:
         pub_tables = {k: v.assign(circ_id=v["circ_id"].astype(str)) for k, v in published.items()}
         survivors = sig.loc[sig["three_method_sig"], "circ_id"].astype(str).tolist()
+        if len(survivors) > stability_max_candidates:
+            sys.exit(f"[rank] ERROR: {len(survivors)} three-method candidates exceed "
+                     f"--stability-max-candidates {stability_max_candidates}; raise the cap deliberately "
+                     f"(stability is evaluated per candidate; the LOO fits themselves are per dataset)")
         if survivors:
             stab = _effect_stability(survivors, loo_dir, pub_tables, stability_min_ratio)
             sig["circ_id"] = sig["circ_id"].astype(str)
@@ -495,6 +518,8 @@ def rank_biomarkers(
 
     if write_run_params:
         _write_interaction_coverage(output, sig)
+        _write_run_params_filter(output, primary_method, cross_method_min, loo_dir,
+                                 stability_min_ratio, stability_max_candidates)
 
     if fully_evaluated_output:
         # Evidence-level-consistent ranking: only candidates where every
@@ -570,6 +595,9 @@ def main() -> None:
     parser.add_argument("--no-run-params", action="store_true",
                         help="Do not write interaction coverage into <results>/run_params.yaml. "
                              "Required for v2 runs so published results directories are not modified.")
+    parser.add_argument("--stability-max-candidates", type=int, default=500,
+                        help="Upper bound on three-method candidates tested for stability (default 500); "
+                             "exceeding it is an error, not a silent truncation.")
     parser.add_argument("--status-json", default=None,
                         help="Write an explicit run status JSON (status, counts, parameters) here.")
     args = parser.parse_args()
@@ -606,6 +634,7 @@ def main() -> None:
         cross_method_min   = args.cross_method_min,
         write_run_params   = not args.no_run_params,
         status_json        = args.status_json,
+        stability_max_candidates = args.stability_max_candidates,
         fully_evaluated_output = (
             args.fully_evaluated_output
             or (str(Path(args.output).with_name(
