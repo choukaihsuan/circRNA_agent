@@ -735,7 +735,9 @@ snakemake --snakefile benchmark/Snakefile \
 
 ### Ground Truth 建立（`rnaser_ground_truth.py`）
 
-使用 **GSE55872**（Hs68 cell line, hg19）的 RNase R enrichment 實驗作為 ground truth：
+使用 **SRP011042**（"CircleSeq in Human Fibroblasts"；Jeck et al. 2013，*RNA* 19(2):141–157；人類纖維母細胞 Hs68，hg19）的 RNase R enrichment 實驗作為 ground truth。
+
+> **編號更正（2026-10-04）**：本專案先前記為 GSE55872，該編號在 GEO 是**果蠅**（*Drosophila melanogaster*，fly heads + S2 cells）資料集，屬誤填。三條獨立證據確認實際使用的是 SRP011042：(1) 使用的 CIRIquant GTF 為人類染色體名（chr1–chrY、chrUn_gl000220），STAR 索引為 hg19；(2) 三個 run 的 fastp 讀序數與 SRA `total_spots` 精確相等（157,053,158 / 158,305,855 / 199,922,486）；(3) SRA metadata 標明 *Homo sapiens*、taxid 9606。`GSE55872_results/`、`GSE55872/raw` 等目錄名為歷史遺留，保留不改（既有輸出位於其中）。
 
 | SRR ID | 角色 |
 |--------|------|
@@ -755,7 +757,7 @@ RNase R 消化線性 RNA 並富集環狀 RNA，是目前 circRNA 偵測 benchmar
 - ER ≤ 0.5 → **True Negative**（假陽性候選）
 - 中間值（0.5 < ER < 1.5）排除於評估之外
 
-GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無需手動準備。
+SRP011042 的 FASTQs 由 `bench_download` rule 從 **EBI FTP**（`ftp.sra.ebi.ac.uk/vol1/fastq/{SRR[:6]}/{SRR}`）自動下載，無需手動準備。config 中的 key 為 `srp011042`（2026-10-04 由 `gse55872` 改名，僅為標籤）。
 
 ### Task 1 – 偵測準確率比較（`accuracy_benchmark.py`）
 
@@ -1064,6 +1066,8 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | benchmark 重跑 SRR444655 時 Snakemake 主行程與 CIRIquant 無聲消失（無錯誤訊息、`dmesg` 查無 OOM）| 一開始誤判為 systemd session 結束時的 `KillUserProcesses` 把整組行程清掉（`nohup` 防得住 SIGHUP，防不住 session 被清）；改用 `setsid` 重啟後又在 8 小時後死掉一次，這次才在 log 裡翻到清楚的 `OSError: [Errno 28] No space left on device`——**真正原因是磁碟被灌到 100% 滿**，CIRIquant 自己的中間檔案（BWA-mem 輸出的 `circ/*.sam` 分片檔）在單一樣本就能吃到 ~220GB，連 Snakemake 想記錄 job 失敗的 log 都寫不進去，因此看起來像「行程被外力砍掉、無錯誤訊息」 | 診斷時除了查行程是否存活，**務必同時查 `df -h`**；清理已完成資料集的 raw/trimmed/BAM/mate1/mate2（GSE113230、GSE121842 均已完成報告，可安全清除）騰出約 600GB 後用 `setsid nohup` 重啟即可正常跑完；教訓：CIRIquant 對單一 total-RNA 樣本的峰值磁碟用量（circ/+align/+find_circ 暫存）可達 200GB+，排程長 job 前應預留至少 300GB 空間 |
 | Snakemake 目標檔案路徑格式不完全匹配時，靜默 fallback 到預設 `all` target，DAG 範圍比預期大很多 | `snakemake ... {某個 rule 的 output 絕對路徑}` 有時仍會把 `Job stats` 表列出全部 18 個 job（含 ground_truth、accuracy_benchmark 等不相關項目），而非只跑目標檔案所需的最小子集；重跑 SRR444655 CIRIquant 時發生過一次，後來改成直接指定 `comparison_report.html`（`rule all` 的 output）反而正確辨識出只需 6 個 job（已完成的 8 個被跳過）| 若懷疑 DAG 範圍不對，直接比對 `Job stats` 表的 job 數與預期；本專案這次的教訓是：與其猜測目標檔案路徑的匹配規則，不如直接指定 `rule all` 的最終 output（`comparison_report.html`），讓 Snakemake 自行決定最小需要重跑的子集，比手動指定中間 rule 的 output 更可靠 |
 | Monitor 輪詢腳本誤判「檔案存在」＝「這次執行剛產生的新檔案」| 用 `[ -f "$REPORT" ]` 判斷 benchmark 是否跑完，但 `comparison_report.html` 是舊有輸出（上次成功執行留下的），只要檔案存在就會誤觸發「完成」警報，即使這次執行才剛啟動 1 分鐘 | 改用 `stat -c %Y "$REPORT"` 取得檔案 mtime，與本次啟動時間（epoch）比較，只有 mtime 晚於啟動時間才算「這次執行產生的新檔案」；任何長跑背景監控只要目標是「某個可能已存在的輸出檔」，都應該用時間戳比對而非單純存在性檢查 |
+| Snakemake 將「沒有 upstream 錯誤」的 dry-run 誤判為健康 | 2026-10-04 的 dry-run 目標用 `~/x_results`，configfile 的 `results_dir` 為 `/home3/x_results`；兩者字串不同，Snakemake 不做等價比對，`Nothing to be done` 只代表「這個不存在的目標不需要做事」 | 目標路徑必須與 configfile 的 `results_dir` 完全相同；dry-run 結果只有在確認目標確實落在 `results_dir` 下後才有意義（2026-10-04 已重跑修正） |
+| 上游設定檔被 touch 後，全部下游 job 被重跑（與 .smk code-hash 不同機制） | rerun trigger 包含 mtime：`config/ciriquant.yaml`（2026-07-29）比 CIRIquant GTF（2026-07-16）新，所有 `ciriquant` job 被判為過期，進而帶動下游；被刪除的 FASTQ 則使下載與 trim 也被重新規劃 | 不以 `ancient()` 壓制（會讓參考基因組更換靜默通過）；拆分 `ciriquant.yaml` 為機器本地工具路徑與科學性參考路徑是獨立議題；報告批次改用 `--allowed-rules` 限定 rule，上游缺輸入即報錯 |
 
 ---
 
@@ -1322,7 +1326,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 <a id="already-fixed"></a>
 **Item 2 去重修正**：`consensus_filter.py` 的 `vote()` 先前只用 slop 判斷「支持數」，未用來合併輸出，導致同一 junction 若在 slop 內被多個座標支持會重複輸出多列。修正後在投票前先做座標分群，僅留一個代表（優先選 CIRIquant 座標，保持與 count_matrix 的精確字串比對相容）。單樣本驗證（SRR7012368，同參數）：6,539→6,439 列（~1.5% 去重）。
 
-**Benchmark 門檻掃描 AUC-PR 重新確認（2026-07-20）**：舊版「歷史版本」表格中的 accuracy benchmark 數字用的是 `-Nr 5` 時代的 GSE55872 consensus 結果；`-Nr 2` 統一後，GSE55872（SRR444655 + 兩個 RNase-R replicates）也已用 `-Nr 2` + dedup 修正重新跑過 CIRIquant/DCC/CIRCexplorer2/find_circ，門檻掃描（`accuracy_benchmark.py --ciri2-file --dcc-count-file --circexplorer2-file --find-circ-file --output-pr-curve`）重新確認：
+**Benchmark 門檻掃描 AUC-PR 重新確認（2026-07-20）**：舊版「歷史版本」表格中的 accuracy benchmark 數字用的是 `-Nr 5` 時代的 SRP011042（原誤記 GSE55872）consensus 結果；`-Nr 2` 統一後，GSE55872（SRR444655 + 兩個 RNase-R replicates）也已用 `-Nr 2` + dedup 修正重新跑過 CIRIquant/DCC/CIRCexplorer2/find_circ，門檻掃描（`accuracy_benchmark.py --ciri2-file --dcc-count-file --circexplorer2-file --find-circ-file --output-pr-curve`）重新確認：
 
 | Method | Precision | Recall | F1 | Specificity | AUC-PR（門檻掃描）|
 |--------|-----------|--------|----|-------------|-----------------|
@@ -1351,7 +1355,7 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 - DE（DESeq2 baseline）：409 significant；DE（limma-voom）：736 significant
 - Isoform switching：66 events（within-gene FDR < 0.1，|ΔIUI| > 0.1）
 - Top 1 biomarker：chr10:5836848|5842668（hsa_circ_0002665，GDI2；score=0.8202，83 miRNA，118 RBP binders，log2FC=7.48，Type_I）
-- **⚠️ benchmark 表格與 GSE55872（ground truth）為獨立資料集，不受此次 GSE113230 `-Nr 2` 重跑影響，但 accuracy_benchmark 若曾用 GSE113230 作對照組需重新確認**
+- **⚠️ benchmark 表格與 SRP011042（ground truth）為獨立資料集，不受此次 GSE113230 `-Nr 2` 重跑影響，但 accuracy_benchmark 若曾用 GSE113230 作對照組需重新確認**
 
 Benchmark（門檻掃描 AUC-PR，三方法，舊版數據）：
 
@@ -1692,7 +1696,7 @@ Yang et al. 2017 *Nature Communications*（PMID 28194035）。HCC 肝細胞癌�
 - `GSE77509/raw/` + `GSE77509/trimmed/` → 已刪除
 - `GSE77509_results/circRNA/*/Aligned.sortedByCoord.out.bam` + `*/mate1/` + `*/mate2/` → 已刪除
 
-**GSE55872（Benchmark ground truth）磁碟清理（2026-06-19）**：
+**SRP011042（Benchmark ground truth，目錄名仍為 GSE55872_results，歷史遺留）磁碟清理（2026-06-19）**：
 - `GSE55872_results/circRNA/*/mate1/` + `*/mate2/` + `GSE55872/raw/` → 已刪除（釋放 ~80 GB）
 
 ---
@@ -2362,7 +2366,7 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | 方式 | circRNA 偵測 | 說明 |
 |------|-------------|------|
 | **Total RNA（rRNA-depleted）**（建議）| ✅ 最佳 | 保留 circRNA；rRNA-depleted 維持全轉錄組代表性 |
-| **Total RNA（RNase R enriched）**| ✅✅ 最高靈敏度 | 消化線性 RNA，富集 circRNA；用於 benchmark ground truth（GSE55872）|
+| **Total RNA（RNase R enriched）**| ✅✅ 最高靈敏度 | 消化線性 RNA，富集 circRNA；用於 benchmark ground truth（SRP011042）|
 | poly-A selection | ❌ 不建議 | circRNA 無 poly-A tail → 幾乎偵測不到；若數據集用 poly-A，circRNA 數量會極少 |
 | strand-specific | ✅ 加分 | 可推斷 circRNA strand；非必要 |
 
