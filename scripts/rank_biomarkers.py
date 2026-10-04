@@ -493,7 +493,9 @@ def rank_biomarkers(
               file=sys.stderr)
     sig["pass_default"] = sig["pass_default"].astype(bool)
 
-    sig = sig.sort_values("biomarker_score", ascending=False)
+    # Deterministic order: score descending, ties broken by circ_id ascending.
+    # (Plain sort_values is not stable on ties, so equal-score ranks could change between runs.)
+    sig = sig.sort_values(["biomarker_score", "circ_id"], ascending=[False, True])
     sig.insert(sig.columns.get_loc("biomarker_score") + 1, "rank",
                range(1, len(sig) + 1))
     passing = sig["pass_default"]
@@ -529,7 +531,7 @@ def rank_biomarkers(
         # unqueried ones -- see CLAUDE.md diagnostic); only `rank` changes
         # because the comparison pool is smaller.
         fe = sig[sig["interaction_queried"]].copy()
-        fe = fe.sort_values("biomarker_score", ascending=False)
+        fe = fe.sort_values(["biomarker_score", "circ_id"], ascending=[False, True])
         fe["rank"] = range(1, len(fe) + 1)
         Path(fully_evaluated_output).parent.mkdir(parents=True, exist_ok=True)
         fe.to_csv(fully_evaluated_output, sep="\t", index=False)
