@@ -8,21 +8,21 @@ Per run (one per dropped sample s), with full log2FC f and run log2FC l_s:
   unstable_effect = any(sign(l_s) != sign(f)) or any(|l_s| < 0.5 |f|)      (absent runs excluded)
   sig_dependent   = any(s: circRNA absent OR not (p<0.05 and |l_s|>=1))  (reported alongside)
 
-usage: python stability_list.py <candidates.tsv> <out.tsv>
-LOO roots: GSE113230 and GSE133998 from ~/fsj_three_case/loo (all three methods; verified copy);
-           other datasets from ~/fsj_three_case/loo_edger (edgeR only).
+usage: python stability_list.py <candidates.tsv> <out.tsv> [loo_root=~/loo_v2]
+LOO root: ~/loo_v2 for every dataset (edgeR runs read from <root>/<GSE>/<drop>/edger.tsv).
 """
 import os
 import sys
 import pandas as pd
 
 CAND, OUT = sys.argv[1], sys.argv[2]
-H = os.path.expanduser("~/fsj_three_case")
-ROOTS = {"GSE113230": os.path.join(H, "loo"), "GSE133998": os.path.join(H, "loo")}
+# LOO root: ~/loo_v2 (scripts/loo_stability.R; paired design read from patient_id, validated
+# against the published tables for all 15 datasets). Override with a 3rd argument.
+LOO_ROOT = sys.argv[3] if len(sys.argv) > 3 else os.path.expanduser("~/loo_v2")
 
 
 def root(g):
-    return ROOTS.get(g, os.path.join(H, "loo_edger"))
+    return LOO_ROOT
 
 
 def load(g, s):
@@ -42,7 +42,8 @@ for r in cand.itertuples():
     if not (fp < 0.05 and abs(fl) >= 1):
         rows.append(dict(label=r.label, dataset=g, circ_id=cid, status="NOT_SIG_FULL",
                          log2FC_full=round(fl, 3), p_full=fp)); continue
-    samples = sorted(x for x in os.listdir(os.path.join(root(g), g)) if x != "NONE")
+    samples = sorted(x for x in os.listdir(os.path.join(root(g), g))
+                       if x != "NONE" and os.path.isdir(os.path.join(root(g), g, x)))
     flips = drop50 = absent = sigloss = 0
     ratios = []
     lfcs = []
