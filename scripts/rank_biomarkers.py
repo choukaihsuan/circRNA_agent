@@ -325,6 +325,9 @@ def rank_biomarkers(
     component_weights: dict  = None,
     fully_evaluated_output: str = None,
     loo_dir:           str   = "",
+    primary_method:    str   = "edgeR",
+    de_edger:          str   = "",
+    isoforms_file:     str   = "",
     stability_min_ratio: float = 0.5,
     cross_method_min:  int   = 3,
     write_run_params:  bool  = True,
@@ -353,6 +356,16 @@ def rank_biomarkers(
     merged["confidence_score"] = pd.to_numeric(merged.get("confidence_score", 0), errors="coerce").fillna(0)
     merged["circbase_id"]   = merged.get("circbase_id",   pd.Series("", index=merged.index)).fillna("")
     merged["circbase_gene"] = merged.get("circbase_gene", pd.Series("", index=merged.index)).fillna("")
+
+    # Host gene / region from the isoform table (assign_isoforms.py output). Written into the
+    # candidate file so the report does not have to join it itself.
+    if isoforms_file:
+        iso = pd.read_csv(isoforms_file, sep="\t", dtype=str,
+                          usecols=["circ_id", "gene_name", "region"]).drop_duplicates("circ_id")
+        merged = (merged.drop(columns=[c for c in ("gene_name", "region") if c in merged.columns])
+                        .merge(iso, on="circ_id", how="left"))
+        merged["gene_name"] = merged["gene_name"].fillna("")
+        merged["region"] = merged["region"].fillna("")
 
     # Filter to significant DE circRNAs
     sig_col, sig_thr = _resolve_sig(merged, de_sig_by, fdr)
@@ -402,24 +415,30 @@ def rank_biomarkers(
     # ── n_sig_methods: count across all three DE methods ──────────────────────
     # Strict: an unreadable or missing other-method table is an error, not a warning,
     # because the cross-method flag below must not silently fall back to fewer methods.
-    sig["n_sig_methods"] = 1  # primary method is always 1 (these are already sig)
-    published = {"edgeR": de}
-    n_methods_available = 1
-    for name, other_file in [("DESeq2", de_deseq2), ("limma", de_limma)]:
-        if not other_file:
+    # All three method tables are used symmetrically. `de` is the table of the PRIMARY
+    # method (the one whose score is shown); the other two come from their own files.
+    # The cross-method count and the LOO gate do not depend on which method is primary.
+    path_of = {"edgeR": de_edger if primary_method != "edgeR" else de_file,
+               "DESeq2": de_deseq2 if primary_method != "DESeq2" else de_file,
+               "limma": de_limma if primary_method != "limma" else de_file}
+    tables = {primary_method: de}
+    for name in ("edgeR", "DESeq2", "limma"):
+        if name == primary_method or not path_of[name]:
             continue
-        if not Path(other_file).exists():
-            sys.exit(f"[rank] ERROR: {name} DE table given but missing: {other_file}")
-        other = _read_de(other_file)
-        published[name] = other
-        n_methods_available += 1
-        other_ids = set(other.loc[_sig_mask(other, de_sig_by, fdr, lfc), "circ_id"].tolist())
-        sig.loc[sig["circ_id"].astype(str).isin(other_ids), "n_sig_methods"] += 1
-
+        if not Path(path_of[name]).exists():
+            sys.exit(f"[rank] ERROR: {name} DE table given but missing: {path_of[name]}")
+        tables[name] = _read_de(path_of[name])
+    n_methods_available = len(tables)
     if cross_method_min > n_methods_available:
         sys.exit(f"[rank] ERROR: --cross-method-min {cross_method_min} but only "
-                 f"{n_methods_available} DE method table(s) supplied (--de-deseq2/--de-limma)")
-    sig["n_sig_methods"] = sig["n_sig_methods"].astype(int)
+                 f"{n_methods_available} DE method table(s) supplied (need --de-edger/--de-deseq2/--de-limma)")
+    if loo_dir and n_methods_available < 3:
+        sys.exit("[rank] ERROR: --loo-dir requires all three DE method tables (LOO gate checks each method)")
+    sig_sets = {name: set(t.loc[_sig_mask(t, de_sig_by, fdr, lfc), "circ_id"].astype(str))
+                for name, t in tables.items()}
+    sig["n_sig_methods"] = sig["circ_id"].astype(str).apply(
+        lambda c: sum(c in s for s in sig_sets.values())).astype(int)
+    published = tables
     sig["three_method_sig"] = sig["n_sig_methods"] >= cross_method_min
     counts = sig["n_sig_methods"].value_counts().sort_index()
     for n, c in counts.items():
@@ -541,6 +560,13 @@ def main() -> None:
     parser.add_argument("--cross-method-min", type=int, default=3, choices=[1, 2, 3],
                         help="Minimum number of DE methods (of those supplied) in which a candidate "
                              "must be significant to count as cross-method (default 3 = all supplied).")
+    parser.add_argument("--primary-method", default="edgeR", choices=["edgeR", "DESeq2", "limma"],
+                        help="Which method's table is --de (the scored table). The cross-method "
+                             "flag and LOO gate are the same whichever method is primary.")
+    parser.add_argument("--de-edger", default="",
+                        help="edgeR DE table (required unless edgeR is the primary, in which case --de is used)")
+    parser.add_argument("--isoforms", default="",
+                        help="isoform_groups.tsv (assign_isoforms.py): adds gene_name and region to the candidate file")
     parser.add_argument("--no-run-params", action="store_true",
                         help="Do not write interaction coverage into <results>/run_params.yaml. "
                              "Required for v2 runs so published results directories are not modified.")
@@ -573,6 +599,9 @@ def main() -> None:
         fc_cap             = args.fc_cap,
         component_weights  = component_weights,
         loo_dir            = args.loo_dir,
+        primary_method     = args.primary_method,
+        de_edger           = args.de_edger,
+        isoforms_file      = args.isoforms,
         stability_min_ratio = args.stability_min_ratio,
         cross_method_min   = args.cross_method_min,
         write_run_params   = not args.no_run_params,
