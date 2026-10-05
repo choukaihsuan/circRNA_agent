@@ -268,6 +268,16 @@ rule rank_biomarkers_v2:
                 else ""
             )
         ),
+        # Same wiring as the v1 rank_biomarkers rule: emit each flag only when it differs from
+        # rank_biomarkers.py's default, so the default command is unchanged.
+        sig_cap_arg = (f"--sig-cap {config['de'].get('biomarker', {}).get('sig_cap', 10)}"
+                       if config["de"].get("biomarker", {}).get("sig_cap", 10) != 10 else ""),
+        fc_cap_arg  = (f"--fc-cap {config['de'].get('biomarker', {}).get('fc_cap', 5)}"
+                       if config["de"].get("biomarker", {}).get("fc_cap", 5) != 5 else ""),
+        stability_max_arg = (f"--stability-max-candidates "
+                             f"{config['de'].get('biomarker', {}).get('stability_max_candidates', 500)}"
+                             if config["de"].get("biomarker", {}).get("stability_max_candidates", 500) != 500
+                             else ""),
     log: "logs/rank_biomarkers_v2_{method}.log"
     shell:
         "python scripts/rank_biomarkers.py --de {params.results_dir}/de/{params.primary} "
@@ -277,7 +287,8 @@ rule rank_biomarkers_v2:
         "--output {output.candidates} --status-json {output.status} "
         "--fdr {params.fdr} --lfc {params.lfc} --de-sig-by {params.de_sig_by} "
         "--loo-dir {params.loo_dir} --cross-method-min {params.cross_method_min} "
-        "--stability-min-ratio {params.stability_min_ratio} {params.components_arg} > {log} 2>&1"
+        "--stability-min-ratio {params.stability_min_ratio} {params.components_arg} "
+        "{params.sig_cap_arg} {params.fc_cap_arg} {params.stability_max_arg} > {log} 2>&1"
 
 
 rule generate_report:
