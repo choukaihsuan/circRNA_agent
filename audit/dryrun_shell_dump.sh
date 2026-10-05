@@ -61,8 +61,10 @@ sed -e "s#^results_dir:.*#results_dir: $SCR#" \
 cd "$REPO"
 run_rule() {  # run_rule <rule> <target>
     echo "### RULE $1"
+    # --cores: without it a dry run caps every rule at 1 thread, so the expanded commands would show
+    # -t 1 / --runThreadN 1 instead of the configured threads. Dry run does not use these cores.
     timeout 300 "$SM" --snakefile workflow/Snakefile --configfile "$SCRATCH/cfg.yaml" \
-        --allowed-rules "$1" --forcerun "$1" -n -p --nolock "$2" 2>&1 || true
+        --allowed-rules "$1" --forcerun "$1" -n -p --nolock --cores 96 "$2" 2>&1 || true
     echo "### EXIT $1"
 }
 
