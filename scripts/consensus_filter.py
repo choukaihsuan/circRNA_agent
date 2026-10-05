@@ -280,6 +280,7 @@ def vote(
     tool_maps: list[CoordMap],
     min_tools: int,
     slop: int,
+    details: Optional[list] = None,
 ) -> list[tuple[str, int, int, int, float]]:
     """
     Return circRNAs supported by >= min_tools tools.
@@ -307,6 +308,10 @@ def vote(
         matches = [_best_match(coord, m, slop) for m in tool_maps]
         supporting = [(bsj, dist) for m in matches if m is not None for bsj, dist in [m]]
         n_tools = len(supporting)
+        if details is not None:
+            # diagnostic only: per tool (in tool_maps order) the (bsj, dist) match or None
+            details.append({"chr": coord[0], "start": coord[1], "end": coord[2],
+                            "n_supporting": n_tools, "per_tool": matches})
         if n_tools < min_tools:
             continue
 
@@ -321,6 +326,31 @@ def vote(
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+
+def dump_dist_rows(args, details, results, tool_names) -> None:
+    """Write the per-locus diagnostic table (vote()'s own matches; no separate matching logic)."""
+    score = {(c, s_, e): sc for c, s_, e, _n, sc in results}
+    out = Path(args.dump_dist)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    dataset = Path(args.output).resolve().parent.parent.parent.name
+    sample = Path(args.output).resolve().parent.name
+    with open(out, "w") as fh:
+        fh.write("dataset\tsample\tchrom\tstart\tend\tn_supporting\t"
+                 "bsj_ciriquant\tdist_ciriquant\tbsj_dcc\tdist_dcc\tconfidence_score\n")
+        for d in details:
+            key = (d["chr"], d["start"], d["end"])
+            cols = {}
+            for name in ("ciriquant", "dcc"):
+                if name in tool_names:
+                    m = d["per_tool"][tool_names.index(name)]
+                    cols[name] = ("NA", "NA") if m is None else (m[0], m[1])
+                else:
+                    cols[name] = ("NA", "NA")
+            sc = score.get(key, "NA")  # loci below min_tools are in details but not in results
+            fh.write(f"{dataset}\t{sample}\t{d['chr']}\t{d['start']}\t{d['end']}\t{d['n_supporting']}\t"
+                     f"{cols['ciriquant'][0]}\t{cols['ciriquant'][1]}\t"
+                     f"{cols['dcc'][0]}\t{cols['dcc'][1]}\t{sc}\n")
+
 
 def main() -> None:
     started_at = run_params.now_iso()
@@ -361,6 +391,9 @@ def main() -> None:
                         dest="min_confidence",
                         help="Minimum confidence score threshold after voting (default: 0.0). "
                              "Removes low-evidence circRNAs to improve precision.")
+    parser.add_argument("--dump-dist", default=None, dest="dump_dist",
+                        help="Diagnostic: write one row per locus with each tool's BSJ and coordinate "
+                             "distance as used by vote(). Off by default; output is unchanged without it.")
     parser.add_argument("--dcc-count-threshold", type=int, default=2, dest="dcc_count_threshold",
                         help="DCC -Nr count threshold the CircCoordinates file was produced with "
                              "(default: 2). Used as the count of each CircCoordinates locus when "
@@ -434,7 +467,10 @@ def main() -> None:
             adaptive_triggered = True
 
     all_count = len(set().union(*[set(m.keys()) for m in tool_maps]))
-    results = vote(tool_maps, effective_min_tools, args.slop)
+    dist_details = [] if args.dump_dist else None
+    results = vote(tool_maps, effective_min_tools, args.slop, details=dist_details)
+    if args.dump_dist:
+        dump_dist_rows(args, dist_details, results, tool_names)
 
     print(
         f"[consensus] ≥{effective_min_tools} 工具共識: "
