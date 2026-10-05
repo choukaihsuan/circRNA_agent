@@ -10,11 +10,16 @@ Columns: kind | name | code_default | published_value | status | help | defined_
                    "varies: v (n); ..." listing each distinct value and its project count.
   status           same / DIFF / n/a (not a config-driven value)
 
+Whether an argparse flag is passed by the pipeline is decided from the expanded shell commands
+(`snakemake -n -p --forcerun <rule>` output, see audit/dryrun_shell_dump.sh), not from the text of
+the rule. A flag built inside a lambda or joined from module-level strings is therefore detected.
+
 Also writes audit/parameter_discrepancies.tsv with every DIFF row.
 
 usage:
-  python3 audit/export_parameter_table.py <projects_dir>
-where <projects_dir> holds the 20 config/projects/*.yaml files copied from the HPC server.
+  python3 audit/export_parameter_table.py <projects_dir> <shell_dump>
+where <projects_dir> holds the 20 config/projects/*.yaml files copied from the HPC server and
+<shell_dump> is the combined dry-run output produced by audit/dryrun_shell_dump.sh.
 """
 import ast
 import collections
@@ -28,7 +33,10 @@ import yaml
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 PROJ_DIR = sys.argv[1] if len(sys.argv) > 1 else ""
 if not PROJ_DIR or not glob.glob(os.path.join(PROJ_DIR, "*.yaml")):
-    raise SystemExit("usage: export_parameter_table.py <projects_dir with *.yaml>")
+    raise SystemExit("usage: export_parameter_table.py <projects_dir with *.yaml> <shell_dump>")
+DUMP_PATH = sys.argv[2] if len(sys.argv) > 2 else ""
+if not DUMP_PATH or not os.path.isfile(DUMP_PATH):
+    raise SystemExit("usage: export_parameter_table.py <projects_dir with *.yaml> <shell_dump>")
 rows = []
 
 
@@ -51,14 +59,60 @@ projects = {os.path.basename(f): flat(yaml.safe_load(open(f, encoding="utf-8")) 
 
 
 def published(path, code_default):
-    """Effective value across projects: the project's value if present, else the code default."""
+    """Effective value across projects: the project's value if present, else the code default.
+
+    A key missing from a project snapshot is not recorded there; the code default is applied.
+    The text says so, because a "same" value can then reflect the default rather than a recorded setting.
+    """
     vals = collections.Counter()
+    missing = 0
     for pf in projects.values():
-        v = pf[path] if path in pf else code_default
+        if path in pf:
+            v = pf[path]
+        else:
+            v = code_default
+            missing += 1
         vals[str(v)] += 1
+    n_proj = len(projects)
+    if missing == n_proj:
+        note = f"; absent in all {n_proj} snapshots (code default applied)"
+    elif missing:
+        note = f"; absent in {missing}/{n_proj} snapshots (code default applied)"
+    else:
+        note = ""
     if len(vals) == 1:
-        return next(iter(vals)), "same"
-    return "varies: " + "; ".join(f"{v} ({n})" for v, n in vals.most_common()), "DIFF"
+        return next(iter(vals)) + note, "same"
+    return "varies: " + "; ".join(f"{v} ({n})" for v, n in vals.most_common()) + note, "DIFF"
+
+
+# 0. Expanded shell commands (snakemake -n -p output) --------------------------
+# Each line is a command that a rule would run. A flag belongs to the script named in that line.
+_NON_COMMAND_PREFIXES = ("input:", "output:", "log:", "jobid:", "reason:", "wildcards:",
+                         "resources:", "rule ", "#", "Config file", "Building DAG", "Job stats")
+dump_invoked = set()
+dump_flags = collections.defaultdict(dict)  # script stem -> {flag: value or "(flag)"}
+dump_rules = set()
+for raw in open(DUMP_PATH, encoding="utf-8"):
+    line = raw.rstrip("\n")
+    if line.startswith("### RULE "):
+        dump_rules.add(line.split()[2])
+        continue
+    s = line.strip()
+    if not s or s.startswith(_NON_COMMAND_PREFIXES):
+        continue
+    m = re.search(r"scripts/([A-Za-z0-9_]+)\.(?:py|R)\b", s)
+    if not m:
+        continue
+    script = m.group(1)
+    dump_invoked.add(script)
+    toks = s.split()
+    for i, t in enumerate(toks):
+        if not re.match(r"^--[A-Za-z][\w-]*$", t):
+            continue
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        has_value = bool(nxt) and not nxt.startswith(("-", "|", "&", "<", ">", "2>", "(", ")")) \
+            and not any(c in nxt for c in "<>|;")
+        dump_flags[script].setdefault(t, nxt.strip("'\"") if has_value else "(flag)")
 
 
 # 1. argparse defaults --------------------------------------------------------
@@ -150,25 +204,68 @@ for k in _proj_only:
                      status=status, help="key present in some published projects only" +
                      (f"; code fallback at {SNAKEFILE_FALLBACK[k][1]}" if k in SNAKEFILE_FALLBACK else ""),
                      source="config.yaml", line=0))
+# Wiring gaps found by reading the rules (2026-10-05). These keys reach only some rules; the note says which.
+WIRING_NOTES = {
+    "de.biomarker.sig_cap": "wired to the v1 rank_biomarkers rule only (de.smk:91-97); "
+                            "rank_biomarkers_v2 does not pass it, so the published candidate files ignore this key",
+    "de.biomarker.fc_cap": "wired to the v1 rank_biomarkers rule only (de.smk:91-97); "
+                           "rank_biomarkers_v2 does not pass it, so the published candidate files ignore this key",
+}
 for dotted, val, comment, line_no in cfg_rows:
     pub, status = published(dotted, val)
+    note = WIRING_NOTES.get(dotted, "")
+    help_text = "; ".join(x for x in (comment, note) if x)
     rows.append(dict(kind="config", name="config." + dotted, code_default=val, published=pub,
-                     status=status, help=comment, source="config.yaml", line=line_no))
+                     status=status, help=help_text, source="config.yaml", line=line_no))
+
+# Biomarker keys read by rank_biomarkers_v2 (workflow/rules/de.smk) that are not in config.yaml.
+# web_ui.py writes cross_method_min and stability_min_ratio under de.biomarker; the other two have
+# no config key and are reached only through the rule or the CLI.
+V2_EXTRA = [
+    ("de.biomarker.cross_method_min", "3", "de.smk rank_biomarkers_v2 fallback (.get default 3)",
+     "workflow/rules/de.smk"),
+    ("de.biomarker.stability_min_ratio", "0.5", "de.smk rank_biomarkers_v2 fallback (.get default 0.5)",
+     "workflow/rules/de.smk"),
+    ("de.biomarker.stability_max_candidates", "500",
+     "no config key; rank_biomarkers.py --stability-max-candidates default (CLI only)", "scripts/rank_biomarkers.py"),
+    ("de.biomarker.primary_method", "(per method: edgeR, DESeq2, limma)",
+     "no config key; rank_biomarkers_v2 wildcard {method} sets --primary-method", "workflow/rules/de.smk"),
+]
+for dotted, code, comment, src in V2_EXTRA:
+    if dotted in cfg_default:
+        continue
+    pub, status = published(dotted, code)
+    rows.append(dict(kind="config", name="config." + dotted, code_default=code, published=pub,
+                     status=status, help=comment, source=src, line=0))
+
+def _same_value(code, val):
+    """Compare a code default with a value seen in the expanded command."""
+    if val == "(flag)":
+        return code == "True"  # a store_true flag passed by the pipeline is a difference from False
+    try:
+        return float(code) == float(val)
+    except ValueError:
+        return str(code) == str(val)
+
 
 for r in argparse_rows:
-    passed_by = None
-    for smk in smk_files:
-        if not os.path.exists(smk):
-            continue
-        mm = re.search(re.escape(r["flag"]) + r"\s+\{params\.(\w+)\}", open(smk, encoding="utf-8").read())
-        if mm:
-            passed_by = mm.group(1)
-            break
-    if passed_by and smk_map.get(passed_by, (None,))[0]:
-        path, fb, _ = smk_map[passed_by]
-        pub, status = published(path, cfg_default.get(path, fb))
+    script = os.path.splitext(os.path.basename(r["source"]))[0]
+    if script not in dump_invoked:
         rows.append(dict(kind="argparse", name=r["flag"], code_default=r["code_default"],
-                         published=pub + f" [config.{path}]", status=status,
+                         published="not invoked in the dry-run dump (script not used by a rule)",
+                         status="n/a", help=r["help"], source=r["source"], line=r["line"]))
+    elif r["flag"] in dump_flags[script]:
+        val = dump_flags[script][r["flag"]]
+        if "/" in val:
+            # a path: it depends on the deployment (scratch tree in the dump), so it is not compared
+            shown, status = "<path>", "n/a"
+        elif r["code_default"].startswith("("):
+            shown, status = val, "n/a"  # required or not given: no code default to compare with
+        else:
+            shown = val
+            status = "same" if _same_value(r["code_default"], val) else "DIFF"
+        rows.append(dict(kind="argparse", name=r["flag"], code_default=r["code_default"],
+                         published=f"passed by pipeline; value in dry-run: {shown}", status=status,
                          help=r["help"], source=r["source"], line=r["line"]))
     else:
         rows.append(dict(kind="argparse", name=r["flag"], code_default=r["code_default"],
@@ -221,6 +318,9 @@ with open(os.path.join(ROOT, "audit", "parameter_table.tsv"), "w", encoding="utf
         fh.write(f'{r["kind"]}\t{r["category"]}\t{r["name"]}\t{r["code_default"]}\t{r["published"]}\t{r["status"]}\t'
                  f'{r["help"]}\t{r["source"]}\t{r["line"]}\n')
 with open(os.path.join(ROOT, "audit", "parameter_table.md"), "w", encoding="utf-8") as fh:
+    fh.write("說明：「是否傳入」與「dry-run 值」來自 GSE133998 的展開命令列（audit/dryrun_shell_dump.sh）。"
+             "只在特定設定下才輸出的 flag（例如 --min-confidence、--components-json）反映的是該設定。"
+             "「absent in … snapshots」表示該鍵未寫入 project 快照，實際執行採用的是程式碼預設值。\n\n")
     fh.write("| 參數名 | 程式碼預設值 | 已發表執行使用值 | 狀態 | 作用 | 定義位置 |\n|---|---|---|---|---|---|\n")
     for r in rows:
         fh.write(f'| `{r["name"]}` | {r["code_default"]} | {r["published"]} | {r["status"]} | '
