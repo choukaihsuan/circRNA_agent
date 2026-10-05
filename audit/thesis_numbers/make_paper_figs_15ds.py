@@ -98,6 +98,25 @@ def fig9():
     axc = fig.add_axes([0.30, 0.215, 0.60, 0.46])
     im = axc.pcolormesh(np.ma.masked_invalid(M), cmap=cmap, vmin=-vmax, vmax=vmax, edgecolors="white", linewidth=1.5)
     axc.set_xlim(0, len(cols)); axc.set_ylim(len(rows), 0)
+    # Type II overlay (matches the defense-slide convention: unmarked = Type I)
+    T = [[sig[d][k][1] if k in sig[d] else None for d in cols] for k in rows]
+    x1 = []; y1 = []; x2 = []; y2 = []
+    for i in range(len(rows)):
+        for j in range(len(cols)):
+            t = T[i][j]
+            if t is None: continue
+            if   t == "Type_I":  x1.append(j+0.5); y1.append(i+0.5)
+            elif t == "Type_II": x2.append(j+0.5); y2.append(i+0.5)
+            else: raise SystemExit("unexpected Type value: %r" % (t,))
+    axc.scatter(x2, y2, s=66, facecolors="none", edgecolors="#1A1A1A", linewidths=1.8, zorder=3)
+    from matplotlib.lines import Line2D
+    fig.legend(handles=[
+        Line2D([], [], marker="o", linestyle="none", markerfacecolor="none",
+               markeredgecolor="#1A1A1A", markeredgewidth=1.8, markersize=10,
+               label="Type II in that dataset  (unmarked = Type I)")],
+        loc="upper left", bbox_to_anchor=(0.515, 0.80), frameon=False,
+        fontsize=14, handletextpad=0.9)
+    print("Type I cells %d, Type II cells %d" % (len(x1), len(x2)))
     axc.set_xticks(np.arange(len(cols))+.5); axc.set_xticklabels([lab(d) for d in cols], rotation=90, fontsize=13)
     axc.set_yticks(np.arange(len(rows))+.5)
     axc.set_yticklabels(["%s  (%s)" % (genes.get(k, "NA"), "novel" if cb.get(k, "novel") == "novel" else cb[k]) for k in rows], fontsize=13)
