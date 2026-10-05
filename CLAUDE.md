@@ -422,9 +422,13 @@ echo "PID: $!"
 
 **同步本機到 server**（config.yaml 不同步，路徑不同）：
 ```bash
-rsync -avz /mnt/c/Users/User/develop/circRNA_agent/scripts/ choukaihsuan@172.16.0.178:~/circRNA_agent/scripts/
-rsync -avz /mnt/c/Users/User/develop/circRNA_agent/workflow/ choukaihsuan@172.16.0.178:~/circRNA_agent/workflow/
+rsync -avzn /mnt/c/Users/User/develop/circRNA_agent/scripts/ choukaihsuan@172.16.0.178:~/circRNA_agent/scripts/   # dry run first (-n): read the list
+rsync -avz  /mnt/c/Users/User/develop/circRNA_agent/scripts/ choukaihsuan@172.16.0.178:~/circRNA_agent/scripts/
+rsync -avz  /mnt/c/Users/User/develop/circRNA_agent/workflow/ choukaihsuan@172.16.0.178:~/circRNA_agent/workflow/
 ```
+- 來源路徑以 `/` 結尾（只同步內容）、目的路徑是相對於家目錄的固定路徑。執行前先用 `-n` 看清單，確認沒有非預期的目的路徑。
+- 不要對絕對路徑加 `-R`（relative）或把 Windows 路徑拼進目的路徑；server 上曾出現 `scripts/mnt/c/Users/...` 的巢狀目錄（來源不明，見 `audit/server_worktree_provenance.md`），那是這類錯誤的殘骸，不要再產生。
+- 同步不等於 git 同步：server 的 git checkout 停在 2c4b31f，與本機歷史不同步。目前維持這個狀態，直到刻意規劃部署步驟為止。
 
 ---
 

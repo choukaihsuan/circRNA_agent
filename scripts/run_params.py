@@ -49,19 +49,39 @@ def _git(args: list[str]) -> str | None:
     return out.stdout.strip() if out.returncode == 0 else None
 
 
-def code_info(script: str) -> dict:
-    """Commit of the repository and whether the code that defines this step has uncommitted edits.
+REPO_HEAD_NOTE = ("information only: the commit of the repository checkout where the step ran. "
+                  "It does not describe the working tree, and it is not part of canonical_key().")
 
-    git_dirty looks only at scripts/ and workflow/ (the code that runs the step), not at audit notes.
+
+def code_info(script: str) -> dict:
+    """Repository HEAD (information only), dirty flag for scripts/ and workflow/, and the step's script.
+
     Values that cannot be read are recorded as null, never guessed.
     """
-    commit = _git(["rev-parse", "HEAD"])
+    head = _git(["rev-parse", "HEAD"])
     dirty = _git(["status", "--porcelain", "--", "scripts", "workflow"])
     return {
-        "git_commit": commit,
-        "git_dirty": None if dirty is None else bool(dirty),
         "script": script,
+        "repo_head": head,
+        "repo_head_note": REPO_HEAD_NOTE,
+        "git_dirty": None if dirty is None else bool(dirty),
     }
+
+
+def program_fingerprints(paths) -> list[dict]:
+    """sha256 of the program files that define this step, sorted by path (repo-relative when possible)."""
+    out = []
+    for p in paths or []:
+        pp = Path(p)
+        if pp.is_absolute():
+            try:
+                pp = pp.resolve().relative_to(REPO)
+            except ValueError:
+                pass
+        full = pp if pp.is_absolute() else REPO / pp
+        out.append({"path": str(pp).replace(os.sep, "/"),
+                    "sha256": hashlib.sha256(full.read_bytes()).hexdigest()})
+    return sorted(out, key=lambda d: d["path"])
 
 
 def environment_info() -> dict:
@@ -119,7 +139,7 @@ def record_path(results_dir: str | os.PathLike, rule: str, wildcard: str | None)
 
 
 def write_record(results_dir, rule, *, wildcard=None, wildcards=None, started_at, effective_params,
-                 inputs=None, script, external_queries=None, extra=None) -> Path:
+                 inputs=None, script, program_files=None, external_queries=None, extra=None) -> Path:
     """Write this step's record. Called at the END of the step, after its outputs exist.
 
     Raises on failure: a step must not report success without its record.
@@ -133,6 +153,7 @@ def write_record(results_dir, rule, *, wildcard=None, wildcards=None, started_at
         "finished_at": now_iso(),
         "effective_params": _safe(effective_params),
         "code": code_info(script),
+        "program_files": program_fingerprints(program_files or [script]),
         "inputs": [fingerprint(p) for p in (inputs or []) if p and Path(p).exists()],
         "environment": environment_info(),
     }
@@ -161,18 +182,21 @@ def _normalise(v):
     return v
 
 
-def canonical_key(record: dict, include_code_commit: bool = False) -> str:
-    """Cache key for item L3. Only fields that change the step's output enter the key.
+def canonical_key(record: dict, include_repo_head: bool = False) -> str:
+    """Cache key for item L3: a function of what the step computes, not of the repository version.
 
-    In the key: rule, wildcards, effective_params, and each input's sha256 (or size and mtime_ns when the
-    sha256 is null). Not in the key: started_at, finished_at, hostname, environment, external_queries
-    dates, and the code commit unless include_code_commit is set (a repository commit changes on every
-    commit, which would invalidate every cache entry; decide once real records exist).
+    In the key: rule, wildcards, effective_params, the sha256 of each program file that defines the step
+    (sorted by path), and each input's sha256 (or size and mtime_ns when the sha256 is null).
+    Not in the key: repo_head (a commit changes on every commit and would invalidate the whole cache; it
+    is information only), started_at, finished_at, hostname, environment, external_queries dates.
+    Editing an unrelated file leaves the key unchanged; editing a program file the step runs changes it.
     """
     key = {
         "rule": record.get("rule"),
         "wildcards": record.get("wildcards"),
         "effective_params": record.get("effective_params"),
+        "program_files": [{"path": f.get("path"), "sha256": f.get("sha256")}
+                          for f in sorted(record.get("program_files", []), key=lambda d: d.get("path", ""))],
         "inputs": [
             {"path": i.get("path"),
              "sha256": i.get("sha256"),
@@ -181,8 +205,8 @@ def canonical_key(record: dict, include_code_commit: bool = False) -> str:
             for i in record.get("inputs", [])
         ],
     }
-    if include_code_commit:
-        key["code_commit"] = (record.get("code") or {}).get("git_commit")
+    if include_repo_head:
+        key["repo_head"] = (record.get("code") or {}).get("repo_head")
     blob = json.dumps(_normalise(key), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
