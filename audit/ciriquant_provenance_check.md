@@ -27,3 +27,8 @@ Consequences:
    That is not done here; the metadata is left untouched.
 
 Excluded from this count: 8 ciriquant records under the benchmark directory (no `_results` path match).
+
+## 與附錄表的關係（2026-10-05）
+
+附錄 A2 的 CIRIquant 相關欄位（threads）與本節是同一個缺口：ciriquant.yaml 是共用檔、沒有逐次執行紀錄。
+見 `audit/config_run_provenance.md`（threads 的實際來源）與 `audit/ciriquant_setup_schema_defect.md`（索引欄位與 schema）。兩者不另外列為獨立缺口。
