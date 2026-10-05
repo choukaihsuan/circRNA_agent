@@ -25,7 +25,7 @@ rule de_analysis:
         lfc                  = config["de"]["log2fc_cutoff"],
         tumor_label          = config["de"]["tumor_label"],
         normal_label         = config["de"]["normal_label"],
-        de_sig_by            = config["de"].get("de_sig_by", "auto"),
+        de_sig_by            = config["de"].get("de_sig_by", "pvalue"),
         heatmap_top_n        = config["de"].get("heatmap_top_n", 10),
         fsj_concordance_lfc  = config["de"].get("fsj_concordance_lfc", 0.0),
         filter_expr_min_count       = config["de"].get("filter_expr_min_count", 5),
@@ -87,7 +87,7 @@ rule rank_biomarkers:
     params:
         fdr             = config["de"]["fdr_cutoff"],
         lfc             = config["de"]["log2fc_cutoff"],
-        de_sig_by       = config["de"].get("de_sig_by", "auto"),
+        de_sig_by       = config["de"].get("de_sig_by", "pvalue"),
         # Only emit --sig-cap/--fc-cap when they differ from rank_biomarkers.py's
         # own defaults (10 / 5), to keep the default-config command byte-identical.
         cap_args = " ".join(filter(None, [
@@ -309,7 +309,7 @@ rule generate_report:
         fdr          = config["de"]["fdr_cutoff"],
         lfc          = config["de"]["log2fc_cutoff"],
         de_method    = DE_METHOD,
-        de_sig_by     = config["de"].get("de_sig_by", "auto"),
+        de_sig_by     = config["de"].get("de_sig_by", "pvalue"),
         tumor_label   = config["de"]["tumor_label"],
         normal_label  = config["de"]["normal_label"],
         heatmap_top_n = config["de"].get("heatmap_top_n", 10),

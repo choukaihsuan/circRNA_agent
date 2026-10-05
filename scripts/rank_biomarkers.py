@@ -334,7 +334,7 @@ def rank_biomarkers(
     output:            str,
     fdr:               float = 0.05,
     lfc:               float = 1.0,
-    de_sig_by:         str   = "auto",
+    de_sig_by:         str   = "pvalue",
     interactions_file: str   = "",
     de_deseq2:         str   = "",
     de_limma:          str   = "",
@@ -555,7 +555,7 @@ def main() -> None:
     parser.add_argument("--de-limma",    default="", help="limma DE results TSV (optional; for n_sig_methods)")
     parser.add_argument("--fdr",          type=float, default=0.05)
     parser.add_argument("--lfc",          type=float, default=1.0)
-    parser.add_argument("--de-sig-by",  default="auto",
+    parser.add_argument("--de-sig-by",  default="pvalue",
                         choices=["auto", "pvalue", "padj", "qvalue"],
                         help="Significance column: auto=cascade (q<0.2→p<0.05), "
                              "pvalue/padj/qvalue=fixed")

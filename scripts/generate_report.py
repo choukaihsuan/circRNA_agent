@@ -1606,7 +1606,7 @@ def build_report(
     biomarker_files: Optional[dict] = None,
     switching_file: Optional[str] = None,
     groups_file:    Optional[str] = None,
-    de_sig_by:      str   = "auto",
+    de_sig_by:      str   = "pvalue",
     tumor_label:    str   = "tumor",
     normal_label:   str   = "normal",
     isoform_file:      Optional[str] = None,
@@ -3713,7 +3713,7 @@ def thesis_export_figs(
     de_method:      str   = "edgeR_ciriquant",
     fdr:            float = 0.05,
     lfc:            float = 1.0,
-    de_sig_by:      str   = "auto",
+    de_sig_by:      str   = "pvalue",
     isoform_file:   Optional[str] = None,
     circbase_file:  Optional[str] = None,
     tumor_label:    str   = "tumor",
@@ -3958,7 +3958,7 @@ if "snakemake" in dir():
                            "limma": snakemake.input.biomarkers_limma},            # type: ignore[name-defined]
         switching_file = snakemake.input.switching,             # type: ignore[name-defined]
         groups_file    = getattr(snakemake.input, "groups", None),  # type: ignore[name-defined]
-        de_sig_by      = str(getattr(snakemake.params, "de_sig_by", "auto")),   # type: ignore[name-defined]
+        de_sig_by      = str(getattr(snakemake.params, "de_sig_by", "pvalue")),   # type: ignore[name-defined]
         tumor_label    = str(snakemake.params.tumor_label),     # type: ignore[name-defined]
         normal_label   = str(snakemake.params.normal_label),    # type: ignore[name-defined]
         isoform_file   = getattr(snakemake.input, "isoform_groups", None),  # type: ignore[name-defined]
@@ -3986,7 +3986,7 @@ if "snakemake" in dir():
             de_method      = str(snakemake.params.de_method),                  # type: ignore[name-defined]
             fdr            = float(snakemake.params.fdr),                      # type: ignore[name-defined]
             lfc            = float(snakemake.params.lfc),                      # type: ignore[name-defined]
-            de_sig_by      = str(getattr(snakemake.params, "de_sig_by", "auto")),  # type: ignore[name-defined]
+            de_sig_by      = str(getattr(snakemake.params, "de_sig_by", "pvalue")),  # type: ignore[name-defined]
             isoform_file   = getattr(snakemake.input, "isoform_groups", None), # type: ignore[name-defined]
             circbase_file  = getattr(snakemake.input, "circbase_annot", None), # type: ignore[name-defined]
             tumor_label    = str(snakemake.params.tumor_label),                # type: ignore[name-defined]

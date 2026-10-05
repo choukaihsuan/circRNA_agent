@@ -122,7 +122,7 @@ SCHEMA: Dict[str, Dict[str, Tuple[Any, Any]]] = {
         "method":                      ("edgeR_ciriquant", _choice("edgeR_ciriquant", "deseq2", "limma")),
         "fdr_cutoff":                  (0.05, _float_range(lo=0.0, hi=1.0)),
         "log2fc_cutoff":               (1.0, _float_range(lo=0.0)),
-        "de_sig_by":                   ("auto", _choice("auto", "pvalue", "padj", "qvalue")),
+        "de_sig_by":                   ("pvalue", _choice("auto", "pvalue", "padj", "qvalue")),
         "heatmap_top_n":               (10, _int_range(lo=1)),
         "fsj_concordance_lfc":         (0.0, _float_range(lo=0.0)),
         "isoform_fdr_cutoff":          (0.1, _float_range(lo=0.0, hi=1.0)),

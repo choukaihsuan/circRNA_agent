@@ -80,7 +80,7 @@ singularity: "docker://choukaihsuan/circrna-pipeline:1.0.0"
 _TOOLS        = set(config.get("consensus", {}).get("tools", ["ciriquant", "dcc"]))
 USE_CIRIQUANT = "ciriquant" in _TOOLS
 USE_DCC       = "dcc"       in _TOOLS
-DE_METHOD     = config.get("de", {}).get("method", "deseq2")
+DE_METHOD     = config.get("de", {}).get("method", "edgeR_ciriquant")
 
 # ─── Include rule modules ─────────────────────────────────
 include: "rules/download.smk"
@@ -134,7 +134,7 @@ def _de_stats() -> str:
         import pandas as _pd
         df  = _pd.read_csv(de_path, sep="\t")
         cutoff     = config.get("de", {}).get("fdr_cutoff", 0.05)
-        use_pvalue = config.get("de", {}).get("de_sig_by", "padj") in ("pvalue", "auto")
+        use_pvalue = config.get("de", {}).get("de_sig_by", "pvalue") in ("pvalue", "auto")
         # pick significance column: pvalue > padj > FDR (whichever exists)
         for candidate in (["pvalue", "padj", "FDR"] if use_pvalue else ["padj", "FDR", "pvalue"]):
             if candidate in df.columns:

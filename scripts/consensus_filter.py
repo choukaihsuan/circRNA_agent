@@ -78,10 +78,12 @@ def parse_ciriquant(
     return coords
 
 
-def parse_dcc(path: str, min_bsj: int) -> CoordMap:
+def parse_dcc(path: str, min_bsj: int, nominal_count: float) -> CoordMap:
     """Parse DCC output. Prefers CircRNACount (has read counts) over CircCoordinates.
     DCC writes coordinates and counts in separate files; CircRNACount has columns:
     Chr, Start, End, <sample_name> (the junction file name, index 3).
+    nominal_count is used for CircCoordinates, which has no count column; it stands in for the
+    junction threshold DCC was run with (-Nr count_threshold), see --dcc-count-threshold.
     """
     coords: CoordMap = {}
     # CircRNACount sits in the same directory as CircCoordinates
@@ -95,7 +97,7 @@ def parse_dcc(path: str, min_bsj: int) -> CoordMap:
         start_idx = next((i for i, h in enumerate(header) if h == "start"), 1)
         end_idx   = next((i for i, h in enumerate(header) if h == "end"), 2)
         # CircRNACount: count is 4th column (index 3), header name is the junction file
-        # CircCoordinates: no count column; fall back to nominal 5 (passed -Nr 5 1 filter)
+        # CircCoordinates: no count column; use nominal_count (the -Nr junction threshold)
         use_count_col = parse_path == count_path
         for line in fh:
             parts = line.strip().split("\t")
@@ -108,7 +110,7 @@ def parse_dcc(path: str, min_bsj: int) -> CoordMap:
                 if use_count_col and len(parts) > 3:
                     count = float(parts[3])
                 else:
-                    count = 5.0  # DCC already filtered by -Nr 5 1
+                    count = nominal_count  # DCC already filtered by -Nr <count_threshold> 1
                 if count >= min_bsj:
                     coords[(chrom, start, end)] = count
             except (ValueError, IndexError):
@@ -355,6 +357,10 @@ def main() -> None:
                         dest="min_confidence",
                         help="Minimum confidence score threshold after voting (default: 0.0). "
                              "Removes low-evidence circRNAs to improve precision.")
+    parser.add_argument("--dcc-count-threshold", type=int, default=2, dest="dcc_count_threshold",
+                        help="DCC -Nr count threshold the CircCoordinates file was produced with "
+                             "(default: 2). Used as the count of each CircCoordinates locus when "
+                             "CircRNACount is absent; it has no effect when CircRNACount exists.")
     args = parser.parse_args()
 
     if not any([args.cirique, args.ciri2, args.dcc, args.circexplorer2, args.find_circ]):
@@ -383,7 +389,7 @@ def main() -> None:
         print(f"[consensus] CIRI2:         {len(ciri2_map)} circRNAs", file=sys.stderr)
 
     if args.dcc:
-        dcc_map = parse_dcc(args.dcc, args.min_bsj)
+        dcc_map = parse_dcc(args.dcc, args.min_bsj, float(args.dcc_count_threshold))
         tool_maps.append(dcc_map)
         tool_names.append("dcc")
         print(f"[consensus] DCC:           {len(dcc_map)} circRNAs", file=sys.stderr)

@@ -32,9 +32,9 @@ fdr_cutoff   <- as.numeric(snakemake@params[["fdr"]])
 lfc_cutoff   <- as.numeric(snakemake@params[["lfc"]])
 tumor_label  <- snakemake@params[["tumor_label"]]
 normal_label <- snakemake@params[["normal_label"]]
-de_sig_by    <- tryCatch(snakemake@params[["de_sig_by"]], error = function(e) "auto")
+de_sig_by    <- tryCatch(snakemake@params[["de_sig_by"]], error = function(e) "pvalue")
 if (!is.character(de_sig_by) || !de_sig_by %in% c("auto", "pvalue", "padj", "qvalue"))
-  de_sig_by <- if (isTRUE(de_sig_by)) "pvalue" else "auto"
+  de_sig_by <- "pvalue"
 # Minimum |logFC_fsj| required for concordance (Type II classification).
 # 0.0 = direction match only; 0.5 = old strict setting.
 # CIRIquant FSJ counts are junction-specific (not whole-gene CPM), so
@@ -68,8 +68,8 @@ if (length(paired_design_override) == 0 || !paired_design_override %in% c("auto"
   paired_design_override <- "auto"
 
 # Resolve primary method
-de_method <- tryCatch(snakemake@params[["de_method"]], error = function(e) "deseq2")
-if (is.null(de_method)) de_method <- "deseq2"
+de_method <- tryCatch(snakemake@params[["de_method"]], error = function(e) "edgeR_ciriquant")
+if (is.null(de_method)) de_method <- "edgeR_ciriquant"
 fsj_file  <- tryCatch(snakemake@input[["fsj_matrix"]], error = function(e) NULL)
 
 # Fallback: if edgeR requested but FSJ unavailable, warn (still try, guard inside block)

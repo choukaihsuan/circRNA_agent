@@ -233,6 +233,8 @@ rule consensus_filter:
         qc_bsj_threshold   = config["consensus"].get("qc_bsj_threshold", 5),
         adaptive_flag      = "--adaptive" if config["consensus"].get("adaptive", True) else "",
         adaptive_ratio     = config["consensus"].get("adaptive_ratio", 0.1),
+        # Same key as the DCC -Nr first argument (rule dcc): the count given to CircCoordinates loci.
+        dcc_count_threshold = config["tools"]["dcc"]["count_threshold"],
         # Only emit --min-confidence when it differs from consensus_filter.py's
         # own default (0.0), to keep the default-config command byte-identical.
         min_conf_arg       = (f"--min-confidence {config['consensus'].get('min_confidence', 0.0)}"
@@ -252,6 +254,7 @@ rule consensus_filter:
             --qc-bsj-threshold    {params.qc_bsj_threshold} \
             {params.adaptive_flag} \
             --adaptive-ratio      {params.adaptive_ratio} \
+            --dcc-count-threshold {params.dcc_count_threshold} \
             {params.min_conf_arg} \
             2>&1 | tee {log}
         """
