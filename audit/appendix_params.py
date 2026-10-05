@@ -11,7 +11,7 @@ This is reconstructed from config, code defaults and the dry-run expansion. It i
 the execution record: run_params.yaml (item B5) is not complete yet. Once B5 lands, these tables should
 be regenerated from run_params.yaml, which is the reproducible source.
 
-usage: appendix_params.py <dump_dir> <projects_dir> <committed_config_yaml> <out_dir>
+usage: appendix_params.py <dump_dir> <projects_dir> <committed_config_yaml> <out_dir> <recorded_threads_json> <ciriquant_yaml>
   committed_config_yaml: the repo config.yaml from git HEAD (the code defaults). The server copy
   is not synced and differs (threads 18, no tools section), so it must not be used.
 """
@@ -23,11 +23,16 @@ import sys
 
 import yaml
 
-DUMP, PROJ, CFG_COMMITTED, OUT = sys.argv[1:5]
-GSES = sorted(os.path.basename(p)[:-len(".txt")] for p in glob.glob(os.path.join(DUMP, "*.txt")))
+import json
+
+DUMP, PROJ, CFG_COMMITTED, OUT, RECORDED_JSON, CIRIQUANT_YAML = sys.argv[1:7]
 COHORT15 = ["GSE108735", "GSE113230", "GSE121842", "GSE130078", "GSE133998", "GSE136569", "GSE143797",
             "GSE148036", "GSE171011", "GSE221107", "GSE248612", "GSE77509", "GSE97239", "PRJNA553289", "SRP156355"]
 EXCLUDED4 = ["GSE58135", "GSE192410", "GSE192849", "GSE229705"]
+# GSE323364 (cell line with drug treatment, not tumour vs normal) is outside the paper's 19 datasets.
+GSES = sorted(set(COHORT15 + EXCLUDED4))
+RECORDED = json.load(open(RECORDED_JSON))
+CIRIQUANT_REF = yaml.safe_load(open(CIRIQUANT_YAML))["reference"]["hisat_index"]
 
 PREFIX = ("input:", "output:", "log:", "jobid:", "reason:", "wildcards:", "resources:", "rule ", "#",
           "Config file", "Building DAG", "Job stats", "Reasons", "### ")
@@ -201,7 +206,14 @@ def facts_for(g):
                   "tools.dcc.threads"]:
             F[k] = na
     cq = b.get("ciriquant", [])
-    F["threads"] = cmd("", cq, "-t", dflt("threads"))
+    rec = RECORDED.get(g, {})
+    if rec:
+        # the thread count the published CIRIquant GTFs were produced with (Snakemake metadata)
+        best = max(rec.items(), key=lambda kv: kv[1])[0]
+        F["threads"] = (best if len(rec) == 1 else "混合：" + "/".join(sorted(rec)),
+                        "Snakemake metadata（已發表 GTF 的實際 -t）")
+    else:
+        F["threads"] = ("未取得", "未取得（無 CIRIquant metadata）")
     F["tools.ciriquant.anchor"] = cmd("", cq, "-a", 5)
     F["tools.ciriquant.no_gene"] = ((True if has_flag(cq, "--no-gene") else False) if cq else "未取得",
                                     "命令列" if cq else "未取得")
@@ -321,22 +333,25 @@ def canon(v):
 
 
 # A2 columns: varying parameters across the 20 projects, plus forced threads, plus hisat2 index.
-ALL_NAMES = [n for n, _, _ in REG] + ["genome.hisat2_index"]
+ALL_NAMES = [n for n, _, _ in REG]
 varying = []
 for n in ALL_NAMES:
     vals = {canon(effective(n, g)) for g in GSES}
     if len(vals) > 1 or n == "threads":
         varying.append(n)
-for n in ["genome.hisat2_index"]:
-    if n not in varying:
-        varying.append(n)
+
 
 os.makedirs(OUT, exist_ok=True)
 with open(os.path.join(OUT, "appendix_A1_parameters.tsv"), "w", encoding="utf-8") as fh:
+    fh.write("# 收錄範圍：Tier 1（資源與顯示參數）與 Tier 2（會改變分析結果的參數）。排除 Tier 3：路徑、專案身分、參考基因組與外部資源位置、個資。\n")
+    fh.write("# 值的來源優先序：CIRIquant metadata（threads）→ dry-run 展開命令列 → 專案快照 → 程式預設。取不到者標「未取得」，不猜。\n")
+    fh.write("# 本表由 config、程式預設與 dry-run 展開重建，不是由執行紀錄產生；B5（run_params.yaml）完成後應改由其產生。\n")
+    fh.write("# CIRIquant 的索引與參數取自單一共用檔 config/ciriquant.yaml（手動維護，無逐次執行紀錄），各資料集執行當下的值無法逐一還原。\n")
     fh.write("參數名\t層級\t本研究使用值\t程式預設值\t本研究值＝預設？\t來源\t作用\n")
+    fh.write(f"reference.hisat_index（ciriquant.yaml，共用）\t3（例外，依要求列出）\t{CIRIQUANT_REF}\t—\t—\tciriquant.yaml\tCIRIquant 實際使用的 HISAT2 索引（唯一位置）\n")
     for name, tier, desc in REG:
-        vals = {canon(effective(name, g)) for g in GSES}
-        srcs = sorted({effective(name, g)[1] for g in GSES})
+        vals = {canon(effective(name, g)) for g in COHORT15}
+        srcs = sorted({effective(name, g)[1] for g in COHORT15})
         if len(vals) == 1:
             use = next(iter(vals))
         else:
@@ -352,8 +367,9 @@ with open(os.path.join(OUT, "appendix_A1_parameters.tsv"), "w", encoding="utf-8"
         fh.write(f"{name}\t{tier}\t{use}\t{fmt(default)}\t{same}\t{'; '.join(srcs)}\t{desc}\n")
 
 with open(os.path.join(OUT, "appendix_A2_per_dataset.tsv"), "w", encoding="utf-8") as fh:
-    head = ["genome.hisat2_index（快照值；有效值未取得，見說明）" if c == "genome.hisat2_index" else c for c in varying]
-    fh.write("dataset\t納入分析\t" + "\t".join(head) + "\n")
+    fh.write("# 每組資料集的有效參數（涵蓋論文 15 組與排除 4 組；只列實際有差異的欄位，threads 強制列出）。\n")
+    fh.write("# threads 取自已發表 GTF 的 CIRIquant metadata。GSE113230 快照寫 12，但其 GTF 由 threads 8 產生（沿用舊檔）。\n")
+    fh.write("dataset\t納入分析\t" + "\t".join(varying) + "\n")
     for g in GSES:
         inc = ("論文 15 組" if g in COHORT15 else "排除（不供應論文數字）" if g in EXCLUDED4
                else "未納入論文 19 組（待確認）")
