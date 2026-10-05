@@ -46,6 +46,7 @@ mirror_dir "$REAL/circRNA" "$SCR/circRNA" "$SRR"
 mirror_dir "$REAL/circRNA/$SRR" "$SCR/circRNA/$SRR" mate1 mate2 Aligned.sortedByCoord.out.bam
 mkdir -p "$SCR/circRNA/$SRR/mate1" "$SCR/circRNA/$SRR/mate2"
 for p in "$SCR/circRNA/$SRR/Aligned.sortedByCoord.out.bam" \
+         "$SCR/circRNA/$SRR/Chimeric.out.junction" \
          "$SCR/circRNA/$SRR/mate1/Chimeric.out.junction" \
          "$SCR/circRNA/$SRR/mate2/Chimeric.out.junction" \
          "$TRIM/${SRR}_1.fastq.gz" "$TRIM/${SRR}_2.fastq.gz" \
