@@ -42,6 +42,9 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run_params  # noqa: E402
+
 
 def _minmax(series: pd.Series) -> pd.Series:
     lo, hi = series.min(), series.max()
@@ -158,48 +161,6 @@ def _compute_weighted_score(sig: pd.DataFrame, sig_col: str, sig_cap: float,
     return score
 
 
-def _write_interaction_coverage(output_path: str, sig: pd.DataFrame) -> None:
-    """
-    Record miRNA/RBP query coverage into {results_dir}/run_params.yaml so
-    report.html's Analysis parameters section (and anyone auditing the run
-    later) can see what fraction of candidates the M/R components were
-    actually evaluated for, without re-deriving it from biomarker_candidates.tsv.
-    Merges into the existing file (if any) rather than overwriting it, since
-    this is one of several sections that file is expected to accumulate.
-    """
-    if "interaction_queried" not in sig.columns or len(sig) == 0:
-        return
-    try:
-        results_dir = Path(output_path).resolve().parent.parent
-        run_params_path = results_dir / "run_params.yaml"
-        existing: dict = {}
-        if run_params_path.exists():
-            try:
-                existing = yaml.safe_load(run_params_path.read_text()) or {}
-            except Exception as e:
-                print(f"[rank] WARNING: could not parse existing {run_params_path} "
-                      f"({e}); it will be overwritten", file=sys.stderr)
-                existing = {}
-        n_sig = int(len(sig))
-        n_queried = int(sig["interaction_queried"].sum())
-        existing["biomarker_interaction_coverage"] = {
-            "n_significant": n_sig,
-            "n_queried": n_queried,
-            "coverage_pct": round(n_queried / n_sig * 100, 1) if n_sig else 0.0,
-            "note": ("miRNA/RBP components of the biomarker_score are only evaluated for "
-                     "candidates predict_interactions.py actually queried (top-N union); "
-                     "candidates outside that union have their score renormalized over the "
-                     "remaining enabled components, not penalized to 0."),
-        }
-        run_params_path.write_text(yaml.safe_dump(existing, sort_keys=False, allow_unicode=True))
-        print(f"[rank] interaction coverage {n_queried}/{n_sig} "
-              f"({existing['biomarker_interaction_coverage']['coverage_pct']}%) "
-              f"-> {run_params_path}", file=sys.stderr)
-    except OSError as e:
-        print(f"[rank] WARNING: could not write run_params.yaml ({e}); "
-              f"coverage info only available in biomarker_candidates.tsv", file=sys.stderr)
-
-
 def _resolve_sig(de: pd.DataFrame, de_sig_by: str, fdr: float):
     """Return (column, threshold) based on cascade logic matching analysis.R."""
     if de_sig_by == "auto":
@@ -286,24 +247,6 @@ def _effect_stability(cands_ids: list, loo_dir: str, published: dict, min_ratio:
         out[f"stable_{m}"] = ((flips == 0) & (shrinks == 0)).values
     out["effect_stable"] = out[[f"stable_{m}" for m in LOO_FILES]].all(axis=1)
     return out.reset_index()
-
-
-def _write_run_params_filter(output: str, primary_method: str, cross_method_min: int, loo_dir: str,
-                             stability_min_ratio: float, stability_max_candidates: int) -> None:
-    """Record the biomarker filter settings in <results>/run_params.yaml (under biomarker_filter)."""
-    run_params_path = Path(output).parent.parent / "run_params.yaml"
-    existing = {}
-    if run_params_path.exists():
-        existing = yaml.safe_load(run_params_path.read_text(encoding="utf-8")) or {}
-    existing["biomarker_filter"] = {
-        "primary_method": primary_method,
-        "cross_method_min": int(cross_method_min),
-        "stability_min_ratio": float(stability_min_ratio),
-        "stability_max_candidates": int(stability_max_candidates),
-        "loo_dir": loo_dir or None,
-        "output": Path(output).name,
-    }
-    run_params_path.write_text(yaml.safe_dump(existing, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def _write_status(path, status, n_candidates, n_three, n_pass, stability_run, loo_dir,
@@ -518,10 +461,13 @@ def rank_biomarkers(
         file=sys.stderr,
     )
 
-    if write_run_params:
-        _write_interaction_coverage(output, sig)
-        _write_run_params_filter(output, primary_method, cross_method_min, loo_dir,
-                                 stability_min_ratio, stability_max_candidates)
+    RUN_SUMMARY.clear()
+    RUN_SUMMARY.update({
+        "n_significant": int(len(sig)),
+        "n_queried": int(sig["interaction_queried"].sum()) if "interaction_queried" in sig.columns else None,
+        "n_pass_default": n_pass,
+        "stability_run": bool(stability_run),
+    })
 
     if fully_evaluated_output:
         # Evidence-level-consistent ranking: only candidates where every
@@ -542,7 +488,11 @@ def rank_biomarkers(
         )
 
 
+RUN_SUMMARY: dict = {}
+
+
 def main() -> None:
+    started_at = run_params.now_iso()
     parser = argparse.ArgumentParser(
         description="Rank DE circRNAs by composite biomarker score"
     )
@@ -595,8 +545,7 @@ def main() -> None:
     parser.add_argument("--isoforms", default="",
                         help="isoform_groups.tsv (assign_isoforms.py): adds gene_name and region to the candidate file")
     parser.add_argument("--no-run-params", action="store_true",
-                        help="Do not write interaction coverage into <results>/run_params.yaml. "
-                             "Required for v2 runs so published results directories are not modified.")
+                        help="Do not write this step's run_params record (run_params/<rule>.yaml).")
     parser.add_argument("--stability-max-candidates", type=int, default=500,
                         help="Upper bound on three-method candidates tested for stability (default 500); "
                              "exceeding it is an error, not a silent truncation.")
@@ -644,6 +593,25 @@ def main() -> None:
                 if args.fully_evaluated_only else None)
         ),
     )
+
+    if not args.no_run_params:
+        out = Path(args.output)
+        is_v2 = "_v2_" in out.stem
+        results_dir = out.resolve().parent.parent
+        effective = {k: v for k, v in vars(args).items() if v is not None}
+        effective["de_sig_by_effective"] = de_sig_by
+        effective["component_weights"] = component_weights
+        rule = "rank_biomarkers_v2" if is_v2 else "rank_biomarkers"
+        run_params.write_record(
+            results_dir, rule,
+            wildcard=args.primary_method if is_v2 else None,
+            started_at=started_at,
+            effective_params=effective,
+            inputs=[args.de, args.annot, args.de_edger, args.de_deseq2, args.de_limma,
+                    args.isoforms, args.interactions],
+            script="scripts/rank_biomarkers.py",
+            extra={"interaction_coverage": dict(RUN_SUMMARY)},
+        )
 
 
 if __name__ == "__main__":

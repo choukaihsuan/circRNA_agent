@@ -22,6 +22,9 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run_params  # noqa: E402
+
 
 # ── Type alias ────────────────────────────────────────────────────────────────
 # Maps (chr, start, end) → BSJ count  (typing.Dict for Python 3.7 compat)
@@ -320,6 +323,7 @@ def vote(
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    started_at = run_params.now_iso()
     parser = argparse.ArgumentParser(
         description="Multi-tool circRNA consensus filter with adaptive confidence scoring"
     )
@@ -407,6 +411,7 @@ def main() -> None:
         print(f"[consensus] find_circ:     {len(find_circ_map)} circRNAs", file=sys.stderr)
 
     effective_min_tools = min(args.min_tools, len(tool_maps))
+    adaptive_triggered = False
     if effective_min_tools < args.min_tools:
         print(
             f"[consensus] min_tools 調整為 {effective_min_tools}（只有 {len(tool_maps)} 個工具）",
@@ -426,6 +431,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             effective_min_tools = 1
+            adaptive_triggered = True
 
     all_count = len(set().union(*[set(m.keys()) for m in tool_maps]))
     results = vote(tool_maps, effective_min_tools, args.slop)
@@ -498,6 +504,19 @@ def main() -> None:
 
     pd.DataFrame(rows).to_csv(args.summary, sep="\t", index=False)
     print(f"[consensus] Summary written → {args.summary}", file=sys.stderr)
+
+    # the record holds the value actually used after the adaptive fallback, not the configured one
+    effective = {k: v for k, v in vars(args).items() if v is not None}
+    effective["min_tools_effective"] = effective_min_tools
+    effective["adaptive_fallback_triggered"] = adaptive_triggered
+    run_params.write_record(
+        Path(args.output).resolve().parent.parent.parent, "consensus_filter",  # circRNA/{srr}/high_confidence.bed
+        wildcard=Path(args.output).resolve().parent.name,
+        started_at=started_at,
+        effective_params=effective,
+        inputs=[args.cirique, args.ciri2, args.dcc, args.circexplorer2, args.find_circ],
+        script="scripts/consensus_filter.py",
+    )
 
 
 if __name__ == "__main__":

@@ -26,6 +26,9 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run_params  # noqa: E402
+
 try:
     import requests
     _REQUESTS = True
@@ -791,6 +794,7 @@ def _get_exon_boundaries(gene_name, exon_span, strand, exon_index, spliced_lengt
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
+    started_at = run_params.now_iso()
     p = argparse.ArgumentParser(
         description="Pre-fetch CircInteractome miRNA/RBP interactions for top DE circRNAs"
     )
@@ -966,6 +970,24 @@ def main():
         f"  miRNA: CircInteractome={n_mi_ci}  ENCORI={n_mi_enc}\n"
         f"  RBP:   CircInteractome={n_rb_ci}  ENCORI={n_rb_enc}",
         file=sys.stderr,
+    )
+
+    # external sources are live APIs: the record keeps the query time and the hit counts
+    run_params.write_record(
+        Path(args.out).resolve().parent.parent, "predict_interactions",
+        started_at=started_at,
+        effective_params={k: v for k, v in vars(args).items() if v is not None},
+        inputs=[args.de, args.iso, args.circbase, args.gtf],
+        script="scripts/predict_interactions.py",
+        external_queries={
+            "queried_at": run_params.now_iso(),
+            "n_circrnas": len(results),
+            "n_with_circinteractome_mirna": n_mi_ci,
+            "n_with_encori_mirna": n_mi_enc,
+            "n_with_circinteractome_rbp": n_rb_ci,
+            "n_with_encori_rbp": n_rb_enc,
+            "sources": ["CircInteractome (circBase ID)", "ENCORI (gene + hg38 coordinates)"],
+        },
     )
 
 

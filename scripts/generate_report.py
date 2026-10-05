@@ -3942,6 +3942,10 @@ def thesis_export_figs(
 # ── Snakemake entry point ────────────────────────────────────────────────────
 
 if "snakemake" in dir():
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.getcwd(), "scripts"))
+    import run_params  # noqa: E402
+    _started_at = run_params.now_iso()
     build_report(
         de_file        = snakemake.input.de,                    # type: ignore[name-defined]
         matrix_file    = snakemake.input.matrix,                # type: ignore[name-defined]
@@ -3972,6 +3976,22 @@ if "snakemake" in dir():
                                            ("limma","de_limma")]
                               if getattr(snakemake.input, a, None)},               # type: ignore[name-defined]
         study_title        = str(getattr(snakemake.params, "study_title", "")),    # type: ignore[name-defined]
+    )
+
+    # per-step record (run_params/generate_report.yaml); inputs are every declared input file
+    def _named(obj):  # Snakemake Namedlist has keys(); a plain namespace (mock runner) does not
+        try:
+            return {k: getattr(obj, k) for k in obj.keys()}
+        except AttributeError:
+            return dict(vars(obj))
+    _rp_inputs = []
+    for _name, _val in _named(snakemake.input).items():  # type: ignore[name-defined]
+        _rp_inputs += [str(x) for x in (_val if isinstance(_val, (list, tuple)) else [_val])]
+    run_params.write_record(
+        Path(snakemake.output[0]).resolve().parent,  # type: ignore[name-defined]
+        "generate_report", started_at=_started_at,
+        effective_params={"params": _named(snakemake.params)},  # type: ignore[name-defined]
+        inputs=_rp_inputs, script="scripts/generate_report.py",
     )
 
     # ── Thesis PNG export (triggered by env var CIRCDEX_THESIS_FIGS=/path/to/out) ──
