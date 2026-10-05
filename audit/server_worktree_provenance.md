@@ -63,5 +63,5 @@ These are current on both sides. Listed by commit:
 ## What this means
 
 - The server is not a single commit. Its tracked files correspond to different commits (2026-05-14 to 2026-10-05), consistent with rsync-based deployment. No single commit reproduces the server tree.
-- For the published results, the relevant question is whether each step's code matches an identifiable commit. For workflow/ and most scripts it does; the unmatched files are not referenced by the rules that produced the published candidate files (to be verified per rule before the Methods statement is written).
+- For the published results, the relevant question is whether each step's code matches an identifiable commit. For workflow/ and most scripts it does; none of the 11 unmatched files is referenced anywhere in the repository (checked by grep on workflow/, scripts/ and config.yaml). The Snakefile includes only workflow/rules/*.smk.
 - Nothing here has been synchronised. A pull or reset would overwrite the server's working files, which are the files that produced the published results; that is why this comparison was done first.
