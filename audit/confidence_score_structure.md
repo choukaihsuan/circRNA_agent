@@ -8,7 +8,7 @@
 
 - 診斷工具：`scripts/consensus_filter.py --dump-dist <tsv>`。預設關閉；不帶此旗標時輸出與原本逐位元相同（已在 7 個資料集以 byte 比對驗證，見第 4 節）。診斷資料直接取自 `vote()` 本身的比對結果，沒有另外寫座標比對邏輯。
 - 每列為一個共識 locus，欄位：`n_supporting`、`bsj_ciriquant`、`dist_ciriquant`、`bsj_dcc`、`dist_dcc`、`confidence_score`。只計入會進入已發表共識的 locus（`confidence_score` 非 NA）。
-- CIRIquant 與 DCC 的距離分開報告。CIRIquant 座標通常是 cluster 代表，所以 `dist_ciriquant` 幾乎恆為 0。
+- CIRIquant 與 DCC 的距離分開報告。CIRIquant 座標通常是 cluster 代表，所以 `dist_ciriquant` 幾乎恆為 0；**例外 2 個 locus**（GSE113230 chr14:20811288-20811446，SRR7012367 與 SRR7012370）：代表座標是 DCC 的，`dist_ciriquant` = 10（見第 2 節）。
 - 統計腳本：`audit/confidence_structure_stats.py`。執行方式：
   ```
   python audit/confidence_structure_stats.py <root> <out.md> <fig.png>            # 現行程式的 dump（目錄 dump/）
@@ -47,7 +47,8 @@
 | SRP156355 | 40,553 | 0.998 | 0.001 | 0.001 | 0.9994 |
 
 - n_supporting：所有 locus 的 n_supporting 皆為 2（n=1 占 0）。原因：共識以 `min_tools=2` 產生，單工具 locus 不會進入已發表共識（GSE221107 的單工具列見第 4 節）。
-- `dist_ciriquant`：全部為 0（dist 0 比例 1.000）。
+- `dist_ciriquant`：628,791 個為 0，**2 個為 10**（dist 0 比例 0.999997，不是 1.000）。這 2 個 locus 的 `dist_dcc` = 0，代表座標取自 DCC。兩個 caller 座標不同的 locus 合計 796 個（0.13%）：794 個 `dist_dcc` > 0，加上這 2 個。
+- **教訓**：三位小數四捨五入會把 0.9995 或 0.999997 顯示成 1.000，讓「有例外」讀成「完全一致」。同一形狀已使 §4.2 一度寫錯（v64 前）。報告這類比例時必須同時給絕對數。
 - 一致性因子 f = 1 − dist_dcc/10 的平均值 0.9995，變異係數 CV = 0.016（全部 locus）。各資料集 CV 介於 0.008（GSE133998）與 0.022（GSE221107）。
 
 **解讀注意**：dist_dcc = 0 的意思是 DCC 座標與所選代表（CIRIquant 座標）完全相同，而非「在 slop 範圍內相符」。因此「一致性項近乎為常數」的實際機制是：兩工具在 99.9% 的 locus 上給出完全相同的座標。這是事實，但它來自精確座標一致，不是 slop 容忍的設計效果。§4.2 若要寫「一致性項不提供資訊」，應說明這一點。

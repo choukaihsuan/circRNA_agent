@@ -33,7 +33,8 @@ EXPECTED_SAMPLES = {
 COLS = ["chrom", "start", "end", "n_supporting", "bsj_ciriquant", "dist_ciriquant", "bsj_dcc", "dist_dcc",
         "confidence_score"]
 SLOP = 10  # consensus slop used for the run; agreement factor = 1 - dist/SLOP
-AX_LO = 0.99  # panel (a) x-axis is truncated to [AX_LO, 1.0]; stated in the figure and caption
+AX_LO = 0.998  # panel (a) x-axis is truncated to [AX_LO, 1.0]; stated in the figure and caption
+HIST_WIDTH = 0.25  # fixed confidence_score bin width, edges anchored at 0 (same bins for every dataset)
 
 
 def load(root, dirname):
@@ -104,9 +105,11 @@ def main():
         b = bucket_counts(sub.loc[sub.has_dcc, "dist_dcc"])
         per[g] = {"loci": int(len(sub)), "dcc_supported": b["n"], "dist0": b["zero"],
                   "dist_gt0": b["n"] - b["zero"], "dist_1_3": b["one_three"], "dist_4_10": b["four_ten"],
-                  "frac_dist0": b["zero"] / b["n"] if b["n"] else float("nan")}
+                  "frac_dist0": b["zero"] / b["n"] if b["n"] else float("nan"),
+                  "any_diff": int(((sub.dist_dcc > 0) | (sub.dist_ciriquant > 0)).sum())}
+        per[g]["frac_identical"] = 1 - per[g]["any_diff"] / per[g]["loci"]
     order = sorted(per, key=lambda g: per[g]["loci"])  # ascending: smallest first, drawn bottom-up
-    below = [g for g in order if per[g]["frac_dist0"] < AX_LO]
+    below = [g for g in order if per[g]["frac_identical"] < AX_LO]
     if below:
         print(f"STOP: dist_dcc=0 fraction < {AX_LO} in {below}; the truncated axis would hide them. "
               f"Widen AX_LO deliberately and change the caption.", file=sys.stderr)
@@ -115,21 +118,20 @@ def main():
     # ── Figure 10 ──
     fig, (axa, axb) = plt.subplots(1, 2, figsize=(14, 6.4), gridspec_kw={"width_ratios": [1.05, 1]})
     ys = np.arange(len(order))
-    xs = [per[g]["frac_dist0"] for g in order]
-    axa.hlines(ys, AX_LO, xs, color="#9aa7b8", lw=1.5)
+    xs = [per[g]["frac_identical"] for g in order]
     axa.plot(xs, ys, "o", color="#4C72B0", ms=7)
     for y, g in zip(ys, order):
         p = per[g]
-        axa.annotate(f"{p['dist_gt0']:,} of {p['dcc_supported']:,}", (p["frac_dist0"], y),
+        axa.annotate(f"{p['any_diff']:,} of {p['loci']:,}", (p["frac_identical"], y),
                      xytext=(8, 0), textcoords="offset points", va="center", fontsize=8)
     axa.set_yticks(ys)
     axa.set_yticklabels(order, fontsize=9)
-    axa.set_xlim(AX_LO, 1.0 + 0.0015)
-    axa.set_xlabel(f"Fraction of DCC-supported loci with dist_dcc = 0   [x-axis truncated to {AX_LO:.2f}–1.00]")
+    axa.set_xlim(AX_LO, 1.0)
+    axa.set_xlabel(f"Fraction of loci with identical coordinates from both callers\n[x-axis truncated to {AX_LO:.3f}\u20131.000]")
     axa.set_title("(a) Coordinate agreement per dataset (sorted by locus count)", fontsize=10)
     axa.grid(axis="x", color="#e5e7eb", lw=0.6)
     axa.set_axisbelow(True)
-    axa.text(0.0, -0.13, "label = loci with dist_dcc > 0 of DCC-supported loci", transform=axa.transAxes,
+    axa.text(0.0, -0.19, "label = loci with different coordinates (n of all loci in the dataset)", transform=axa.transAxes,
              fontsize=8, color="#555")
 
     pts = df
@@ -148,10 +150,10 @@ def main():
              transform=axb.transAxes, va="top", fontsize=9, bbox=dict(fc="white", ec="#bbb", alpha=0.9))
     axb.set_xlabel("mean log2(BSJ + 1) over supporting tools")
     axb.set_ylabel("confidence_score")
-    axb.set_title("(b) confidence_score vs the BSJ term (agreement term removed)", fontsize=10)
+    axb.set_title("(b) confidence_score vs mean log2(BSJ + 1)", fontsize=10)
     axb.legend(loc="lower right", fontsize=8)
     fig.colorbar(hb, ax=axb, label="loci per hexagon (log scale)")
-    fig.tight_layout(rect=(0, 0.02, 1, 1))
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
     f10 = os.path.join(a.out_dir, "figure10.png")
     fig.savefig(f10, dpi=200)
     fig.savefig(os.path.join(a.out_dir, "figure10.pdf"))
@@ -162,10 +164,10 @@ def main():
     os.makedirs(rep_dir, exist_ok=True)
     for g, sub in df.groupby("dataset"):
         fig, (a1, a2) = plt.subplots(1, 2, figsize=(9, 3.2), gridspec_kw={"width_ratios": [1.6, 1]})
-        a1.hist(sub.confidence_score, bins=40, color="#4C72B0")
-        a1.set_xlabel("confidence_score")
-        a1.set_ylabel("loci")
-        a1.set_title("confidence_score", fontsize=10)
+        a1.hist(sub.confidence_score, bins=np.arange(np.floor(sub.confidence_score.min() / HIST_WIDTH) * HIST_WIDTH, np.ceil(sub.confidence_score.max() / HIST_WIDTH) * HIST_WIDTH + HIST_WIDTH, HIST_WIDTH), color="#4C72B0")
+        a1.set_xlabel("Confidence score")
+        a1.set_ylabel("Loci")
+        a1.set_title("Confidence score of each circRNA call", fontsize=10)
         p = per[g]
         vals = [p["dist0"], p["dist_1_3"], p["dist_4_10"]]
         bars = a2.bar(["0", "1–3", "4–10"], vals, color=["#4C72B0", "#DD8452", "#C44E52"])
@@ -173,9 +175,9 @@ def main():
             a2.annotate(f"{v:,}\n({v / p['dcc_supported']:.2%})", (bar.get_x() + bar.get_width() / 2, v),
                         ha="center", va="bottom", fontsize=8)
         a2.set_ylim(0, p["dcc_supported"] * 1.28)
-        a2.set_xlabel("dist_dcc (bp)")
-        a2.set_ylabel("DCC-supported loci")
-        a2.set_title("dist_dcc, three buckets", fontsize=10)
+        a2.set_xlabel("Coordinate difference between callers (bp)")
+        a2.set_ylabel("Loci")
+        a2.set_title("Do the callers agree?", fontsize=10)
         fig.suptitle(f"{g}: {p['loci']:,} loci", fontsize=10)
         fig.tight_layout()
         png = os.path.join(rep_dir, f"{g}_confidence.png")
@@ -199,10 +201,9 @@ def main():
     n_ciri_only = int(((df.dist_dcc == 0) & (df.dist_ciriquant > 0)).sum())  # DCC coordinate was the representative
     n_any = int(((df.dist_dcc > 0) | (df.dist_ciriquant > 0)).sum())
     assert len(two) == len(df), "caption assumes every locus is supported by both callers"
-    lo, hi = min(order, key=lambda g: per[g]["frac_dist0"]), max(order, key=lambda g: per[g]["frac_dist0"])
-    cap = (f"Figure 10. (a) Per dataset, fraction of consensus loci at which the DCC coordinate equals the representative "
-           f"(CIRIquant) coordinate (dist_dcc = 0): {per[lo]['frac_dist0']:.4f} in {lo} to {per[hi]['frac_dist0']:.4f} in {hi}. "
-           f"The x-axis is truncated to {AX_LO:.2f}\u20131.00 (full range 0\u20131). Labels give the number of loci with dist_dcc > 0 "
+    lo, hi = min(order, key=lambda g: per[g]["frac_identical"]), max(order, key=lambda g: per[g]["frac_identical"])
+    cap = (f"Figure 10. (a) Per dataset, fraction of consensus loci at which both callers report identical coordinates: {per[lo]['frac_identical']:.4f} in {lo} to {per[hi]['frac_identical']:.4f} in {hi}. "
+           f"The x-axis is truncated to {AX_LO:.3f}\u20131.000 (full range 0\u20131). Labels give the number of loci with different coordinates "
            f"out of all loci in that dataset. Datasets are sorted by locus count. A locus is one consensus circRNA in one sample. "
            f"(b) confidence_score against the mean log2(BSJ+1) over the two callers for all {len(df):,} loci (hexbin, log colour "
            f"scale; {sampled_note}); dashed line y = x; Spearman rho = {rho_two:.4f}. Every locus is supported by both callers. "
@@ -220,8 +221,8 @@ def main():
     print(f"loci {len(df):,}  rho_two {rho_two:.4f}  input_hash {in_hash[:12]}  {sampled_note}")
     for g in reversed(order):
         p = per[g]
-        print(f"{g:12s} loci {p['loci']:>8,}  dcc {p['dcc_supported']:>8,}  dist>0 {p['dist_gt0']:>5,}  "
-              f"frac0 {p['frac_dist0']:.5f}")
+        print(f"{g:12s} loci {p['loci']:>8,}  dcc {p['dcc_supported']:>8,}  dist_dcc>0 {p['dist_gt0']:>4,}  any {p['any_diff']:>4,}  "
+              f"ident {p['frac_identical']:.5f}")
 
 
 if __name__ == "__main__":
