@@ -189,7 +189,8 @@ def main():
         note_en = ("Left: distribution of confidence_score. Right: coordinate distance between the DCC call and the "
                    "representative coordinate. The score is shown together with the distance because almost all loci "
                    "have distance 0: the agreement term is near-constant, so the score varies with the BSJ read "
-                   "term only.")
+                   "term only. The 0 bar means the DCC coordinate equals the representative coordinate; it also "
+                   "includes the rare loci where the CIRIquant coordinate differs instead.")
         note_zh = ("左：confidence_score 分布。右：DCC 座標與代表座標的距離。兩者並列，是因為幾乎所有 locus 的距離為 0，"
                    "一致性項近乎常數，分數的變化實際上只來自 BSJ reads 項。距離 0 的柱表示 DCC 座標與代表座標相同；"
                    "也包含極少數改為 CIRIquant 座標不同的 locus（見論文資料集層級說明）。")
