@@ -144,7 +144,7 @@ def main():
     rho_all = spearmanr(df.confidence_score, df.log_mean).correlation
     two = df[df.has_ciri & df.has_dcc]
     rho_two = spearmanr(two.confidence_score, two.log_mean).correlation
-    axb.text(0.04, 0.95, f"ρ = {rho_two:.4f} (2-tool loci, n = {len(two):,})\nall loci n = {len(df):,}",
+    axb.text(0.04, 0.95, f"\u03c1 = {rho_two:.4f}\nn = {len(df):,} consensus loci",
              transform=axb.transAxes, va="top", fontsize=9, bbox=dict(fc="white", ec="#bbb", alpha=0.9))
     axb.set_xlabel("mean log2(BSJ + 1) over supporting tools")
     axb.set_ylabel("confidence_score")
@@ -195,9 +195,25 @@ def main():
                 f'src="data:image/png;base64,{b64}"><p data-en="{note_en}">{note_zh}</p></div>\n')
         open(os.path.join(rep_dir, f"{g}_confidence.html"), "w", encoding="utf-8").write(html)
 
+    n_gt0 = sum(p["dist_gt0"] for p in per.values())
+    n_ciri_only = int(((df.dist_dcc == 0) & (df.dist_ciriquant > 0)).sum())  # DCC coordinate was the representative
+    n_any = int(((df.dist_dcc > 0) | (df.dist_ciriquant > 0)).sum())
+    assert len(two) == len(df), "caption assumes every locus is supported by both callers"
+    lo, hi = min(order, key=lambda g: per[g]["frac_dist0"]), max(order, key=lambda g: per[g]["frac_dist0"])
+    cap = (f"Figure 10. (a) Per dataset, fraction of consensus loci at which the DCC coordinate equals the representative "
+           f"(CIRIquant) coordinate (dist_dcc = 0): {per[lo]['frac_dist0']:.4f} in {lo} to {per[hi]['frac_dist0']:.4f} in {hi}. "
+           f"The x-axis is truncated to {AX_LO:.2f}\u20131.00 (full range 0\u20131). Labels give the number of loci with dist_dcc > 0 "
+           f"out of all loci in that dataset. Datasets are sorted by locus count. A locus is one consensus circRNA in one sample. "
+           f"(b) confidence_score against the mean log2(BSJ+1) over the two callers for all {len(df):,} loci (hexbin, log colour "
+           f"scale; {sampled_note}); dashed line y = x; Spearman rho = {rho_two:.4f}. Every locus is supported by both callers. "
+           f"The small cluster below the identity line comprises the {n_any:,} loci ({n_any / len(df):.2%}) at which the two "
+           f"callers reported different coordinates ({n_gt0:,} with dist_dcc > 0, plus {n_ciri_only:,} with dist_ciriquant > 0 "
+           f"where the DCC coordinate was the representative); these account for all of the visible departure from y = x.\n")
+    open(os.path.join(a.out_dir, "figure10_caption.md"), "w", encoding="utf-8").write(cap)
+
     meta = {"dump_root": os.path.abspath(a.dump_root), "dump_dirname": a.dump_dirname, "seed": a.seed,
             "max_hexbin_points": a.max_hexbin_points, "hexbin_sampling": sampled_note, "hexbin_gridsize": 70,
-            "slop": SLOP, "axis_a_xlim": [AX_LO, 1.0], "total_loci": int(len(df)),
+            "slop": SLOP, "axis_a_xlim": [AX_LO, 1.0], "total_loci": int(len(df)), "loci_any_dist_gt0": n_any, "loci_dist_dcc_gt0": n_gt0, "loci_dist_ciri_gt0_only": n_ciri_only,
             "rho_all": float(rho_all), "rho_two_tool": float(rho_two), "input_hash_sha256": in_hash,
             "per_dataset": per, "dataset_order_bottom_to_top": order}
     json.dump(meta, open(os.path.join(a.out_dir, "confidence_figures_params.json"), "w"), indent=1)
