@@ -92,6 +92,10 @@ def main():
 
     import matplotlib
     matplotlib.use("Agg")
+    matplotlib.rcParams.update({
+        "font.size": 8, "axes.titlesize": 8, "axes.labelsize": 8,
+        "xtick.labelsize": 8, "ytick.labelsize": 8, "legend.fontsize": 8,
+    })
     import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm
     from scipy.stats import spearmanr
@@ -116,7 +120,10 @@ def main():
         sys.exit(2)
 
     # ── Figure 10 ──
-    fig, (axa, axb) = plt.subplots(1, 2, figsize=(14, 6.4), gridspec_kw={"width_ratios": [1.05, 1]})
+    # Final print size, not scaled after the fact: figsize in inches == inches on the page, so the
+    # rcParams font sizes above are the sizes that actually print. Stacked (1 column, 2 rows) because
+    # the 15 dataset labels in panel (a) need the full page width, not half of a landscape figure.
+    fig, (axa, axb) = plt.subplots(2, 1, figsize=(5.5, 6.5))
     ys = np.arange(len(order))
     xs = [per[g]["frac_identical"] for g in order]
     axa.plot(xs, ys, "o", color="#4C72B0", ms=7)
@@ -125,14 +132,13 @@ def main():
         axa.annotate(f"{p['any_diff']:,} of {p['loci']:,}", (p["frac_identical"], y),
                      xytext=(8, 0), textcoords="offset points", va="center", fontsize=8)
     axa.set_yticks(ys)
-    axa.set_yticklabels(order, fontsize=9)
+    axa.set_yticklabels(order)
     axa.set_xlim(AX_LO, 1.0)
-    axa.set_xlabel(f"Fraction of loci with identical coordinates from both callers\n[x-axis truncated to {AX_LO:.3f}\u20131.000]")
-    axa.set_title("(a) Coordinate agreement per dataset (sorted by locus count)", fontsize=10)
+    axa.set_xlabel(f"Fraction of loci with identical coordinates from both callers\n[x-axis truncated to {AX_LO:.3f}\u20131.000]\n"
+                   "Label = loci with different coordinates (n of all loci in dataset)")
+    axa.set_title("(a) Coordinate agreement per dataset (sorted by locus count)")
     axa.grid(axis="x", color="#e5e7eb", lw=0.6)
     axa.set_axisbelow(True)
-    axa.text(0.0, -0.19, "label = loci with different coordinates (n of all loci in the dataset)", transform=axa.transAxes,
-             fontsize=8, color="#555")
 
     pts = df
     sampled_note = "all loci drawn, no sampling"
@@ -147,16 +153,16 @@ def main():
     two = df[df.has_ciri & df.has_dcc]
     rho_two = spearmanr(two.confidence_score, two.log_mean).correlation
     axb.text(0.04, 0.95, f"\u03c1 = {rho_two:.4f}\nn = {len(df):,} consensus loci",
-             transform=axb.transAxes, va="top", fontsize=9, bbox=dict(fc="white", ec="#bbb", alpha=0.9))
+             transform=axb.transAxes, va="top", bbox=dict(fc="white", ec="#bbb", alpha=0.9))
     axb.set_xlabel("mean log2(BSJ + 1) over supporting tools")
     axb.set_ylabel("confidence_score")
-    axb.set_title("(b) confidence_score vs mean log2(BSJ + 1)", fontsize=10)
-    axb.legend(loc="lower right", fontsize=8)
+    axb.set_title("(b) confidence_score vs mean log2(BSJ + 1)")
+    axb.legend(loc="lower right")
     fig.colorbar(hb, ax=axb, label="loci per hexagon (log scale)")
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.tight_layout()
     f10 = os.path.join(a.out_dir, "figure10.png")
-    fig.savefig(f10, dpi=200)
-    fig.savefig(os.path.join(a.out_dir, "figure10.pdf"))
+    fig.savefig(f10, dpi=600)
+    fig.savefig(os.path.join(a.out_dir, "figure10.pdf"), dpi=600)
     plt.close(fig)
 
     # ── per-dataset report panels ──
