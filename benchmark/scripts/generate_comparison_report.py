@@ -1268,7 +1268,7 @@ def build_report(
 <h1>circRNA Pipeline Benchmark — Comparison Report</h1>
 <p style="color:#555; font-size:14px">
   Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")} &nbsp;|&nbsp;
-  Dataset: GSE55872 (ground truth) + GSE113230 (DE quality) &nbsp;|&nbsp;
+  Dataset: SRP011042 (ground truth) + GSE113230 (DE quality) &nbsp;|&nbsp;
   Reference: hg19
 </p>
 
@@ -1306,7 +1306,7 @@ def build_report(
 <div class="card">
 <h2>2. Detection Accuracy（偵測準確率）</h2>
 <p style="color:#666; font-size:13px">
-  Evaluation dataset: GSE55872 total RNA (SRR444655) vs. RNase R (SRR444974, SRR445016).
+  Evaluation dataset: SRP011042 total RNA (SRR444655) vs. RNase R (SRR444974, SRR445016).
   Ground truth: ER ≥ 1.5 = True Positive, ER ≤ 0.5 = True Negative (ambiguous excluded).
   AUC-PR computed from ranked BSJ/confidence scores; higher = better.
 </p>
