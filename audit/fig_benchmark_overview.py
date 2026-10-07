@@ -19,6 +19,12 @@ Arabic 1/2/3/4 column numbers (not circled), panel (b)'s layout -- is kept ident
 the frozen content list the thesis author read off the published image. Panel (b)'s
 numbers are read from compute_cost.tsv at run time, never hardcoded.
 
+Box sizes for columns 3/4 (and every box's containment, in fact) are computed from the
+*actual rendered* text extent (fig.canvas.draw() + get_window_extent()), not a fixed
+guessed width -- a fixed width previously let several lines overflow their box on two
+separate review passes. A hard assert checks every line's bbox is fully inside its box's
+bbox before the figure is saved; if that assert ever fires, the figure is NOT written.
+
 usage: fig_benchmark_overview.py <compute_cost.tsv> <out_dir>
 """
 import csv
@@ -47,6 +53,9 @@ BLUE_EDGE = "#4472a8"
 PURPLE = "#e6e0f2"
 PURPLE_EDGE = "#6b5b95"
 TITLE_BLUE_EDGE = "#2c5c99"
+HEADER_BLACK = "#000000"      # column headers "1 Inputs" etc: black bold (F6)
+BOXTITLE_BLUE = "#1a3f6b"     # each box's own first line: dark-blue bold (F7)
+BODY_BLACK = "#1a1a1a"
 
 # ============================== Panel (a): data ==============================
 
@@ -92,46 +101,84 @@ axa.set_ylim(0, 58)
 axa.axis("off")
 axa.set_title("(a)", loc="left", fontweight="bold", fontsize=13, pad=2)
 
-# Force constrained_layout to settle axa's final on-screen position *before* we place
-# any text, so we can convert "points" -> "data units" exactly instead of guessing a
-# gap and hoping it doesn't overlap (that guess was wrong the first time around: text
-# anchors a few data-units apart looked fine on paper but the actual glyphs, at
-# 9-10pt, were taller than that gap once rendered).
-fig.canvas.draw()
+renderer = fig.canvas.get_renderer()
+
+
+def _redraw():
+    global renderer
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+
+
+_redraw()
 p0 = axa.transData.transform((0, 0))
 p1 = axa.transData.transform((0, 1))
 px_per_dataunit = abs(p1[1] - p0[1])
 DU_PER_PT = DPI / (px_per_dataunit * 72.0)  # data-units per point, y-axis
 
 
-def line_gap(fontsize, leading=1.35):
-    """Vertical data-unit offset between successive text baselines at this fontsize."""
-    return fontsize * leading * DU_PER_PT
+def text_extent_du(s, fontsize, weight="normal"):
+    """Render `s` off-canvas, measure its rendered bbox, return (width, height) in
+    this axes' data units. The text object is removed before returning."""
+    t = axa.text(-1000, -1000, s, fontsize=fontsize, fontweight=weight)
+    _redraw()
+    bb = t.get_window_extent(renderer=renderer)
+    bb_data = bb.transformed(axa.transData.inverted())
+    t.remove()
+    return abs(bb_data.width), abs(bb_data.height)
 
 
-def box(ax, x, y, w, h, lines, fc=BLUE, ec=BLUE_EDGE, fs=7.6, title_fs=None, lw=1.3):
-    """Draw one rounded box, vertically centered text stack. If title_fs is given,
-    `lines[0]` is rendered bold at title_fs and the rest at fs; otherwise all lines
-    render at fs (no bold first line)."""
-    p = FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.25,rounding_size=0.6",
+PAD_X, PAD_Y = 1.6, 1.1  # data-unit padding inside each box
+
+
+def box(ax, x, y_bottom, lines, fc=BLUE, ec=BLUE_EDGE, fs=7.6, title_fs=9.0, lw=1.3,
+        min_w=None):
+    """Draw one rounded box sized to fit its own text exactly (measured, not guessed).
+    `lines[0]` is the box's bold dark-blue title line; the rest render at `fs` in
+    body black. Box width = widest rendered line + padding (or `min_w` if larger, so
+    columns can still share a width when desired). Returns (x, y_bottom, w, h)."""
+    sizes = [text_extent_du(lines[0], title_fs, "bold")]
+    for ln in lines[1:]:
+        sizes.append(text_extent_du(ln, fs, "normal"))
+    w = max(s[0] for s in sizes) + 2 * PAD_X
+    if min_w:
+        w = max(w, min_w)
+    line_heights = [s[1] for s in sizes]
+    gaps = [h * 1.5 for h in line_heights]  # 1.5x glyph height as baseline-to-baseline step
+    total_h = sum(gaps[:-1]) + line_heights[-1]
+    h = total_h + 2 * PAD_Y
+
+    p = FancyBboxPatch((x, y_bottom), w, h, boxstyle="round,pad=0.25,rounding_size=0.6",
                         linewidth=lw, edgecolor=ec, facecolor=fc, zorder=2)
     ax.add_patch(p)
-    cy = y + h / 2
-    if title_fs:
-        gaps = [line_gap(title_fs)] + [line_gap(fs)] * (len(lines) - 2)
-    else:
-        gaps = [line_gap(fs)] * (len(lines) - 1)
-    total_h = sum(gaps)
-    y_cursor = cy + total_h / 2
+
+    cy_top = y_bottom + h - PAD_Y  # baseline of the first (title) line
+    y_cursor = cy_top
+    text_objs = []
     for i, ln in enumerate(lines):
-        is_title = title_fs and i == 0
-        ax.text(x + w / 2, y_cursor, ln, ha="center", va="center",
-                 fontsize=(title_fs if is_title else fs),
-                 fontweight="bold" if is_title else "normal",
-                 color="#1a1a1a", zorder=3)
+        is_title = i == 0
+        t = ax.text(x + w / 2, y_cursor, ln, ha="center", va="top",
+                     fontsize=(title_fs if is_title else fs),
+                     fontweight="bold" if is_title else "normal",
+                     color=(BOXTITLE_BLUE if is_title else BODY_BLACK), zorder=3)
+        text_objs.append(t)
         if i < len(gaps):
             y_cursor -= gaps[i]
-    return (x, y, w, h)
+
+    # hard containment check -- measured, not eyeballed; a failure here means the
+    # figure is wrong and must not be silently written out.
+    _redraw()
+    box_bb = p.get_window_extent(renderer=renderer).transformed(ax.transData.inverted())
+    for ln, t in zip(lines, text_objs):
+        tb = t.get_window_extent(renderer=renderer).transformed(ax.transData.inverted())
+        assert tb.x0 >= box_bb.x0 - 1e-6 and tb.x1 <= box_bb.x1 + 1e-6, (
+            f"STOP: text {ln!r} overflows box horizontally: "
+            f"text=({tb.x0:.2f},{tb.x1:.2f}) box=({box_bb.x0:.2f},{box_bb.x1:.2f})")
+        assert tb.y0 >= box_bb.y0 - 1e-6 and tb.y1 <= box_bb.y1 + 1e-6, (
+            f"STOP: text {ln!r} overflows box vertically: "
+            f"text=({tb.y0:.2f},{tb.y1:.2f}) box=({box_bb.y0:.2f},{box_bb.y1:.2f})")
+
+    return (x, y_bottom, w, h)
 
 
 def arrow(ax, p0, p1, **kw):
@@ -141,46 +188,86 @@ def arrow(ax, p0, p1, **kw):
 
 
 # title box -- fixed #1: GSE55872 -> SRP011042
-box(axa, 8, 50, 84, 7.0,
+box(axa, 8, 50,
     ["Three pipelines compared (SRP011042)",
      "circDEX (CIRIquant + DCC) · CirComPara2 (4 tools) · nf-core/circrna (3 tools)"],
-    fc=BLUE, ec=TITLE_BLUE_EDGE, fs=8.6, title_fs=10.5, lw=1.6)
+    fc=BLUE, ec=TITLE_BLUE_EDGE, fs=8.6, title_fs=10.5, lw=1.6, min_w=84)
 
-col_x = [1, 26.5, 52, 77.5]
-col_w = 21
-headers = ["1  Inputs", "2  Ground truth", "3  Benchmark tasks", "4  Outputs"]
-for cx, hd in zip(col_x, headers):
-    axa.text(cx + col_w / 2, 44.6, hd, ha="center", va="center", fontsize=9.3,
-              fontweight="bold", color="#17315c")
+col_x = [1, 25, 49, None]  # col_x[3] is filled in once column 3's measured width is known
+col_w_12 = 21  # columns 1-2 already fit at this fixed width; only 3-4 need measuring
+HEADER_Y = 44.6
+
+
+def draw_header(cx, text):
+    axa.text(cx, HEADER_Y, text, ha="center", va="center", fontsize=9.3,
+              fontweight="bold", color=HEADER_BLACK)
+
+
+draw_header(col_x[0] + col_w_12 / 2, "1  Inputs")
+draw_header(col_x[1] + col_w_12 / 2, "2  Ground truth")
+# headers for columns 3 and 4 are drawn later, once their measured widths/positions
+# are known -- drawing a guessed position first and painting over it with a second
+# copy left a visible sliver of the first draw in an earlier version of this script.
 
 # column 1: Inputs
-b_in1 = box(axa, col_x[0], 34.0, col_w, 8.8,
-            ["SRP011042", "Hs68 · hg19", "Total RNA, RNase R ×2"], fs=7.6)
-b_in2 = box(axa, col_x[0], 22.0, col_w, 7.3,
-            ["Runtime logs", "/usr/bin/time -v", "single sample, 8 cores"], fs=7.6)
+b_in1 = box(axa, col_x[0], 34.0,
+            ["SRP011042", "Hs68 · hg19", "Total RNA, RNase R ×2"],
+            fs=7.6, title_fs=8.6, min_w=col_w_12)
+b_in2 = box(axa, col_x[0], 21.0,
+            ["Runtime logs", "/usr/bin/time -v", "single sample, 8 cores"],
+            fs=7.6, title_fs=8.6, min_w=col_w_12)
 
 # column 2: Ground truth
-b_gt1 = box(axa, col_x[1], 34.0, col_w, 8.8,
-            ["Enrichment ratio", "ER = RNase R BSJ", "/ Total BSJ"], fs=7.6)
+b_gt1 = box(axa, col_x[1], 34.0,
+            ["Enrichment ratio", "ER = RNase R BSJ", "/ Total BSJ"],
+            fs=7.6, title_fs=8.6, min_w=col_w_12)
 # fixed #2: strict </> -> inclusive >=/<=
-b_gt2 = box(axa, col_x[1], 22.0, col_w, 7.3,
-            ["Label by ER", "ER ≥ 1.5 → TP", "ER ≤ 0.5 → TN"], fs=7.6)
+b_gt2 = box(axa, col_x[1], 21.0,
+            ["Label by ER", "ER ≥ 1.5 → TP", "ER ≤ 0.5 → TN"],
+            fs=7.6, title_fs=8.6, min_w=col_w_12)
 
-# column 3: Benchmark tasks (Task 2 + its output box use the purple fill)
-b_t1 = box(axa, col_x[2], 31.5, col_w, 11.5,
-           ["Task 1 · Detection accuracy", "3 pipelines vs ground truth",
-            "Precision · Recall · F1", "Specificity · AUC-PR"],
-           fs=7.1, title_fs=7.6)
-b_t2 = box(axa, col_x[2], 19.5, col_w, 8.8,
-           ["Task 2 · Compute cost", "wall time · peak RAM · CPU-h",
-            "same sample, 8 cores"], fc=PURPLE, ec=PURPLE_EDGE, fs=7.1, title_fs=7.6)
+# column 3: Benchmark tasks (Task 2 + its output box use the purple fill). Width is
+# measured from content (previously a fixed guess caused the overflow in F1/F2) and
+# shared between the two boxes in this column so their left/right edges align.
+t1_lines = ["Task 1 · Detection accuracy", "3 pipelines vs ground truth",
+            "Precision · Recall · F1", "Specificity · AUC-PR"]
+t2_lines = ["Task 2 · Compute cost", "wall time · peak RAM · CPU-h",
+            "same sample, 8 cores"]
+T3_FS, T3_TITLE_FS = 6.7, 7.3
+col3_w = max(
+    max(text_extent_du(t1_lines[0], T3_TITLE_FS, "bold")[0],
+        max(text_extent_du(l, T3_FS, "normal")[0] for l in t1_lines[1:])),
+    max(text_extent_du(t2_lines[0], T3_TITLE_FS, "bold")[0],
+        max(text_extent_du(l, T3_FS, "normal")[0] for l in t2_lines[1:])),
+) + 2 * PAD_X
+b_t1 = box(axa, col_x[2], 31.0, t1_lines, fs=T3_FS, title_fs=T3_TITLE_FS, min_w=col3_w)
+b_t2 = box(axa, col_x[2], 18.5, t2_lines, fc=PURPLE, ec=PURPLE_EDGE, fs=T3_FS,
+           title_fs=T3_TITLE_FS, min_w=col3_w)
+draw_header(col_x[2] + col3_w / 2, "3  Benchmark tasks")
 
-# column 4: Outputs
-b_out1 = box(axa, col_x[3], 31.5, col_w, 11.5,
-             ["Accuracy outputs", "accuracy_summary.tsv"], fs=7.3, title_fs=7.8)
-b_out2 = box(axa, col_x[3], 19.5, col_w, 8.8,
-             ["Cost outputs", "compute_cost.tsv", "wall time per step · peak RAM"],
-             fc=PURPLE, ec=PURPLE_EDGE, fs=7.1, title_fs=7.6)
+# column 4: Outputs -- same measure-first approach
+out1_lines = ["Accuracy outputs", "accuracy_summary.tsv"]
+out2_lines = ["Cost outputs", "compute_cost.tsv", "wall time per step · peak RAM"]
+T4_FS, T4_TITLE_FS = 7.0, 7.5
+col4_w = max(
+    max(text_extent_du(out1_lines[0], T4_TITLE_FS, "bold")[0],
+        max(text_extent_du(l, T4_FS, "normal")[0] for l in out1_lines[1:])),
+    max(text_extent_du(out2_lines[0], T4_TITLE_FS, "bold")[0],
+        max(text_extent_du(l, T4_FS, "normal")[0] for l in out2_lines[1:])),
+) + 2 * PAD_X
+col_x[3] = col_x[2] + col3_w + 2.0
+b_out1 = box(axa, col_x[3], 31.0, out1_lines, fs=T4_FS, title_fs=T4_TITLE_FS, min_w=col4_w)
+b_out2 = box(axa, col_x[3], 18.5, out2_lines, fc=PURPLE, ec=PURPLE_EDGE, fs=T4_FS,
+             title_fs=T4_TITLE_FS, min_w=col4_w)
+
+right_edge = col_x[3] + col4_w
+xlim_right = axa.get_xlim()[1]
+assert right_edge <= xlim_right, (
+    f"STOP: column 4 content (right edge {right_edge:.2f}) overflows the panel's "
+    f"xlim (0, {xlim_right}) -- widen the canvas or shrink columns 3/4 further, "
+    f"don't just eyeball the render.")
+
+draw_header(col_x[3] + col4_w / 2, "4  Outputs")
 
 
 def mid_right(b):
@@ -198,15 +285,24 @@ arrow(axa, mid_right(b_in1), mid_left(b_gt1))
 arrow(axa, mid_right(b_gt1), mid_left(b_t1))
 arrow(axa, mid_right(b_t1), mid_left(b_out1))
 # Ground truth(Enrichment ratio) feeds Label by ER (vertical, within the column)
-arrow(axa, (col_x[1] + col_w / 2, 34.0), (col_x[1] + col_w / 2, 29.3))
-# Runtime logs -> Task 2: routed BELOW the Ground truth column (a straight line here
-# would pass directly behind/through the "Label by ER" box, which draws over it and
-# makes the arrow look like it dead-ends there instead of reaching Task 2).
-dip_x, dip_y = col_x[1] + col_w / 2, 17.0
-start = mid_right(b_in2)
-axa.plot([start[0], dip_x], [start[1], dip_y], color="#888888", linewidth=1.3,
-          solid_capstyle="round", zorder=1)
-arrow(axa, (dip_x, dip_y), mid_left(b_t2))
+gt1_bottom = b_gt1[1]
+gt2_top = b_gt2[1] + b_gt2[3]
+arrow(axa, (col_x[1] + col_w_12 / 2, gt1_bottom), (col_x[1] + col_w_12 / 2, gt2_top))
+# Runtime logs -> Task 2: a single polyline that runs BELOW the Ground truth column
+# (not through it -- a straight line here would pass directly behind the "Label by
+# ER" box, which draws on top and makes the arrow look like it dead-ends there) and
+# then turns horizontally into Task 2. No sharp downward vertex: the under-box run is
+# a flat horizontal segment, so the two turns are gentle, not a V.
+run_y = b_gt2[1] - 1.8  # a bit below Label-by-ER's bottom edge
+p_start = mid_right(b_in2)
+p_turn1 = (col_x[1] - 1.0, run_y)
+p_turn2 = (col_x[1] + col_w_12 + 1.0, run_y)
+p_end = mid_left(b_t2)
+axa.plot([p_start[0], p_turn1[0]], [p_start[1], p_turn1[1]], color="#888888",
+          linewidth=1.3, solid_capstyle="round", zorder=1)
+axa.plot([p_turn1[0], p_turn2[0]], [p_turn1[1], p_turn2[1]], color="#888888",
+          linewidth=1.3, solid_capstyle="round", zorder=1)
+arrow(axa, p_turn2, p_end)
 arrow(axa, mid_right(b_t2), mid_left(b_out2))
 
 # ---------------------------- Panel (b): wall-time bars ----------------------------
@@ -241,4 +337,5 @@ fig.savefig(os.path.join(OUT, "figure6.png"), dpi=DPI)
 fig.savefig(os.path.join(OUT, "figure6.pdf"), dpi=DPI)
 print("wrote figure6.png/pdf to", OUT)
 print("panel (b) totals:", {b[0]: b[2] for b in bar_data})
-print("DU_PER_PT (sanity check):", DU_PER_PT)
+print("col3_w", col3_w, "col4_w", col4_w, "col_x[3]", col_x[3])
+print("all containment asserts passed")
