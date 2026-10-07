@@ -136,7 +136,7 @@ def main():
     axa.set_xlim(AX_LO, 1.0)
     axa.set_xlabel(f"Fraction of loci with identical coordinates from both callers\n[x-axis truncated to {AX_LO:.3f}\u20131.000]\n"
                    "Label = loci with different coordinates (n of all loci in dataset)")
-    axa.set_title("(a) Coordinate agreement per dataset (sorted by locus count)")
+    axa.set_title("(a) Coordinate agreement per dataset (sorted by locus count)", fontweight="bold")
     axa.grid(axis="x", color="#e5e7eb", lw=0.6)
     axa.set_axisbelow(True)
 
@@ -156,7 +156,7 @@ def main():
              transform=axb.transAxes, va="top", bbox=dict(fc="white", ec="#bbb", alpha=0.9))
     axb.set_xlabel("mean log2(BSJ + 1) over supporting tools")
     axb.set_ylabel("confidence_score")
-    axb.set_title("(b) confidence_score vs mean log2(BSJ + 1)")
+    axb.set_title("(b) confidence_score vs mean log2(BSJ + 1)", fontweight="bold")
     axb.legend(loc="lower right")
     fig.colorbar(hb, ax=axb, label="loci per hexagon (log scale)")
     fig.tight_layout()
