@@ -42,7 +42,8 @@ loci = len(sub)
 dist0, d13, d410 = b["zero"], b["one_three"], b["four_ten"]
 frac_identical = dist0 / b["n"]
 
-fig, (axa, axb) = plt.subplots(2, 1, figsize=(5.5, 5.5), constrained_layout=True)
+fig, (axa, axb) = plt.subplots(2, 1, figsize=(5.5, 5.5), constrained_layout=True,
+                               gridspec_kw={"height_ratios": [3, 1]})
 
 axa.hist(sub.confidence_score, bins=np.arange(
     np.floor(sub.confidence_score.min() / HIST_WIDTH) * HIST_WIDTH,
@@ -50,7 +51,7 @@ axa.hist(sub.confidence_score, bins=np.arange(
     color="#4C72B0")
 axa.set_xlabel("Confidence score")
 axa.set_ylabel("Loci")
-axa.set_title(f"(a) Confidence score, {DATASET} (n = {loci:,} loci)", fontweight="bold")
+axa.set_title("(a)", loc="left", fontweight="bold")
 
 vals = [dist0, d13, d410]
 bars = axb.bar(["0", "1–3", "4–10"], vals, color=["#4C72B0", "#DD8452", "#C44E52"])
@@ -60,7 +61,7 @@ for bar, v in zip(bars, vals):
 axb.set_ylim(0, loci * 1.1)
 axb.set_xlabel("Coordinate difference between callers (bp)")
 axb.set_ylabel("Loci")
-axb.set_title(f"(b) Do the callers agree? {DATASET}", fontweight="bold")
+axb.set_title("(b)", loc="left", fontweight="bold")
 
 fig.savefig(os.path.join(a.out_dir, "figure11.png"), dpi=600)
 fig.savefig(os.path.join(a.out_dir, "figure11.pdf"), dpi=600)

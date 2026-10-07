@@ -26,22 +26,21 @@ COMP = ["sig", "fc", "conf", "known", "mirna", "rbp"]
 LETTER = {"sig": "S", "fc": "F", "conf": "C", "known": "K", "mirna": "M", "rbp": "R"}
 
 fig = plt.figure(figsize=(5.5, 5.5), constrained_layout=True)
-gs = fig.add_gridspec(3, 1, height_ratios=[1.0, 0.16, 0.84])
+gs = fig.add_gridspec(3, 1, height_ratios=[1.0, 0.08, 0.92])
 
 # (a) composite score histogram
 axa = fig.add_subplot(gs[0])
 axa.hist(df["biomarker_score"], bins=20, color="#4C72B0", edgecolor="white", lw=0.4)
 axa.set_xlabel("Composite biomarker_score (equal-weight default)")
 axa.set_ylabel("circRNAs")
-axa.set_title(f"(a) Composite score distribution, GSE133998 (n = {len(df)})", fontweight="bold")
+axa.set_title("(a)", loc="left", fontweight="bold")
 axa.text(0.98, 0.95, f"n = {len(df):,}", transform=axa.transAxes, ha="right", va="top",
          bbox=dict(fc="white", ec="#bbb", alpha=0.9))
 
 # label row for (b), separate from the subplot titles below it so nothing is clipped or collides
 axlbl = fig.add_subplot(gs[1])
 axlbl.axis("off")
-axlbl.text(0.5, 0.5, "(b) Six components (S, F, C, M, R normalized 0–1; K: raw 0/1)",
-           ha="center", va="center", fontweight="bold", transform=axlbl.transAxes, wrap=True)
+axlbl.text(0.0, 0.5, "(b)", ha="left", va="center", fontweight="bold", transform=axlbl.transAxes)
 
 # (b) six components, 1x6 small multiples; K drawn as a 0/1 bar chart, not a histogram
 gs_b = gs[2].subgridspec(1, 6, wspace=0.15)
@@ -51,6 +50,7 @@ for i, c in enumerate(COMP):
     if c == "known":
         counts = [int((vals == 0).sum()), int((vals == 1).sum())]
         ax.bar(["0", "1"], counts, color="#C44E52", width=0.6)
+        ax.set_ylim(0, max(counts) * 1.15)
         ax.set_title("K (binary)", fontsize=8)
         for x, v in enumerate(counts):
             ax.annotate(str(v), (x, v), ha="center", va="bottom", fontsize=7)

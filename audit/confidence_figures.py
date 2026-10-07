@@ -123,7 +123,7 @@ def main():
     # Final print size, not scaled after the fact: figsize in inches == inches on the page, so the
     # rcParams font sizes above are the sizes that actually print. Stacked (1 column, 2 rows) because
     # the 15 dataset labels in panel (a) need the full page width, not half of a landscape figure.
-    fig, (axa, axb) = plt.subplots(2, 1, figsize=(5.5, 6.5))
+    fig, (axa, axb) = plt.subplots(2, 1, figsize=(5.5, 6.5), constrained_layout=True)
     ys = np.arange(len(order))
     xs = [per[g]["frac_identical"] for g in order]
     axa.plot(xs, ys, "o", color="#4C72B0", ms=7)
@@ -136,7 +136,7 @@ def main():
     axa.set_xlim(AX_LO, 1.0)
     axa.set_xlabel(f"Fraction of loci with identical coordinates from both callers\n[x-axis truncated to {AX_LO:.3f}\u20131.000]\n"
                    "Label = loci with different coordinates (n of all loci in dataset)")
-    axa.set_title("(a) Coordinate agreement per dataset (sorted by locus count)", fontweight="bold")
+    axa.set_title("(a)", loc="left", fontweight="bold")
     axa.grid(axis="x", color="#e5e7eb", lw=0.6)
     axa.set_axisbelow(True)
 
@@ -156,10 +156,9 @@ def main():
              transform=axb.transAxes, va="top", bbox=dict(fc="white", ec="#bbb", alpha=0.9))
     axb.set_xlabel("mean log2(BSJ + 1) over supporting tools")
     axb.set_ylabel("confidence_score")
-    axb.set_title("(b) confidence_score vs mean log2(BSJ + 1)", fontweight="bold")
+    axb.set_title("(b)", loc="left", fontweight="bold")
     axb.legend(loc="lower right")
     fig.colorbar(hb, ax=axb, label="loci per hexagon (log scale)")
-    fig.tight_layout()
     f10 = os.path.join(a.out_dir, "figure10.png")
     fig.savefig(f10, dpi=600)
     fig.savefig(os.path.join(a.out_dir, "figure10.pdf"), dpi=600)
