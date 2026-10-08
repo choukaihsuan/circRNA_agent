@@ -166,17 +166,24 @@ def box(ax, x, y_bottom, lines, fc=BLUE, ec=BLUE_EDGE, fs=7.6, title_fs=9.0, lw=
             y_cursor -= gaps[i]
 
     # hard containment check -- measured, not eyeballed; a failure here means the
-    # figure is wrong and must not be silently written out.
+    # figure is wrong and must not be silently written out. A bare "text bbox is a
+    # subset of the box bbox" check passed even when a line's edge was tangent to
+    # the border (touching it, zero clearance) -- require an actual MIN_MARGIN_PT
+    # of breathing room on every side, not just non-overflow.
+    MIN_MARGIN_PT = 4.0
+    margin_du = MIN_MARGIN_PT * DU_PER_PT
     _redraw()
     box_bb = p.get_window_extent(renderer=renderer).transformed(ax.transData.inverted())
     for ln, t in zip(lines, text_objs):
         tb = t.get_window_extent(renderer=renderer).transformed(ax.transData.inverted())
-        assert tb.x0 >= box_bb.x0 - 1e-6 and tb.x1 <= box_bb.x1 + 1e-6, (
-            f"STOP: text {ln!r} overflows box horizontally: "
-            f"text=({tb.x0:.2f},{tb.x1:.2f}) box=({box_bb.x0:.2f},{box_bb.x1:.2f})")
-        assert tb.y0 >= box_bb.y0 - 1e-6 and tb.y1 <= box_bb.y1 + 1e-6, (
-            f"STOP: text {ln!r} overflows box vertically: "
-            f"text=({tb.y0:.2f},{tb.y1:.2f}) box=({box_bb.y0:.2f},{box_bb.y1:.2f})")
+        assert tb.x0 >= box_bb.x0 + margin_du - 1e-6 and tb.x1 <= box_bb.x1 - margin_du + 1e-6, (
+            f"STOP: text {ln!r} has less than {MIN_MARGIN_PT}pt horizontal margin: "
+            f"text=({tb.x0:.2f},{tb.x1:.2f}) box=({box_bb.x0:.2f},{box_bb.x1:.2f}) "
+            f"margin_du={margin_du:.3f}")
+        assert tb.y0 >= box_bb.y0 + margin_du - 1e-6 and tb.y1 <= box_bb.y1 - margin_du + 1e-6, (
+            f"STOP: text {ln!r} has less than {MIN_MARGIN_PT}pt vertical margin: "
+            f"text=({tb.y0:.2f},{tb.y1:.2f}) box=({box_bb.y0:.2f},{box_bb.y1:.2f}) "
+            f"margin_du={margin_du:.3f}")
 
     return (x, y_bottom, w, h)
 
@@ -280,30 +287,52 @@ def mid_left(b):
     return (x, y + h / 2)
 
 
+def hline(ax, p0, p1):
+    """A plain connecting segment (no arrowhead) -- used for the non-terminal legs
+    of a multi-segment route."""
+    ax.plot([p0[0], p1[0]], [p0[1], p1[1]], color="#888888", linewidth=1.3,
+              solid_capstyle="round", zorder=1)
+
+
+def harrow(ax, bA, bB):
+    """Horizontal arrow from box bA's right edge to box bB's left edge, both ends at
+    bA's own mid-height. Box heights are now sized to content, so two boxes in the
+    same "row" rarely share an exact mid-y; a diagonal FancyArrowPatch between them
+    (short segment + the panel's strongly anisotropic x:y data scale) was found to
+    render with its arrowhead at the WRONG end (confirmed by an isolated repro) --
+    forcing the connector perfectly horizontal (or, for the routed one below,
+    perfectly horizontal/vertical per segment) avoids the diagonal entirely rather
+    than trying to out-guess when the matplotlib bug does or doesn't trigger."""
+    y = bA[1] + bA[3] / 2
+    arrow(ax, (bA[0] + bA[2], y), (bB[0], y))
+
+
 # Inputs(SRP011042) -> Ground truth(Enrichment ratio) -> Benchmark(Task1) -> Outputs(Accuracy)
-arrow(axa, mid_right(b_in1), mid_left(b_gt1))
-arrow(axa, mid_right(b_gt1), mid_left(b_t1))
-arrow(axa, mid_right(b_t1), mid_left(b_out1))
-# Ground truth(Enrichment ratio) feeds Label by ER (vertical, within the column)
+harrow(axa, b_in1, b_gt1)
+harrow(axa, b_gt1, b_t1)
+harrow(axa, b_t1, b_out1)
+# Ground truth(Enrichment ratio) feeds Label by ER (vertical, within the column --
+# this one is axis-aligned the other way (constant x), so it isn't susceptible to
+# the diagonal-arrowhead bug above)
 gt1_bottom = b_gt1[1]
 gt2_top = b_gt2[1] + b_gt2[3]
 arrow(axa, (col_x[1] + col_w_12 / 2, gt1_bottom), (col_x[1] + col_w_12 / 2, gt2_top))
-# Runtime logs -> Task 2: a single polyline that runs BELOW the Ground truth column
-# (not through it -- a straight line here would pass directly behind the "Label by
-# ER" box, which draws on top and makes the arrow look like it dead-ends there) and
-# then turns horizontally into Task 2. No sharp downward vertex: the under-box run is
-# a flat horizontal segment, so the two turns are gentle, not a V.
+# Runtime logs -> Task 2: routed BELOW the Ground truth column (a straight line
+# would pass directly behind the "Label by ER" box, which draws on top and makes
+# the arrow look cut off there) using ONLY axis-aligned segments -- every bend is a
+# plain horizontal or vertical leg, never a diagonal, so none of them can trip the
+# anisotropic-short-diagonal arrowhead bug noted above.
 run_y = b_gt2[1] - 1.8  # a bit below Label-by-ER's bottom edge
 p_start = mid_right(b_in2)
-p_turn1 = (col_x[1] - 1.0, run_y)
-p_turn2 = (col_x[1] + col_w_12 + 1.0, run_y)
+p_down = (p_start[0], run_y)
+p_under = (col_x[1] + col_w_12 + 1.0, run_y)
+p_up = (p_under[0], mid_left(b_t2)[1])
 p_end = mid_left(b_t2)
-axa.plot([p_start[0], p_turn1[0]], [p_start[1], p_turn1[1]], color="#888888",
-          linewidth=1.3, solid_capstyle="round", zorder=1)
-axa.plot([p_turn1[0], p_turn2[0]], [p_turn1[1], p_turn2[1]], color="#888888",
-          linewidth=1.3, solid_capstyle="round", zorder=1)
-arrow(axa, p_turn2, p_end)
-arrow(axa, mid_right(b_t2), mid_left(b_out2))
+hline(axa, p_start, p_down)
+hline(axa, p_down, p_under)
+hline(axa, p_under, p_up)
+arrow(axa, p_up, p_end)
+harrow(axa, b_t2, b_out2)
 
 # ---------------------------- Panel (b): wall-time bars ----------------------------
 axb = fig.add_subplot(gs[1])
