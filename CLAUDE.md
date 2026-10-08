@@ -1729,18 +1729,18 @@ conda run -n ciriquant snakemake \
 | STAR paired+mate1+mate2 | ✅ 36/36 完成 |
 | DCC | ✅ 12/12 完成 |
 | consensus_filter / merge_counts | ✅ 完成（22,577 circRNAs；子集 8 樣本）|
-| DE analysis（4 pairs）| ✅ 完成（edgeR 57 / DESeq2 58 / limma 627 significant）|
+| DE analysis（4 pairs）| ✅ 完成（edgeR 48 / DESeq2 58 / limma 627 significant）|
 | isoform_switching（4 pairs）| ✅ 完成（37 events，within-gene FDR < 0.1）|
 | predict_interactions | ✅ 完成（union mode，interactions.json 9.2MB，2026-06-29 20:42）|
-| rank_biomarkers | ✅ 完成（57 candidates，biomarker_candidates.tsv 15KB）|
+| rank_biomarkers | ✅ 完成（48 candidates，biomarker_candidates.tsv 15KB）|
 | report | ✅ 完成（report.html 9.1MB，2026-06-29 22:36）|
 
 **主要數值結果（4 pairs 重跑）**：
 - 偵測：22,577 consensus circRNAs；count_matrix.tsv 子集為 8 samples（SRR22757410/412/414/416/430/432/434/436）；filterByExpr 後 **928 tested**
-- DE（edgeR_ciriquant）：**57 significant**（nominal p < 0.05，|log2FC| > 1）；全為 Type_I（配對設計 `~patient+condition`）
+- DE（edgeR_ciriquant）：**48 significant**（nominal p < 0.05，|log2FC| > 1）；全為 Type_I（配對設計 `~patient+condition`）
 - DE（DESeq2）：**58 significant**；DE（limma-voom）：**627 significant**
 - Isoform switching：37 events（within-gene BH FDR < 0.1，|ΔIUI| > 0.1）
-- Biomarker candidates：**57 個**（edgeR 顯著 circRNA 全部進入）；Top 1：chr2:40655613|40657444（log2FC=−6.79，pvalue=0.024，Type_I）
+- Biomarker candidates：**48 個**（edgeR 顯著 circRNA 全部進入）；Top 1：chr2:40655613|40657444（log2FC=−6.79，pvalue=0.024，Type_I）
 
 **排除原因詳細說明**：
 - Pair 8（PC8=SRR22757442：6 BSJ）+ Pair 11（PN11=SRR22757419：28 BSJ）：fastp insert_size_peak ≈ 40–44 bp（正常 ≈ 268–269 bp）→ library prep 前 RNA 已降解，adapter dimer 佔主體，無法產生有效的 BSJ spanning reads
@@ -2650,3 +2650,67 @@ RNase R 富集使 Chimeric.out.junction 檔案極大（paired: 438K–1.3M lines
 **Server config**（`config/projects/GSE192849.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE192849/raw`
 - `results_dir: /home3/choukaihsuan/GSE192849_results`
+
+---
+
+## 作業規則（所有 session 適用，含雲端 session）
+
+### 絕對禁止
+
+- **不要修改任何 `.docx` 檔案。** 論文由另一個 session 負責，這裡一個字都不要動。
+- **不要把論文相關內容 commit 進這個 repo**：論文稿、論文全文擷取、論文用的
+  圖檔、以及論文層級的稽核文件（逐句對帳、claim 稽核）都不屬於這裡。
+  這個 repo 裝的是軟體，以及重現分析所需的證據。論文本身的品質稽核不在此列。
+- **不要執行 snakemake。** 任何形式都不要，包含看似無害的呼叫。
+  已發表的輸出目錄上，即使 HEAD 版本也會把 `consensus_filter`、`de_analysis`、
+  `generate_report` 判為已變動，不帶 `--rerun-triggers mtime` 的執行會覆寫
+  已發表結果，而且用的是已修改過的程式。最糟的是**部分**重跑：部分資料集換新
+  程式、部分維持舊版，產生無法申報的混合產物，而報告上看不出來。
+- **不要寫入任何已發表結果目錄**（`~/GSE*_results/`、`~/SRP*_results/`、
+  `~/PRJNA*_results/`）。診斷與重算的輸出一律寫到新的 scratch 目錄。
+- **不要調整任何數字去湊。** 重算結果與已發表數字不符時，照實回報不符，
+  並診斷原因；不要修改篩選條件、門檻或輸入去讓它們吻合。
+
+### 需要停下來回報、不要自行決定
+
+- 安裝任何套件或建立 conda 環境之前。
+  （若必須安裝，**不要動產生已發表結果的 `ciriquant` 環境**，另開新環境。）
+- 數字對不上、公式有多個版本、檔案有多份版本（stale vs live）時。
+- 程式碼查證的結果有多種可能，而不同結果對應不同處理方式時。
+- 任何會改變已發表輸出的動作。
+
+### 必須遵守的作法
+
+- 要中斷 snakemake 或長時間程序時一律用 `kill -9`，不要用裸 `kill`／SIGTERM。
+- 產生的表格與圖檔依**明確檔名** gitignore，只 commit 腳本。
+- 每一張進論文的圖都必須有可重產的腳本並 commit。
+  （曾經有一張圖找不到任何來源，花了一整輪才處理掉。）
+- 畫圖時，版面正確性要用**程式斷言**保證，不要靠目視：
+  文字 bbox 必須完全落在其容器 bbox 內**且留有內距**，
+  文字之間、文字與圖元之間不得相交。斷言失敗就 raise。
+- 修改任何會出現在圖面上的文字時，記得**點陣圖那一層也要改**。
+  只改可搜尋的文字層是這個專案反覆出現的失誤模式。
+- 重跑或重算前先備份並記錄 md5，作為回退點。
+- 動到共用檔案前後各做一次 `find -printf '%T@ %s %p\n' | sort` 快照並 diff，
+  證明沒有誤改。
+
+### 這個環境的限制
+
+- 雲端 session 連不到 `172.16.0.178`（內網私有位址）。
+  任何需要已發表結果目錄、原始資料或 server 上執行的工作都不能在雲端做。
+- 雲端 session 只有 repo，沒有本機設定、沒有伺服器資料。
+  適合的工作：腳本、測試、資安強化、文件、git 歷史稽核。
+
+### 已知的失誤模式（出現過就記在這裡）
+
+- **靜默接線缺口**：config 選項存在、UI 看起來改了，實際沒傳到腳本。
+  已發生三次（`components_arg`、`sig_cap`／`fc_cap`、`tools.ciriquant.anchor`）。
+  對策：dry-run 斷言測試——把每個 config 鍵設成偏離預設值，
+  斷言全部出現在實際的命令列上。
+- **程式版本漂移**：已發表結果是在程式演進過程中陸續產生的，不是同一版。
+  已知兩軸：去重 commit `4dfa28a`（8/15 資料集用舊版）、
+  `rank_biomarkers.py` 的 M/R 缺值處理（5/15 用舊公式）。
+  碰到重現不了的已發表數字時，先懷疑版本漂移，不要先懷疑自己算錯。
+- **stale 檔案**：`~/GSE55872_results/` 底下有過時的 `ground_truth.tsv`
+  （5,995 列）。現行的是 `~/GSE113230_results/benchmark/rnaser/`（5,176 列）。
+  已經誤入三次，用錯會算出不合理的結果。
