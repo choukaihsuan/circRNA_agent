@@ -260,3 +260,35 @@ def test_expected_sections_present():
         if not ok:
             missing.append(name)
     assert not missing, "missing in this checkout: %s" % missing
+
+
+# ── templates must not drift from the live config ─────────────────────────────────────────────────
+
+def test_config_example_has_same_keys_as_config_yaml():
+    import yaml
+    live = w.leaf_paths(w.load_base_config())
+    ex = w.leaf_paths(yaml.safe_load((ROOT / "config.example.yaml").read_text()))
+    assert sorted(live) == sorted(ex), (
+        "config.example.yaml and config.yaml differ. only in config.yaml: %s; only in example: %s"
+        % (sorted(set(live) - set(ex)), sorted(set(ex) - set(live))))
+
+
+def test_config_example_has_no_maintainer_paths():
+    text = (ROOT / "config.example.yaml").read_text() + (ROOT / "config" / "ciriquant.example.yaml").read_text()
+    for needle in ("choukaihsuan", "/mnt/d", "/home3", "/home/"):
+        assert needle not in text, "personal path leaked into a template: " + needle
+
+
+def test_ciriquant_example_has_same_keys_as_live_file():
+    import yaml
+    live = w.leaf_paths(yaml.safe_load((ROOT / "config" / "ciriquant.yaml").read_text()))
+    ex = w.leaf_paths(yaml.safe_load((ROOT / "config" / "ciriquant.example.yaml").read_text()))
+    assert sorted(live) == sorted(ex)
+
+
+def test_example_config_builds_a_dag(tmp_path):
+    """The template itself must be usable: with placeholder paths swapped for fixture files, the DAG builds."""
+    import yaml
+    cfg = yaml.safe_load((ROOT / "config.example.yaml").read_text())
+    cmds = w.render(tmp_path, cfg)
+    assert cmds.get("consensus_filter") and cmds.get("rank_biomarkers")

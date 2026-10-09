@@ -147,21 +147,21 @@ cd circRNA_agent
 # 1. Activate an environment with the dependencies above (conda or container)
 conda activate ciriquant   # or: your equivalent environment
 
-# 2. Edit config.yaml and config/ciriquant.yaml — see the warning below
-#    (see Reference genome / Configuration Reference for exactly what to change)
+# 2. Start from the templates and replace every /path/to/... with your own paths
+#    (see "Reference genome" below for exactly what each field must point to)
+cp config.example.yaml config.yaml
+cp config/ciriquant.example.yaml config/ciriquant.yaml
 
 # 3. Start the Web UI
 python scripts/web_ui.py --host 127.0.0.1 --port 5000   # use 0.0.0.0 only behind a reverse proxy, see Security
 ```
 
-> ⚠️ **`config.yaml` and `config/ciriquant.yaml` are checked into this repo
-> as the maintainer's own working copies**, not blank templates — every path
-> in them (reference genome files, index directories, tool binaries, cache
-> directories) points to a specific machine and does not exist on yours. The
-> pipeline will fail with confusing `FileNotFoundError`/`ConfigError`
-> messages until you replace them. See
-> [Reference genome](#reference-genome) below for the exact fields to edit
-> before running anything.
+> ⚠️ **The checked-in `config.yaml` and `config/ciriquant.yaml` are the
+> maintainer's own working copies** — every path in them points to a specific
+> machine and does not exist on yours, and the pipeline fails with confusing
+> `FileNotFoundError`/`ConfigError` messages if you use them as-is. Overwrite
+> them with `config.example.yaml` / `config/ciriquant.example.yaml` (step 2
+> above) and fill in your paths; see [Reference genome](#reference-genome).
 
 Then open `http://<your-server-ip>:5000` in a browser, paste a GEO accession
 (e.g. `GSE113230`) into the "GEO Dataset" card, pick a core count, and click
@@ -241,10 +241,10 @@ STAR --runMode genomeGenerate \
      --runThreadN 8
 ```
 
-**3. Point both config files at your paths.** `config.yaml` and
-`config/ciriquant.yaml` ship in this repo pre-filled with the maintainer's
-own paths (see the warning above) — every field below needs to be replaced
-with your own:
+**3. Point both config files at your paths.** Create them from the templates
+(`cp config.example.yaml config.yaml` and
+`cp config/ciriquant.example.yaml config/ciriquant.yaml`); the templates contain
+`/path/to/...` placeholders, and every field below needs to be replaced with your own:
 
 | File | Field(s) | What it should point to |
 |------|----------|--------------------------|

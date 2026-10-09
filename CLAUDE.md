@@ -1,5 +1,9 @@
 # circRNA Analysis Pipeline — Project Context for Claude
 
+> **給 agent（含雲端 session）的優先順序**：本檔最後的〈作業規則〉**優先於**本檔所有操作說明。
+> 下文的 `snakemake …`／`--forcerun`／`pkill`／`rm -rf …`／`/tmp/run_*.py|R` mock 腳本等，是維護者在 server 上手動操作的**紀錄**，
+> agent **不得執行**，尤其不得寫入已發表結果目錄（`~/GSE*_results/` 等）。重算一律寫到新的 scratch 目錄。
+
 ## 專案概述
 
 本專案是一個以 **Snakemake** 驅動的 circRNA（環狀 RNA）全流程分析管線，
@@ -62,6 +66,12 @@ circRNA_agent/
 │       └── status.html          # Pipeline 狀態頁（進度條 + rule 狀態格 + log）
 ├── envs/
 │   └── circrna.yaml             # Conda 環境定義（mamba 建置；已移除 defaults channel）
+├── tests/                       # pytest：Web UI 資安、config→命令列接線（Snakemake dry-run）、最小範例、study_title
+├── deploy/                      # gunicorn / systemd / nginx 範例（未在實機測過）
+├── examples/minimal/            # 只需 Python 3 的最小可重現範例（雙工具 consensus）
+├── audit/                       # 稽核報告（secret scan、資安強化、README 實測）；不放論文層級稽核
+├── config.example.yaml          # 設定模板（/path/to 佔位）；config/ciriquant.example.yaml 同理
+├── requirements-web.txt / requirements-test.txt
 └── logs/                        # Snakemake 各 rule 的 log 檔
 ```
 
@@ -234,7 +244,7 @@ biomarker_score = (sig_norm + fc_norm + conf_norm + known_bonus + mirna_norm + r
   rbp_norm   = distinct RBP binders 數，min-max 標準化（無 interaction data 者為 0）
 ```
 
-- 顯著閾值欄位依 `de_sig_by` 而定：`pvalue`（nominal）或 `padj`（BH 校正）
+- 顯著閾值欄位依 `de_sig_by` 而定：`auto`（預設，q<0.2 → 否則 nominal p<0.05）、`pvalue`（nominal）、`padj`（BH 校正）、`qvalue`
 - CLI 參數：`--use-pvalue` 對應 `de_sig_by: pvalue`
 - miRNA/RBP interaction 資料來自 `predict_interactions.py`（CircInteractome/ENCORI 查詢，**三方法 top-50 聯集**，~150–250 個 circRNA）；union mode：`--de-edger / --de-deseq2 / --de-limma` 各取 top-50 up + top-50 down 後取聯集，確保切換 DE 方法時 Biomarker Score 完整
 
@@ -265,9 +275,12 @@ FSJ counts → TMM normalization → per-locus FSJ CPM 作為 GLM offset
 
 **重要欄位命名**：merge BSJ/FSJ 結果後，`PValue` 不加後綴（只有 `logFC`、`FDR` 因同時出現在兩表才加 `_bsj`/`_fsj`）。`bsj_sig_col` 必須用 `"PValue"`，不是 `"PValue_bsj"`。
 
-**顯著性欄位切換**（`config de.de_sig_by`）：
-- `padj`（預設）：BH 校正 FDR。小樣本（n=3 vs 3）+ 多重檢定（~7,779 tests）時 min padj ≈ 0.432，幾乎無法通過
-- `pvalue`：nominal p-value（未校正）。小樣本研究的實務做法，論文中需標明
+**顯著性欄位切換**（`config de.de_sig_by`；`analysis.R` 與 `rank_biomarkers.py --de-sig-by` 接受 `auto | pvalue | padj | qvalue`）：
+- `auto`（**`config.yaml` 與 rule 的預設**）：先對 p-value 做 Storey q-value，若有任何 circRNA `q < 0.2` 就用 q-value 判定；否則退回 nominal `p < 0.05`（`analysis.R` 的 `do_cascade`）
+- `pvalue`：nominal p-value（未校正）。小樣本研究的實務做法，需在文中標明
+- `padj`：BH 校正 FDR。小樣本（n=3 vs 3）+ 多重檢定（~7,779 tests）時 min padj ≈ 0.432，幾乎無法通過
+- `qvalue`：固定使用 Storey q-value（`q < 0.2`）
+- **已發表資料集的 `config/projects/{GSE}.yaml` 可能固定為 `pvalue`**（早期結果即以 nominal p 產生）；判讀某資料集的顯著數時，以該資料集 snapshot 為準，不是 repo 的 `config.yaml`
 
 `analysis.R` 有 **backward-compatible fallback**：若 `snakemake@input[["fsj_matrix"]]` 不存在（舊 DAG），自動 fallback 到 deseq2。
 
@@ -314,7 +327,7 @@ de:
   method:              edgeR_ciriquant    # edgeR_ciriquant / deseq2 / limma
   fdr_cutoff:          0.05
   log2fc_cutoff:       1.0
-  de_sig_by:           pvalue            # pvalue = nominal p；padj = BH 校正 FDR
+  de_sig_by:           auto              # auto = Storey q<0.2，否則 nominal p<0.05（repo 預設）；pvalue / padj / qvalue = 固定
   isoform_fdr_cutoff:  0.1               # within-gene FDR for isoform switching
   delta_iui_cutoff:    0.1               # minimum |ΔIUI| to call switching
   tumor_label:         tumor
@@ -385,7 +398,7 @@ ssh choukaihsuan@172.16.0.178
 ssh genomics
 ```
 
-**執行 pipeline**：
+**執行 pipeline**：*（維護者在 server 上手動執行；agent 不得執行，見〈作業規則〉）*
 ```bash
 cd ~/circRNA_agent
 conda activate ciriquant
@@ -457,7 +470,7 @@ python scripts/web_ui.py --host 0.0.0.0 --port 5000
 - Token 有效期：30 分鐘（`TOKEN_MINUTES=30`），儲存在 `jobs/auth_tokens.db`
 - Session 有效期：7 天（`SESSION_DAYS=7`），存在 Flask session cookie
 - 允許登入的 Email 白名單：`ALLOWED_EMAILS`（環境變數 `PIPELINE_ALLOWED_EMAILS`，逗號分隔）
-- 支援 **Resend API**（`RESEND_API_KEY` 環境變數）→ fallback SMTP → fallback console 印出連結
+- 支援 **Resend API**（`RESEND_API_KEY` 環境變數）→ fallback SMTP；皆未設定時 console 只印收件者與主旨，**不印連結**——本機開發須明確設 `PIPELINE_DEV_PRINT_LINK=1`（公開部署不可開）
 - `send_magic_link(email, link, lang="zh")` 根據 `lang` 切換中英文信件內容
 - 登入頁 lang switcher（右上角 中文 / EN）同步切換 UI 與信件語言；錯誤訊息透過 `data-en` 屬性雙語顯示
 
@@ -495,7 +508,7 @@ Dataset Selection Guide 和 Pipeline Tutorial 折疊區塊標題列各加一個�
 
 **`_fetch_geo_title(gse_id)`**（`web_ui.py`，2026-06-19）：
 呼叫 `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gds&id=200{NNNNNN}&retmode=json`，
-從 `result[uid]["title"]` 取研究標題。GEO uid 公式：`"200" + GSE 數字部分`（GSE130078 → 200130078）。
+從 `result[uid]["title"]` 取研究標題。GEO uid 公式：`200000000 + GSE 編號`（GSE130078 → 200130078；GSE58135 → 200058135）。舊公式 `"200" + 數字` 只在 6 位數 GSE 正確，5 位數會查到別的紀錄（已於 `scripts/geo_title.py` 修正；既有快照可用 `scripts/audit_study_titles.py` 在 server 上唯讀檢查）。
 Server 防火牆允許此 endpoint（僅 PRJNA/SRP 的其他 eUtils endpoint 被封鎖）。timeout=8s，失敗回傳空字串。
 
 **`_infer_stages_from_files(results_dir, stages)`**（`web_ui.py`，2026-06-19）：
@@ -623,6 +636,8 @@ cp config/projects/GSE113230.yaml config.yaml
 
 ### Server 端獨立重跑腳本（Mock snakemake 物件）
 
+> *維護者手動使用。這些 wrapper 會寫入 `~/GSE*_results/`，agent 不得執行（〈作業規則〉：不得寫入已發表結果目錄）。*
+
 當 server 上 config.yaml 已切換到其他專案時，用以下 wrapper 直接執行，繞過 Snakemake DAG：
 
 **`/tmp/run_generate_report.py`**（Python mock）：
@@ -694,6 +709,8 @@ source('/home/choukaihsuan/circRNA_agent/scripts/analysis.R')
 評估本 pipeline 對抗三個已發表方法的偵測準確率與 DE 品質，輸出自包含 HTML 報告。
 
 ### 執行方式
+
+> *維護者在 server 上手動執行；agent 不得執行 snakemake。*
 
 ```bash
 cd ~/circRNA_agent
@@ -843,7 +860,7 @@ GSE55872 的 FASTQs 由 `bench_download` rule 從 **EBI FTP** 自動下載，無
 - **Compute Cost 表格**：`_compute_cost_table_html(comp)` 函式；"Tool Breakdown" 欄顯示 stacked mini-bar（CIRIquant=深藍 / STAR×3=中藍 / DCC=淺藍 / CIRCexplorer2=橙 / find_circ=綠 / Other=灰）及各工具時間數值；最短 Total 以綠色粗體標示；需 `compute_cost.tsv` 含 per-tool 欄（`CIRIquant_min`, `STAR_min`, `DCC_min`, `CIRCexplorer2_min`, `find_circ_min`，已由 `compute_cost.py` 自動輸出）
 - **Stratified F1**：bar chart 已移除；表格只顯示 circDEX 一行（`strat[strat["Method"]=="Our_adaptive"]`，內部 key 仍為 `Our_adaptive`）
 
-**獨立重跑 benchmark 腳本**（繞過 Snakemake，適合 config 指向其他專案時）：
+**獨立重跑 benchmark 腳本**（繞過 Snakemake，適合 config 指向其他專案時；*維護者手動使用，會寫入 `GSE113230_results/benchmark/`，agent 不得執行*）：
 ```bash
 RESULTS='/home3/choukaihsuan/GSE113230_results'
 BENCH=$RESULTS/benchmark
@@ -920,7 +937,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 | CIRIquant 輸出 `.bed` 而非 `.bsj` | CIRIquant 1.1.3 bioconda 版本差異 | rule output 只宣告 `.gtf`，忽略 `.bed` |
 | multiqc ImportError TypedDict | multiqc 1.17 + markdown 3.6 不支援 Python 3.7 | `pip install markdown==3.3.7` |
 | Snakemake LockException | 前次執行被 kill 留下 lock | `snakemake --unlock` 後重跑 |
-| samtools sort "File exists" | 多個 CIRIquant 進程同時寫同一 sample 的暫存檔 | `pkill -f CIRIquant`，`rm -rf results/circRNA/`，重新跑 |
+| samtools sort "File exists" | 多個 CIRIquant 進程同時寫同一 sample 的暫存檔 | `pkill -9 -f CIRIquant`（一律 `-9`，見〈作業規則〉），`rm -rf results/circRNA/`，重新跑 |
 | `nohup: failed to run command 'snakemake'` | conda env 未啟動 | 先 `conda activate ciriquant` |
 | wildcard ambiguity（star_align vs mate1/mate2） | `{srr}` wildcard 匹配到 `SRR7012366/mate1` | 在 `circrna.smk` 加 `wildcard_constraints: srr = r"[A-Z]+\d+"` |
 | star_align temp dir 硬編路徑 | 原本 `/home/choukaihsuan/star_tmp/{srr}` 只適用本機 | 改為 `RESULTS_DIR + "/circRNA/{srr}/star_tmp"` |
@@ -1184,6 +1201,11 @@ Plotly 依賴：`plotly`、`numpy`；若兩者未安裝則自動 fallback 到靜
 ---
 
 ## 目前執行進度（共 20 個資料集完成；0 個進行中）
+
+> **⚠️ 程式版本漂移（尚未登錄完整對照）**：已發表結果是在程式演進過程中陸續產生，不是同一版。已知兩軸：
+> 去重 commit `4dfa28a`（`consensus_filter.py` 座標分群去重）與 `rank_biomarkers.py` 的 M/R 缺值處理。
+> 作業規則提及「8/15 資料集用舊版去重」「5/15 用舊 biomarker 公式」，但**本檔列了 20 個資料集，「15」的範圍與各資料集所用版本尚未在此登錄**，
+> 需由維護者從各資料集的產生時間／輸出核對後補上。碰到重現不了的已發表數字，先懷疑版本漂移。
 
 > **⚠️ GSE108735 資料集更正**：原標記為「TNBC」，實際確認為**腎細胞癌（Renal Cell Carcinoma，RCC）**，7 pairs tumor vs. 正常腎組織，ncRNA-Seq（SRR6439741–SRR6439754）。GSE171011 原標記為「TNBC」，實際為**甲狀腺乳突癌（Papillary Thyroid Cancer，PTC）**，4T+4N=8 samples，RNA-Seq（SRR14088791–SRR14088798）。
 
@@ -2372,64 +2394,10 @@ cancer label：`tumor` / `normal`；genome：hg19
 
 ---
 
-## 論文 Discussion 素材：腫瘤組織 circRNA 普遍下調的生物機制
+## （已移出）論文 Discussion 素材
 
-本 pipeline 分析的多個資料集（GSE113230 乳癌、GSE133998 乳癌、GSE77509 HCC、GSE248612 胃癌）
-均觀察到 **腫瘤組織的 DECs 以下調為主**，此為 circRNA 研究中有生物學基礎的一致性現象。
-
-### 機制一：腫瘤細胞分裂加速 → 線性 RNA 競爭優勢
-
-正常細胞靜止時，circRNA 因半衰期長（缺少 5' cap 和 poly-A，不被外切酶降解）可大量積累。
-腫瘤細胞快速分裂時，細胞體積快速倍增，單位時間內線性 mRNA 轉錄速率必須跟上增殖需求，
-而 circRNA 的產生本身就是「競爭性剪接」的結果（環化剪接 vs. 線性剪接）——
-**高增殖率環境偏向線性剪接**，circRNA 生成效率下降。
-
-### 機制二：剪接因子重塑（splicing factor remodeling）
-
-腫瘤中多種 RNA 結合蛋白（RBP）表現改變，這些蛋白直接影響背向剪接（back-splicing）效率：
-
-| RBP | 腫瘤中變化 | 對 circRNA 影響 |
-|-----|-----------|----------------|
-| **QKI**（Quaking）| 多種腫瘤下調 | QKI 是促進 circRNA 產生的關鍵 RBP；QKI↓ → circRNA 全局下調 |
-| **ESRP1/2**（epithelial splicing regulatory protein）| 上皮-間質轉化（EMT）時下調 | 影響 exon skipping 和 back-splicing 比例 |
-| **MBNL family** | 多種腫瘤中表現異常 | 競爭 RNA 二級結構形成，影響環化效率 |
-| **muscleblind-like** | — | 影響 circRNA biogenesis 的 intronic repeat pairing |
-
-### 機制三：circRNA 作為腫瘤抑制因子
-
-許多已知 circRNA 功能是**腫瘤抑制性**的：
-- 作為 **miRNA sponge** 保護腫瘤抑制基因的 mRNA（最著名例子：ciRS-7/CDR1as 吸附 miR-7，保護 EGFR pathway 拮抗基因）
-- 干擾 oncogene 翻譯或信號傳遞
-- 腫瘤中這些 circRNA 下調，相當於**解除對 oncomiRNA 的競爭抑制**（ceRNA hypothesis）
-
-### 機制四：表觀遺傳靜默（epigenetic silencing）
-
-DNA 甲基化和 H3K27me3 在腫瘤中大規模重塑：
-- 許多 circRNA 的親本基因被靜默
-- 或剪接調控序列（如 intronic inverted repeats）被甲基化，影響環化效率
-
-### 本 pipeline 的技術角度補充
-
-**edgeR_ciriquant 測的是 BSJ/FSJ 比值**，因此「下調」意味著相對線性轉錄本的環化效率下降，
-不一定是 BSJ 絕對量減少。這比純粹看 BSJ counts 更靈敏地反映「circRNA 專一性」的調控變化。
-
-GSE130078（ESCC 食道鱗狀細胞癌）的 623 個 limma 顯著 circRNA 中下調比例更高，可能是鱗狀癌中
-QKI/ESRP1/2 的表現量特別低，加劇了 back-splicing 抑制。
-
-### 論文引用建議
-
-| 文獻 | 說明 |
-|------|------|
-| Hansen et al. (2013) *Nature* | ciRS-7/CDR1as 作為 miR-7 sponge |
-| Jeck et al. (2013) *Genome Biology* | circRNA 在分化細胞中高表現，增殖細胞中低表現 |
-| Wan et al. (2019) *Cancer Research* | QKI 調控 circRNA biogenesis，腫瘤中 QKI 下調機制 |
-| Kristensen et al. (2019) *Nucleic Acids Research* | circRNA 作為癌症生物標記的系統性綜述 |
-| Conn et al. (2015) *eLife* | ESRP1/2 控制 back-splicing 效率 |
-| Zhang et al. (2016) *Molecular Cell* | RBP 調控 circRNA 環化的分子機制（MBNL、QKI 等）|
-
-**整體趨勢**：乳癌（GSE113230/GSE133998）、HCC（GSE77509）、胃癌（GSE248612）、攝護腺癌（GSE221107）
-的分析結果均與此文獻一致——circRNA 在腫瘤中全局下調，且 Type_I DECs（circRNA 專一性，非線性 mRNA 變化）
-佔 85–98%，進一步支持腫瘤中背向剪接效率普遍降低的假說。
+原本在此的「腫瘤組織 circRNA 普遍下調的生物機制」（四個機制＋論文引用建議）屬於論文內容，依〈作業規則〉不放在本 repo，已移除。
+需要時可由歷史取回：`git show 14c5662:CLAUDE.md`（該 commit 仍含完整段落）。論文由另一個 session 維護。
 
 ---
 
@@ -2654,6 +2622,9 @@ RNase R 富集使 Chimeric.out.junction 檔案極大（paired: 438K–1.3M lines
 ---
 
 ## 作業規則（所有 session 適用，含雲端 session）
+
+**本節優先於本檔其他任何操作說明。** 與前文的 snakemake 指令、mock 重跑腳本、`--forcerun`、`rm -rf`、`pkill` 等衝突時，一律以本節為準
+（前文是給人在 server 上用的歷史紀錄）。
 
 ### 絕對禁止
 

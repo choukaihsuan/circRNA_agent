@@ -1,0 +1,68 @@
+# config.example.yaml - template for config.yaml
+#
+#   cp config.example.yaml config.yaml
+#   # then replace every /path/to/... below with a real path on YOUR machine.
+#
+# The Web UI writes a per-project snapshot of the settings under config/projects/{ID}.yaml for each
+# analysis you submit, so after the one-off environment setup (genome / tool paths) you normally never
+# edit this file again. See README.md ("Reference genome", "Configuration Reference").
+
+project_id: GSE113230                     # names the output directories; the Web UI overwrites it per project
+metadata: metadata/library_info.csv       # srr_id,paired
+groups: metadata/sample_groups.csv        # srr_id,condition[,patient_id]
+
+# ── Paths (writable, with plenty of free space: see "Minimum Hardware Requirements") ─────────────────
+raw_dir:     /path/to/data/GSE113230/raw
+trimmed_dir: /path/to/data/GSE113230/trimmed
+results_dir: /path/to/data/GSE113230_results
+log_dir: logs
+
+download:
+  max_concurrent: 2
+  retry: 3
+  sra_cache_dir: /path/to/data/GSE113230/sra_cache
+  tmp_dir:       /path/to/data/GSE113230/sra_tmp
+  ascp_speed: 500m
+
+# ── Reference genome (hg19): FASTA + GTF and the three aligner indices ───────────────────────────────
+genome:
+  fasta:        /path/to/hg19/hg19.fa
+  gtf:          /path/to/hg19/genes.gtf
+  bwa_index:    /path/to/hg19/bwa_index/hg19          # prefix given to `bwa index -p`
+  hisat2_index: /path/to/hg19/hisat2_index/hg19       # prefix given to `hisat2-build`
+  star_index:   /path/to/hg19/star_index              # --genomeDir given to STAR
+  species: hg19
+
+# CIRIquant's own YAML (tool binaries + reference). Copy config/ciriquant.example.yaml to this name.
+ciriquant_config: config/ciriquant.yaml
+use_container: false      # true => use config/ciriquant_container.yaml (in-container tool names)
+
+# ── circRNA detection / consensus ────────────────────────────────────────────────────────────────────
+consensus:
+  min_bsj_reads: 2
+  min_tools: 2
+  slop: 10
+  max_junction_ratio: 1.0
+  qc_bsj_threshold: 5       # only apply the ratio QC when BSJ < this; high-BSJ circRNAs are exempt
+  tools:
+  - ciriquant
+  - dcc
+
+# ── Differential expression ──────────────────────────────────────────────────────────────────────────
+de:
+  method: edgeR_ciriquant   # which method the report shows first (all three always run)
+  fdr_cutoff: 0.05
+  log2fc_cutoff: 1.0
+  de_sig_by: auto           # auto = Storey q<0.2, else nominal p<0.05 | pvalue | padj | qvalue
+  fsj_concordance_lfc: 0.0
+  isoform_fdr_cutoff: 0.1
+  delta_iui_cutoff: 0.1
+  heatmap_top_n: 10
+  interaction_top_n: 50
+  encori_clip_exp_num: 1
+  encori_program_num: 2
+  normal_label: normal
+  tumor_label: tumor
+
+circbase_file: ""           # empty = download circBase automatically; or a local file path
+threads: 8
