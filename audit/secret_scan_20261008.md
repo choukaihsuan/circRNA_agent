@@ -29,7 +29,7 @@
 | 5 | 個人 email | `chou.k…@gmail.com`（`NOTIFY_EMAIL_TO` 範例、git author）| 946b587 | 在 | 低：作者 email 本來就在 commit metadata（50 個 commit）|
 | 6 | 佔位用密碼字串 | `NOTIFY_EMAIL_PASS="xxxx xxxx xxxx xxxx"`、`NOTIFY_SLACK_WEBHOOK="https://hooks.slack.com/services/..."` | 946b587 | 在（`CLAUDE.md`）| 無：確認為佔位文字，不是真值 |
 | 7 | 預設值字串 | `RESEND_FROM` 預設 `onboarding@resend.dev`；`smtp.gmail.com:587` | 946b587 | 在 | 無：公開服務位址 |
-| 8 | 服務位址 | `http://172.16.0.1…:5000` 寫在 `notify.py` 的 HTML 信件模板（歷史中，行 29586 的 patch 位置）| 946b587 | 不在 `scripts/` HEAD（`git grep` 於 scripts 無命中）| 低，僅歷史 |
+| 8 | 服務位址 | `http://172.16.0.1…:5000` 寫在 `scripts/generate_report.py` 的 HTML 字串 | 946b587 | 否，已於 c8e8ad3（2026-07-01）移除，**僅存於歷史** | 低 |
 
 「現行還在」＝存在於 HEAD；#8 是只存在於歷史的項目。
 
