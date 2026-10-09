@@ -1,0 +1,9 @@
+##gff-version 2
+chr1	CIRIquant	circRNA	1000	2000	.	+	.	circ_id "chr1:1000|2000"; bsj 12.0; fsj 40.0; junc_ratio 0.38;
+chr1	CIRIquant	circRNA	5000	6000	.	-	.	circ_id "chr1:5000|6000"; bsj 9.0; fsj 30.0; junc_ratio 0.38;
+chr2	CIRIquant	circRNA	3000	4000	.	+	.	circ_id "chr2:3000|4000"; bsj 7.0; fsj 20.0; junc_ratio 0.41;
+chr3	CIRIquant	circRNA	800	1500	.	+	.	circ_id "chr3:800|1500"; bsj 20.0; fsj 50.0; junc_ratio 0.44;
+chr4	CIRIquant	circRNA	100	900	.	+	.	circ_id "chr4:100|900"; bsj 1.0; fsj 10.0; junc_ratio 0.17;
+chr5	CIRIquant	circRNA	2000	2600	.	-	.	circ_id "chr5:2000|2600"; bsj 3.0; fsj 1.0; junc_ratio 0.86;
+chr6	CIRIquant	circRNA	7000	8000	.	+	.	circ_id "chr6:7000|8000"; bsj 30.0; fsj 5.0; junc_ratio 0.92;
+chr7	CIRIquant	circRNA	4000	4800	.	+	.	circ_id "chr7:4000|4800"; bsj 6.0; fsj 18.0; junc_ratio 0.40;

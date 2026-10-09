@@ -269,7 +269,7 @@
 
 </div>
 <script>
-  const JOB_ID = {{ ('"' + job_id + '"') | safe if job_id else 'null' }};
+  const JOB_ID = {{ (job_id or none) | tojson }};
   let timer = null;
   let logOpen = false;
   let _LANG = localStorage.getItem('circrna_lang') || 'zh';

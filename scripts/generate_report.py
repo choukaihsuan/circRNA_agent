@@ -900,15 +900,17 @@ def _sample_overview_section(
     has_qc  = any(r["reads"] for r in rows)
     has_pid = any(r["pid"] for r in rows)
 
+    _e = _html_mod.escape   # study_title / labels / sample ids / patient ids are external text
+
     def _cond_badge(c: str) -> str:
         color = "#2c6fad" if c == tumor_label else "#16a34a" if c == normal_label else "#888"
         return (f'<span style="background:{color};color:white;padding:1px 8px;'
-                f'border-radius:10px;font-size:11px">{c}</span>')
+                f'border-radius:10px;font-size:11px">{_e(c)}</span>')
 
     tbody = ""
     for i, r in enumerate(rows):
         bg = "background:#f9fafb;" if i % 2 == 0 else ""
-        pid_cell = f'<td style="padding:5px 12px">{r["pid"]}</td>' if has_pid else ""
+        pid_cell = f'<td style="padding:5px 12px">{_e(r["pid"])}</td>' if has_pid else ""
         qc_cells = (
             f'<td style="padding:5px 12px;text-align:right">{r["reads"] or "—"}</td>'
             f'<td style="padding:5px 12px;text-align:right">{r["len"] or "—"}</td>'
@@ -916,7 +918,7 @@ def _sample_overview_section(
         ) if has_qc else ""
         tbody += (
             f'<tr style="{bg}">'
-            f'<td style="padding:5px 12px;font-family:monospace;font-size:12px">{r["srr"]}</td>'
+            f'<td style="padding:5px 12px;font-family:monospace;font-size:12px">{_e(r["srr"])}</td>'
             f'<td style="padding:5px 12px">{_cond_badge(r["cond"])}</td>'
             f'{pid_cell}{qc_cells}</tr>\n'
         )
@@ -935,14 +937,14 @@ def _sample_overview_section(
 
     title_html = (
         f'<p style="font-size:14px;color:#374151;margin:0 0 12px;font-style:italic">'
-        f'{study_title}</p>'
+        f'{_e(study_title)}</p>'
     ) if study_title else ""
 
     return f"""
 <h2>Samples</h2>
 {title_html}<div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px">
-  <div class="stat-box"><div class="num" style="color:#2c6fad">{n_case}</div><div class="lbl">{tumor_label.title()}</div></div>
-  <div class="stat-box"><div class="num" style="color:#16a34a">{n_ctrl}</div><div class="lbl">{normal_label.title()}</div></div>
+  <div class="stat-box"><div class="num" style="color:#2c6fad">{n_case}</div><div class="lbl">{_e(tumor_label.title())}</div></div>
+  <div class="stat-box"><div class="num" style="color:#16a34a">{n_ctrl}</div><div class="lbl">{_e(normal_label.title())}</div></div>
   {other_box}
 </div>
 <details style="margin:0 0 20px">
@@ -3891,7 +3893,7 @@ function _drawClustHeatmap() {{
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>circRNA Analysis Report – {project_id}</title>
+  <title>circRNA Analysis Report – {_html_mod.escape(str(project_id))}</title>
   {_STYLE}
   {_SCRIPT}
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
@@ -3920,7 +3922,7 @@ function _drawClustHeatmap() {{
   </div>
   <!-- Nav right -->
   <div class="cd-rpt-nav">
-    <span class="cd-rpt-proj">{project_id}</span>
+    <span class="cd-rpt-proj">{_html_mod.escape(str(project_id))}</span>
     <span class="method-tag" style="font-size:12px">{de_method}</span>
     <span style="font-size:11px;color:rgba(255,255,255,.35);padding:0 4px">{datetime.now().strftime('%Y-%m-%d')}</span>
     <button class="print-btn" data-en="🖨 Print / PDF" onclick="window.print()">🖨 列印 / PDF</button>

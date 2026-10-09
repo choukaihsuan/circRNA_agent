@@ -1,0 +1,20 @@
+# config/ciriquant.example.yaml - template for config/ciriquant.yaml
+#
+#   cp config/ciriquant.example.yaml config/ciriquant.yaml
+#
+# CIRIquant checks EVERY path below literally (it does not search $PATH): a bare name such as `bwa`
+# fails with "ConfigError: File: bwa, not found". Use absolute paths inside your conda env
+# (`which bwa` after activating it). `java` and `perl` usually live outside the env.
+name: hg19
+tools:
+  bwa:       /path/to/envs/ciriquant/bin/bwa
+  hisat2:    /path/to/envs/ciriquant/bin/hisat2
+  samtools:  /path/to/envs/ciriquant/bin/samtools
+  stringtie: /path/to/envs/ciriquant/bin/stringtie
+  java:      /usr/bin/java
+  perl:      /usr/bin/perl
+reference:
+  fasta:       /path/to/hg19/hg19.fa
+  gtf:         /path/to/hg19/genes.gtf
+  bwa_index:   /path/to/hg19/bwa_index/hg19       # same value as genome.bwa_index in config.yaml
+  hisat_index: /path/to/hg19/hisat2_index/hg19    # same value as genome.hisat2_index
