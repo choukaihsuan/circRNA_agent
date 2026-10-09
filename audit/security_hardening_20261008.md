@@ -1,7 +1,7 @@
 # Web UI 資安強化報告（OWASP ASVS L1）— `scripts/web_ui.py`
 
 日期：2026-10-08／09（雲端 session）。範圍：只改 repo 內程式碼與設定檔，**未部署、未連任何伺服器**。
-測試：`pytest tests/test_web_security.py` → 99 passed；同一批測試在**修改前**的 `web_ui.py`（搭配新的 `security.py`）上有 38 個失敗
+測試：`pytest tests/test_web_security.py`（含後續新增測試，全套 149 passed）；同一批測試在**修改前**的 `web_ui.py`（搭配新的 `security.py`）上有 38 個失敗
 （證明測試確實擋得住惡意輸入）。
 
 ## 0. 需要先知道的三件事
@@ -60,8 +60,9 @@
 | `PIPELINE_SECRET_KEY` | 建議由 systemd EnvironmentFile 提供；未設定時沿用 `jobs/secret_key.txt` |
 | `PIPELINE_FASTQ_ROOTS` | 額外允許 `/api/scan_fastq`／本地 FASTQ 的根目錄（冒號分隔） |
 | `PIPELINE_COOKIE_SECURE` | `0`／`1` 覆寫自動判斷 |
+| `PIPELINE_DEV_PRINT_LINK=1` | **僅本機開發**：沒有郵件服務時把 magic link 印到 console。公開部署不可開（會把登入 token 寫進 log）|
 
-`.gitignore` 新增 `jobs/ *.db .env secret_key*`（任務 1 發現 `jobs/` 原本未被忽略；跑舊版測試時就在 repo 內產生過 `jobs/secret_key.txt`，已刪除，內容為測試用隨機值）。
+`.gitignore` 新增 `jobs/`、`.env`、`.env.*`（初版 `*.db`、`secret_key*` 過寬，已在 repo 衛生稽核中收窄）（任務 1 發現 `jobs/` 原本未被忽略；跑舊版測試時就在 repo 內產生過 `jobs/secret_key.txt`，已刪除，內容為測試用隨機值）。
 
 ## 5. 未做／殘留風險（請知悉）
 
@@ -71,3 +72,8 @@
 - 認證為「登入即可」，沒有每位使用者只能看自己 job 的授權檢查（`/report/<id>`、`/download/<id>` 依賴 job id 不可猜）。72-bit id 已使暴力猜測不可行，但 ASVS L1 以上建議加入擁有者檢查。
 - queue 資料庫與 job registry 仍為本機檔案；未加密。
 - 部署檔（nginx／systemd／gunicorn）**未在任何機器上測試過**，只是範例。
+
+## 6. 後續補充（同一分支）
+
+- `generate_report.py`：`study_title`、condition／label、sample id、patient id、project id 以 `html.escape` 輸出（`study_title` 來自 GEO 外部文字，原本直接插入 HTML）。範圍僅限報告的 Samples 區塊與標題；報告其餘區塊（基因名稱等來自 TSV 的欄位）**未逐一稽核**，建議另案處理。
+- `PIPELINE_DEV_PRINT_LINK`（見 §4）。
