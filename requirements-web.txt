@@ -1,0 +1,9 @@
+# Runtime dependencies of scripts/web_ui.py (the Web UI only; the analysis pipeline uses envs/circrna.yaml).
+# NOTE: the HPC server's conda env runs Python 3.7, which cannot install Flask >= 3 / Werkzeug >= 3.
+# See audit/security_hardening_20261008.md (pip-audit section) before pinning there.
+flask>=2.2.5
+flask-wtf>=1.1
+werkzeug>=2.2.3
+pyyaml>=6.0
+pandas>=1.3
+gunicorn>=22.0

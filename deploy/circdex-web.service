@@ -1,0 +1,34 @@
+# /etc/systemd/system/circdex-web.service   (example; adjust User/paths, then
+#   systemctl daemon-reload && systemctl enable --now circdex-web)
+[Unit]
+Description=CircDEX Web UI (gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=circdex
+Group=circdex
+WorkingDirectory=/home3/circdex/circRNA_agent
+# Secrets live OUTSIDE the repo, mode 0600, owned by root:
+#   PIPELINE_PUBLIC_URL=https://circdex.cgm.ntu.edu.tw
+#   PIPELINE_ALLOWED_EMAILS=a@x.org,b@y.org
+#   PIPELINE_TRUSTED_PROXY=1
+#   RESEND_API_KEY=...            (or SMTP_HOST/SMTP_USER/SMTP_PASS)
+EnvironmentFile=/etc/circdex/web.env
+ExecStart=/home3/circdex/miniconda3/envs/ciriquant/bin/gunicorn -c deploy/gunicorn.conf.py --chdir scripts web_ui:app
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home3/circdex/circRNA_agent/jobs /home3/circdex/circRNA_agent/logs /home3/circdex/circRNA_agent/config /home3/circdex/circRNA_agent/metadata
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -40,7 +40,11 @@ from flask import (Flask, jsonify, redirect, render_template,
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-BASE_DIR = Path(__file__).parent.parent
+import security as sec
+
+# resolve(): /home/<user> is a symlink to /home3/<user> on the server, and safe_join() returns
+# resolved paths; BASE_DIR must be resolved too or .relative_to(BASE_DIR) would raise.
+BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = BASE_DIR / "config.yaml"
 LOG_PATH = BASE_DIR / "logs" / "pipeline_run.log"
 REGISTRY_PATH = BASE_DIR / "jobs" / "registry.json"
@@ -51,6 +55,9 @@ TOKEN_MINUTES = 30        # magic link expiry
 
 
 def _get_secret_key() -> str:
+    env_key = os.environ.get("PIPELINE_SECRET_KEY", "").strip()
+    if env_key:                      # preferred: secret supplied by the service manager
+        return env_key
     SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
     if SECRET_KEY_FILE.exists():
         return SECRET_KEY_FILE.read_text().strip()
@@ -65,10 +72,28 @@ app.secret_key = _get_secret_key()
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["SESSION_COOKIE_HTTPONLY"] = True   # JS cannot read session cookie
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"   # Allow cross-site GET (email magic link clicks)
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024   # CSV uploads are tiny; cap request bodies
 app.config["WTF_CSRF_TIME_LIMIT"] = 86400       # 24h; long sessions shouldn't expire mid-work
-# Trust X-Forwarded-Proto from reverse proxies (ngrok / Cloudflare Tunnel)
-# so request.url_root uses https:// and cookies are scheme-correct
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+# Canonical public origin, used for every link we put in e-mail (magic link, job status).
+# Without it we would build links from the request Host header, which an attacker controls
+# (Host-header poisoning -> victim receives a login link pointing at the attacker's domain).
+PUBLIC_URL = os.environ.get("PIPELINE_PUBLIC_URL", "").rstrip("/")
+# Trust forwarded headers ONLY when explicitly told we sit behind a reverse proxy we control.
+# X-Forwarded-Host is never trusted: the proxy must pass the real Host.
+if os.environ.get("PIPELINE_TRUSTED_PROXY") == "1":
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_for=1)
+# Optional login whitelist (comma-separated). None => not configured, no enforcement.
+ALLOWED_EMAILS = sec.allowed_emails(os.environ.get("PIPELINE_ALLOWED_EMAILS"))
+# Secure cookie whenever the public origin is https (override with PIPELINE_COOKIE_SECURE=0/1).
+# Not forced on for plain-HTTP deployments (e.g. http://<host>:5000 on the intranet), where a
+# Secure cookie would simply never be sent back and nobody could log in.
+_cookie_env = os.environ.get("PIPELINE_COOKIE_SECURE")
+app.config["SESSION_COOKIE_SECURE"] = (
+    (_cookie_env == "1") if _cookie_env in ("0", "1") else PUBLIC_URL.startswith("https://"))
+if not PUBLIC_URL:
+    print("[security] WARNING: PIPELINE_PUBLIC_URL not set; e-mail links use the request Host header.", flush=True)
+if ALLOWED_EMAILS is None:
+    print("[security] WARNING: PIPELINE_ALLOWED_EMAILS not set; any e-mail address can sign in.", flush=True)
 
 csrf = CSRFProtect(app)
 
@@ -86,11 +111,48 @@ def _mask_email(email: str) -> str:
 app.jinja_env.filters["mask_email"] = _mask_email
 
 
+def _public_base() -> str:
+    """Origin to use in links we e-mail out (never derived from client-supplied Host if configured)."""
+    return PUBLIC_URL or request.url_root.rstrip("/")
+
+
+def _bad_request(msg: str = "Invalid request"):
+    """Generic 400. Never echoes user input (reflected-XSS / info-leak surface)."""
+    return msg, 400, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.after_request
+def _security_headers(resp):
+    """OWASP ASVS V14.4 / V3.4 response headers."""
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
+    if request.is_secure or request.headers.get("X-Forwarded-Proto") == "https":
+        resp.headers.setdefault("Strict-Transport-Security",
+                                "max-age=31536000; includeSubDomains")
+    if "Content-Security-Policy" not in resp.headers:
+        if request.endpoint in ("serve_report", "serve_qc"):
+            # Self-contained generated reports (inline Plotly/Highcharts JS). Run them in a
+            # sandbox without same-origin access so their scripts can never touch our session.
+            resp.headers["Content-Security-Policy"] = (
+                "sandbox allow-scripts allow-popups allow-downloads; frame-ancestors 'none'")
+        else:
+            resp.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.plot.ly; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com data:; "
+                "img-src 'self' data:; connect-src 'self'; "
+                "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
+    return resp
+
+
 # ── Job registry ──────────────────────────────────────────────────────────────
 
 def generate_job_id(gse_id: str) -> str:
-    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
-    return f"{gse_id}-{suffix}"
+    # CSPRNG, 72 bits. The job id is the only thing guarding /report/<id> and /download/<id>.
+    return sec.new_job_id(gse_id)
 
 
 def load_registry() -> dict:
@@ -445,7 +507,7 @@ def _notify_queued(user_email: str, gse_id: str, job_id: str) -> None:
         return
     try:
         pos = queue_position(job_id)
-        status_url = request.url_root.rstrip("/") + url_for("status_job", job_id=job_id)
+        status_url = _public_base() + url_for("status_job", job_id=job_id)
         send_job_queued_email(user_email, gse_id, job_id, pos, status_url)
     except Exception as e:
         print(f"[Queue] notify_queued failed: {e}", flush=True)
@@ -480,16 +542,23 @@ def login():
     error_en = ""
     if request.method == "POST":
         lang = request.form.get("lang", "zh")
-        email = request.form.get("email", "").strip().lower()
-        if not email or "@" not in email:
+        lang = "en" if lang == "en" else "zh"
+        try:
+            email = sec.validate_email(request.form.get("email", ""))
+        except sec.ValidationError:
+            email = ""
+        if not email:
             error    = "請輸入有效的 Email 地址。"
             error_en = "Please enter a valid email address."
         else:
-            token = auth_create_token(email)
-            base = request.url_root.rstrip("/")
-            link = f"{base}/auth/{token}" + ("?lang=en" if lang == "en" else "")
-            send_magic_link(email, link, lang=lang)
-            auth_log(email, "request_magic_link", request.remote_addr)
+            # Same response whether or not the address is allowed (no account enumeration).
+            if ALLOWED_EMAILS is None or email in ALLOWED_EMAILS:
+                token = auth_create_token(email)
+                link = f"{_public_base()}/auth/{token}" + ("?lang=en" if lang == "en" else "")
+                send_magic_link(email, link, lang=lang)
+                auth_log(email, "request_magic_link", request.remote_addr)
+            else:
+                auth_log(email, "login_denied_not_allowed", request.remote_addr)
             sent_email = email
             sent = "1"
     return render_template("login.html", sent=sent, sent_email=sent_email,
@@ -652,11 +721,13 @@ def save_config(cfg: dict) -> None:
 
 
 def _project_config_path(gse_id: str) -> Path:
-    return BASE_DIR / "config" / "projects" / f"{gse_id.strip().upper()}.yaml"
+    gid = sec.validate_project_id(gse_id)
+    return sec.safe_join(BASE_DIR / "config" / "projects", f"{gid}.yaml")
 
 
 def _project_meta_dir(gse_id: str) -> Path:
-    return BASE_DIR / "metadata" / gse_id.strip().upper()
+    gid = sec.validate_project_id(gse_id)
+    return sec.safe_join(BASE_DIR / "metadata", gid)
 
 
 def _configfile_for(gse_id: str) -> str:
@@ -1160,40 +1231,58 @@ def index():
     )
 
 
+def _form_notify_email_raw() -> str:
+    """Validated notify address from the form, or "" if none given (raises on bad input)."""
+    raw = request.form.get("notify_email", "").strip()
+    return sec.validate_email(raw) if raw else ""
+
+
+def _form_notify_email() -> str:
+    """Validated notify address from the form, else the signed-in user's address."""
+    return _form_notify_email_raw() or session.get("email", "")
+
+
 @app.route("/update", methods=["POST"])
 def update():
     cfg = load_config()
 
     # circRNA tools
     tools = request.form.getlist("tools")
+    if any(t not in sec.TOOL_NAMES for t in tools):
+        return _bad_request()
     if not tools:
         tools = ["ciriquant"]
     cfg.setdefault("consensus", {})
     cfg["consensus"]["tools"] = tools
-    cfg["consensus"]["min_tools"] = max(1, int(request.form.get("min_tools", len(tools))))
+    cfg["consensus"]["min_tools"] = sec.bounded_int(request.form.get("min_tools"), len(tools), 1, 2)
 
     # DE method
     cfg.setdefault("de", {})
-    cfg["de"]["method"] = request.form.get("de_method", "edgeR_ciriquant")
+    de_method = request.form.get("de_method", "edgeR_ciriquant")
+    if de_method not in sec.DE_METHODS:
+        return _bad_request()
+    cfg["de"]["method"] = de_method
 
-    # Numeric params
-    cfg["consensus"]["min_bsj_reads"]    = int(request.form.get("min_bsj", 2))
-    cfg["consensus"]["slop"]             = int(request.form.get("slop", 10))
-    cfg["consensus"]["max_junction_ratio"] = float(request.form.get("max_junction_ratio", 1.0))
-    cfg["de"]["fdr_cutoff"]              = float(request.form.get("fdr", 0.05))
-    cfg["de"]["log2fc_cutoff"]           = float(request.form.get("log2fc", 1.0))
-    cfg["threads"]                       = int(request.form.get("threads", 8))
-    cfg["study_title"]                   = request.form.get("study_title", "").strip()
+    # Numeric params (garbage -> default, out-of-range -> clamped; never a 500)
+    cfg["consensus"]["min_bsj_reads"]    = sec.bounded_int(request.form.get("min_bsj"), 2, 1, 1000)
+    cfg["consensus"]["slop"]             = sec.bounded_int(request.form.get("slop"), 10, 0, 1000)
+    cfg["consensus"]["max_junction_ratio"] = sec.bounded_float(request.form.get("max_junction_ratio"), 1.0, 0.0, 1000.0)
+    cfg["de"]["fdr_cutoff"]              = sec.bounded_float(request.form.get("fdr"), 0.05, 0.0, 1.0)
+    cfg["de"]["log2fc_cutoff"]           = sec.bounded_float(request.form.get("log2fc"), 1.0, 0.0, 100.0)
+    cfg["threads"]                       = sec.bounded_int(request.form.get("threads"), 8, 1, 96)
+    cfg["study_title"]                   = request.form.get("study_title", "").strip()[:500]
 
     save_project_snapshot(cfg)
 
     if request.form.get("action") == "run":
         cores = cfg["threads"] * 4
-        gse_id = cfg.get("project_id", "pipeline").strip().upper()
+        try:
+            gse_id = sec.validate_project_id(cfg.get("project_id", "pipeline"))
+            user_email = _form_notify_email()
+        except sec.ValidationError:
+            return _bad_request()
         job_id = generate_job_id(gse_id)
         log_path = job_log_path(job_id)
-        user_email = (request.form.get("notify_email", "").strip()
-                      or session.get("email", ""))
         cmd = [
             _snake_bin(),
             "--snakefile", "workflow/Snakefile",
@@ -1212,10 +1301,14 @@ def update():
 
 @app.route("/run_gse", methods=["POST"])
 def run_gse():
-    gse_id = request.form.get("gse_id", "").strip().upper()
-    cores  = max(1, min(int(request.form.get("cores", 8)), 24))
-    if not gse_id:
+    if not request.form.get("gse_id", "").strip():
         return redirect(url_for("index"))
+    try:
+        gse_id = sec.validate_accession(request.form.get("gse_id", ""))
+        user_email = _form_notify_email()
+    except sec.ValidationError:
+        return _bad_request()
+    cores  = sec.bounded_int(request.form.get("cores"), 8, 1, 24)
 
     job_id = generate_job_id(gse_id)
     log_path = job_log_path(job_id)
@@ -1241,9 +1334,6 @@ def run_gse():
             pass
 
     save_project_snapshot(cfg)
-
-    user_email = (request.form.get("notify_email", "").strip()
-                  or session.get("email", ""))
 
     # If project config + metadata already exist (re-run scenario), use snakemake directly
     # to avoid the pysradb dependency in agent.py prepare_metadata step.
@@ -1271,10 +1361,14 @@ def run_gse():
 @app.route("/run_manual", methods=["POST"])
 def run_manual():
     """Start pipeline from manual SRR list or uploaded CSV."""
-    cores      = max(1, min(int(request.form.get("cores", 8)), 24))
-    project_id = (request.form.get("project_id", "").strip().upper() or "CUSTOM")
-    tumor_label  = request.form.get("tumor_label",  "tumor").strip()  or "tumor"
-    normal_label = request.form.get("normal_label", "normal").strip() or "normal"
+    cores      = sec.bounded_int(request.form.get("cores"), 8, 1, 24)
+    try:
+        project_id   = sec.validate_project_id(request.form.get("project_id", "") or "CUSTOM")
+        tumor_label  = sec.validate_label(request.form.get("tumor_label"),  "tumor")
+        normal_label = sec.validate_label(request.form.get("normal_label"), "normal")
+        notify_email = _form_notify_email_raw()
+    except sec.ValidationError:
+        return _bad_request()
 
     # ── Build library_info rows ────────────────────────────────────────────────
     rows: list[dict] = []
@@ -1287,10 +1381,15 @@ def run_manual():
         for r in reader:
             srr = (r.get("srr_id") or r.get("SRR_ID") or r.get("run") or "").strip()
             if srr:
+                try:
+                    srr  = sec.validate_srr(srr)
+                    cond = sec.validate_label(r.get("condition") or r.get("group"), "tumor")
+                except sec.ValidationError:
+                    return _bad_request("Invalid CSV content")
                 rows.append({
                     "srr_id":    srr,
-                    "condition": (r.get("condition") or r.get("group") or "tumor").strip(),
-                    "paired":    (r.get("paired") or "true").strip(),
+                    "condition": cond,
+                    "paired":    "false" if (r.get("paired") or "").strip().lower() == "false" else "true",
                 })
     else:
         # Option B: manual SRR entries from the form
@@ -1300,6 +1399,11 @@ def run_manual():
             srr  = srr.strip()
             cond = cond.strip()
             if srr:
+                try:
+                    srr  = sec.validate_srr(srr)
+                    cond = sec.validate_label(cond, "tumor")
+                except sec.ValidationError:
+                    return _bad_request()
                 rows.append({"srr_id": srr, "condition": cond, "paired": "true"})
 
     if not rows:
@@ -1339,7 +1443,6 @@ def run_manual():
     cfg["groups"]              = str(proj_grp_path.relative_to(BASE_DIR))
     cfg["de"]["tumor_label"]   = tumor_label
     cfg["de"]["normal_label"]  = normal_label
-    notify_email = request.form.get("notify_email", "").strip()
     if notify_email:
         cfg.setdefault("notify", {})["email_to"] = notify_email
     # Auto-fetch GEO title if not already set
@@ -1363,17 +1466,32 @@ def run_manual():
     return redirect(url_for("queue_page"))
 
 
+def _fastq_roots(cfg: dict) -> list:
+    """Directories user-supplied FASTQ paths may live under."""
+    roots = []
+    raw = (cfg or {}).get("raw_dir")
+    if raw:
+        roots.append(Path(raw).resolve().parent)
+    for extra in os.environ.get("PIPELINE_FASTQ_ROOTS", "").split(os.pathsep):
+        if extra.strip():
+            roots.append(Path(extra.strip()).resolve())
+    return roots
+
+
 @app.route("/api/scan_fastq")
 def api_scan_fastq():
     """Scan a server-side directory for paired FASTQ files."""
     path = request.args.get("path", "").strip()
     if not path:
         return jsonify({"error": "未指定路徑"}), 400
-    p = Path(path)
-    if not p.exists():
-        return jsonify({"error": f"路徑不存在：{path}"}), 404
+    try:
+        # Only directories under the configured FASTQ roots may be listed (no arbitrary
+        # filesystem enumeration, no echo of the requested path).
+        p = sec.safe_target(path, _fastq_roots(load_config()))
+    except sec.ValidationError:
+        return jsonify({"error": "Path not allowed"}), 403
     if not p.is_dir():
-        return jsonify({"error": f"非目錄：{path}"}), 400
+        return jsonify({"error": "Not a directory"}), 404
 
     PAIR_PATTERNS = [
         ("_1.fastq.gz",      "_2.fastq.gz"),
@@ -1411,16 +1529,19 @@ def api_scan_fastq():
 @app.route("/run_local", methods=["POST"])
 def run_local():
     """Start pipeline with local FASTQ files (server-side paths via symlinks)."""
-    project_id   = (request.form.get("project_id", "").strip().upper() or "LOCAL")
-    tumor_label  = request.form.get("tumor_label",  "tumor").strip() or "tumor"
-    normal_label = request.form.get("normal_label", "normal").strip() or "normal"
-    cores        = max(1, min(int(request.form.get("cores", 8)), 24))
+    cores        = sec.bounded_int(request.form.get("cores"), 8, 1, 24)
     samples_json = request.form.get("samples_json", "[]")
-
     try:
+        project_id   = sec.validate_project_id(request.form.get("project_id", "") or "LOCAL")
+        tumor_label  = sec.validate_label(request.form.get("tumor_label"),  "tumor")
+        normal_label = sec.validate_label(request.form.get("normal_label"), "normal")
+        notify_email = _form_notify_email_raw()
         samples = json.loads(samples_json)
-    except json.JSONDecodeError:
-        return "Invalid samples JSON", 400
+        if not isinstance(samples, list) or len(samples) > 500 or \
+                not all(isinstance(x, dict) for x in samples):
+            raise ValueError("bad samples")
+    except (sec.ValidationError, ValueError):   # JSONDecodeError is a ValueError
+        return _bad_request()
 
     if not samples:
         return redirect(url_for("index"))
@@ -1430,33 +1551,35 @@ def run_local():
     raw_dir = Path(cfg["raw_dir"])
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    # Allowed root: parent of raw_dir (e.g. /home3/choukaihsuan/)
-    # Symlink targets must resolve under this prefix to prevent path traversal.
-    _fastq_allowed_root = Path(cfg.get("raw_dir", "")).resolve().parent
+    # Symlink targets must resolve under an allowed root (compared by path components,
+    # not string prefix) and never under a system directory.
+    _fastq_allowed_roots = _fastq_roots(cfg)
 
     rows: list = []
     for s in samples:
-        name = (s.get("name") or "").strip()
-        r1   = (s.get("r1")   or "").strip()
-        r2   = (s.get("r2")   or "").strip()
-        cond = (s.get("condition") or "tumor").strip()
-        if not name or not r1:
+        r1   = str(s.get("r1") or "").strip()
+        r2   = str(s.get("r2") or "").strip()
+        if not str(s.get("name") or "").strip() or not r1:
             continue
-        for link, target in [(raw_dir / f"{name}_1.fastq.gz", r1),
-                             (raw_dir / f"{name}_2.fastq.gz", r2)]:
+        try:
+            name = sec.validate_sample_name(s.get("name"))
+            cond = sec.validate_label(s.get("condition"), "tumor")
+        except sec.ValidationError:
+            return _bad_request()
+        for suffix, target in [("_1.fastq.gz", r1), ("_2.fastq.gz", r2)]:
+            try:
+                link = sec.safe_join(raw_dir, name + suffix)   # stays inside raw_dir
+            except sec.ValidationError:
+                return _bad_request()
             if link.exists() or link.is_symlink():
                 link.unlink()
             if target:
-                # Validate target resolves within allowed root (prevent symlink attack)
                 try:
-                    resolved = Path(target).resolve()
-                    if not str(resolved).startswith(str(_fastq_allowed_root)):
-                        app.logger.warning(
-                            f"run_local: rejected symlink target outside allowed root: {target}")
-                        continue
-                except Exception:
+                    resolved = sec.safe_target(target, _fastq_allowed_roots)
+                except sec.ValidationError:
+                    app.logger.warning("run_local: rejected symlink target outside allowed roots")
                     continue
-                link.symlink_to(target)
+                link.symlink_to(resolved)   # link to the resolved path, not the raw string
         rows.append({"srr_id": name, "condition": cond})
 
     if not rows:
@@ -1487,7 +1610,6 @@ def run_local():
     cfg["groups"]                            = str((proj_meta / "sample_groups.csv").relative_to(BASE_DIR))
     cfg.setdefault("de", {})["tumor_label"]  = tumor_label
     cfg["de"]["normal_label"]                = normal_label
-    notify_email = request.form.get("notify_email", "").strip()
     if notify_email:
         cfg.setdefault("notify", {})["email_to"] = notify_email
     save_project_snapshot(cfg)
@@ -1567,6 +1689,12 @@ def api_queue_position(job_id: str):
 
 @app.route("/status/<job_id>")
 def status_job(job_id: str):
+    try:
+        job_id = sec.validate_job_id(job_id)
+    except sec.ValidationError:
+        return render_template("status.html", log="找不到任務 / Job not found",
+                               running=False, job=None, job_id=None,
+                               queue_status=None), 404
     registry = load_registry()
     job = registry.get(job_id)
     # Job might be queued but not yet started (not in registry yet)
@@ -1574,10 +1702,10 @@ def status_job(job_id: str):
     if job is None and qjob is None:
         return render_template(
             "status.html",
-            log=f"找不到任務編號：{job_id}",
+            log="找不到任務 / Job not found",
             running=False,
             job=None,
-            job_id=job_id,
+            job_id=None,
             queue_status=None,
         ), 404
     # Pending job: not started yet, show queue position
@@ -1608,6 +1736,10 @@ def status_job(job_id: str):
 def status_query():
     job_id = request.args.get("job_id", "").strip()
     if not job_id:
+        return redirect(url_for("index"))
+    try:
+        job_id = sec.validate_job_id(job_id)
+    except sec.ValidationError:
         return redirect(url_for("index"))
     return redirect(url_for("status_job", job_id=job_id))
 
@@ -1685,9 +1817,10 @@ def _fetch_geo_title(gse_id: str) -> str:
 @app.route("/api/detect_labels")
 def api_detect_labels():
     """Detect case/control labels and GEO title for a given GSE."""
-    gse_id = request.args.get("gse", "").strip().upper()
-    if not gse_id:
-        return jsonify({"error": "missing gse"}), 400
+    try:
+        gse_id = sec.validate_accession(request.args.get("gse", ""))
+    except sec.ValidationError:
+        return jsonify({"error": "invalid accession"}), 400
 
     # Fetch GEO title from NCBI eUtils (non-blocking; empty string on failure)
     geo_title = _fetch_geo_title(gse_id)
@@ -1711,7 +1844,7 @@ def api_detect_labels():
                         "rows": len(df), "geo_title": geo_title})
     except Exception as exc:
         return jsonify({"detected": False, "case": "tumor", "control": "normal",
-                        "geo_title": geo_title, "error": str(exc)})
+                        "geo_title": geo_title, "error": "label detection failed"})
 
 
 @app.route("/report/<job_id>")
@@ -1769,12 +1902,19 @@ def serve_qc(job_id: str):
             f"<h2>⏳ MultiQC 報告尚未產生</h2>"
             f"<p>MultiQC 需要所有 sample 的 FastQC 完成後才會執行。<br>"
             f"目前仍有 sample 正在 QC / 下載中，請等 pipeline 全部完成後再試。</p>"
-            f"<p style='color:#888'>預期路徑：{qc_path}</p>"
             f"<a href='javascript:history.back()'>← 返回</a>"
             f"</body></html>"
         ), 202
     return send_file(str(qc_path), mimetype="text/html",
                      as_attachment=False, download_name=f"{gse_id}_multiqc_report.html")
+
+
+def _json_for_script(obj) -> str:
+    """json.dumps that is safe to embed inside an inline <script> block."""
+    import json as _json
+    return (_json.dumps(obj, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
 
 
 # ── Cross-dataset analysis ────────────────────────────────────────────────────
@@ -1990,7 +2130,7 @@ def cross_dataset():
             for r in top_r
         ],
     }
-    heatmap_json = _json.dumps(heatmap_payload, ensure_ascii=False)
+    heatmap_json = _json_for_script(heatmap_payload)
 
     # Group datasets that share the same organ/cancer type, so datasets of the
     # same cancer (e.g. GSE229705 + GSE148036, both LUAD) can be compared
@@ -2003,7 +2143,7 @@ def cross_dataset():
         organ = _DATASET_META.get(gse_id, {}).get("organ", "Other")
         _organ_map[organ].append(gse_id)
     organ_groups = {organ: ids for organ, ids in _organ_map.items() if len(ids) >= 2}
-    organ_groups_json = _json.dumps(organ_groups, ensure_ascii=False)
+    organ_groups_json = _json_for_script(organ_groups)
 
     # ── UpSet plot data ───────────────────────────────────────────────────────
     _circ_to_gses: dict = {}
@@ -2025,7 +2165,7 @@ def cross_dataset():
         "labels_en": {g: _DATASET_META.get(g, {}).get("cancer", g)
                       for g in dataset_order},
     }
-    upset_json = _json.dumps(upset_data, ensure_ascii=False)
+    upset_json = _json_for_script(upset_data)
 
     return render_template(
         "cross_dataset.html",
@@ -2044,17 +2184,33 @@ def cross_dataset():
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+_background_started = False
+
+
+def start_background_workers() -> None:
+    """Initialise the queue DB and start the queue worker thread (idempotent).
+
+    Called from ``__main__`` for ``python scripts/web_ui.py`` and from the gunicorn config's
+    ``post_worker_init`` hook (gunicorn imports the module, so ``__main__`` never runs).
+    Run gunicorn with a single worker: each worker process would start its own queue worker.
+    """
+    global _background_started
+    if _background_started:
+        return
+    _background_started = True
+    init_queue_db()
+    threading.Thread(target=_queue_worker, daemon=True).start()
+    print("  [Queue Worker] started (FIFO, SQLite)", flush=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    # NOTE: production should bind 127.0.0.1 behind nginx (deploy/); pass --host explicitly.
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
 
-    # Initialise queue DB and start background worker
-    init_queue_db()
-    _worker = threading.Thread(target=_queue_worker, daemon=True)
-    _worker.start()
-    print("  [Queue Worker] started (FIFO, SQLite)", flush=True)
+    start_background_workers()
 
     print(f"  CircDEX  →  http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, debug=False)

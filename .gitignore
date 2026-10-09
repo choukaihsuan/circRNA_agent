@@ -42,3 +42,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Web UI runtime state — contains the Flask SECRET_KEY and magic-link tokens (never commit)
+jobs/
+*.db
+.env
+secret_key*
