@@ -557,6 +557,10 @@ def login():
                 link = f"{_public_base()}/auth/{token}" + ("?lang=en" if lang == "en" else "")
                 send_magic_link(email, link, lang=lang)
                 auth_log(email, "request_magic_link", request.remote_addr)
+                if os.environ.get("PIPELINE_DEV_PRINT_LINK") == "1":
+                    # Explicit opt-in for local development / README walkthrough without a mail
+                    # provider. Never enable on a public deployment: it writes login tokens to the log.
+                    print("[dev] magic link for {}: {}".format(email, link), flush=True)
             else:
                 auth_log(email, "login_denied_not_allowed", request.remote_addr)
             sent_email = email
@@ -750,13 +754,23 @@ def save_project_snapshot(cfg: dict) -> None:
             yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
+_PROJECT_SPECIFIC_KEYS = ("study_title", "notify")
+
+
 def load_project_config(gse_id: str) -> dict:
     """Load project-specific config if snapshot exists, else fall back to main config."""
     p = _project_config_path(gse_id)
     if p.exists():
         with open(p) as f:
             return yaml.safe_load(f)
-    return load_config()
+    cfg = load_config()
+    # The fallback is the *global* config of whatever project ran last. Fields that belong to
+    # that project must not leak into a new one (the old title used to be attached to the new
+    # dataset's report because "if not cfg.get('study_title')" saw a non-empty inherited value).
+    if str(cfg.get("project_id", "")).strip().upper() != gse_id.strip().upper():
+        for k in _PROJECT_SPECIFIC_KEYS:
+            cfg.pop(k, None)
+    return cfg
 
 
 def _snake_bin() -> str:
@@ -1317,6 +1331,8 @@ def run_gse():
     cfg["project_id"] = gse_id
     cfg["threads"]    = cores
     cfg = _update_paths_for_project(cfg, gse_id)
+    if not cfg.get("study_title"):
+        cfg["study_title"] = _fetch_geo_title(gse_id)
 
     # Pre-detect labels if metadata is already available (re-run scenario)
     _meta_path = BASE_DIR / cfg.get("metadata", f"metadata/{gse_id}/library_info.csv")
@@ -1799,19 +1815,8 @@ def api_progress():
 
 def _fetch_geo_title(gse_id: str) -> str:
     """Fetch GEO study title via NCBI eUtils. Returns empty string on failure."""
-    import re as _re, urllib.request as _ur, json as _js
-    m = _re.match(r"GSE(\d+)", gse_id.upper())
-    if not m:
-        return ""
-    uid = "200" + m.group(1)
-    url = (f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-           f"?db=gds&id={uid}&retmode=json")
-    try:
-        with _ur.urlopen(url, timeout=8) as resp:
-            data = _js.loads(resp.read())
-        return data.get("result", {}).get(uid, {}).get("title", "")
-    except Exception:
-        return ""
+    from geo_title import fetch_geo_title
+    return fetch_geo_title(gse_id)
 
 
 @app.route("/api/detect_labels")

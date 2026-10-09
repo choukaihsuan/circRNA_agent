@@ -1,0 +1,7 @@
+Chr	Start	End	Gene	JunctionType	Strand	Start-End Region	OverallRegion
+chr1	1000	2000	GENE	1	+	exon-exon	coding
+chr1	5004	6000	GENE	1	+	exon-exon	coding
+chr2	3025	4000	GENE	1	+	exon-exon	coding
+chr6	7000	8000	GENE	1	+	exon-exon	coding
+chr7	4000	4800	GENE	1	+	exon-exon	coding
+chr9	100	500	GENE	1	+	exon-exon	coding

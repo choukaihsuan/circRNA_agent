@@ -1,6 +1,7 @@
-# Data (large files, not for version control)
-data/
-results/
+# Data (large files, not for version control) - anchored to the repo root so a source
+# directory that happens to be named data/ or results/ deeper in the tree is not swallowed
+/data/
+/results/
 
 # Reference genome
 /ref/
@@ -28,8 +29,9 @@ Log.out
 # Accidentally created directories
 CUsersUser/
 
-# Claude Code memory (local session data)
-.claude/
+# Claude Code local state (memory, settings.local.json, todos); repo-level skills stay committable
+.claude/*
+!.claude/skills/
 
 # Snakemake-generated sentinel files
 config/.ciriquant_ready
@@ -43,8 +45,19 @@ Thumbs.db
 .idea/
 *.swp
 
-# Web UI runtime state — contains the Flask SECRET_KEY and magic-link tokens (never commit)
+# Web UI runtime state: Flask SECRET_KEY, magic-link tokens, job queue (never commit)
 jobs/
-*.db
 .env
-secret_key*
+.env.*
+
+# Generated tables / figures: ignored by EXPLICIT filename (no *.png / *.tsv globs, which would
+# also swallow legitimate files). Only the scripts that produce them are committed. When you add a
+# generator under audit/, add its output file here by name.
+examples/minimal/output/
+audit/figs/figure13_ablation.png
+
+# Guard against paper material ending up in the software repo (the manuscript lives elsewhere)
+*.docx
+*.doc
+/paper/
+/manuscript/

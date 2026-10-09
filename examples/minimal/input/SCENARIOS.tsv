@@ -1,0 +1,9 @@
+chrom	start	end	scenario
+chr1	1000	2000	A exact match in both tools
+chr1	5000	6000	B DCC differs by 4 bp (within slop=10)
+chr2	3000	4000	C DCC differs by 25 bp (outside slop) -> not shared
+chr3	800	1500	D CIRIquant only
+chr4	100	900	E BSJ=1 < min_bsj=2 -> dropped before voting
+chr5	2000	2600	F pseudo-circ: BSJ<5 and BSJ/FSJ=3 > 1.0 -> removed by QC
+chr6	7000	8000	G high BSJ, BSJ/FSJ=6 but BSJ>=5 -> exempt from ratio QC
+chr7	4000	4800	H exact match in both tools (low-ish counts)

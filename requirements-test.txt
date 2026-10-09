@@ -1,0 +1,5 @@
+# Test dependencies (CI and local):  pip install -r requirements-test.txt && pytest
+-r requirements-web.txt
+pytest>=8
+pandas>=1.3
+snakemake>=8,<10      # dry-run only (config -> command-line wiring tests); never executes the pipeline

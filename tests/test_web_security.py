@@ -428,3 +428,11 @@ def test_secure_cookie_default_follows_public_url(monkeypatch):
     monkeypatch.setenv("PIPELINE_PUBLIC_URL", "https://circdex.example.org")
     monkeypatch.setenv("PIPELINE_COOKIE_SECURE", "0")
     importlib.reload(web_ui)
+
+
+def test_dev_print_link_is_opt_in(web, client, mail, capsys, monkeypatch):
+    client.post("/login", data={"email": "a@example.org"})
+    assert "[dev] magic link" not in capsys.readouterr().out          # default: token never printed
+    monkeypatch.setenv("PIPELINE_DEV_PRINT_LINK", "1")
+    client.post("/login", data={"email": "a@example.org"})
+    assert "[dev] magic link for a@example.org: https://circdex.example.org/auth/" in capsys.readouterr().out

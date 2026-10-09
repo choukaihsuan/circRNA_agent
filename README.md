@@ -20,6 +20,7 @@ site predictions.
 - [Key Features](#key-features)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
+- [Minimal reproducible example](#minimal-reproducible-example)
 - [Installation](#installation)
 - [Usage Guide](#usage-guide)
   - [1. Starting the Web UI](#1-starting-the-web-ui)
@@ -29,11 +30,15 @@ site predictions.
   - [5. Reading the report](#5-reading-the-report)
   - [6. Cross-dataset comparison](#6-cross-dataset-comparison)
 - [Command-Line Usage](#command-line-usage)
+- [Inputs and expected outputs](#inputs-and-expected-outputs)
 - [Configuration Reference](#configuration-reference)
 - [Pipeline Architecture](#pipeline-architecture)
 - [Choosing a Good Dataset](#choosing-a-good-dataset)
 - [Container Deployment (Docker / Singularity)](#container-deployment-docker--singularity)
 - [Troubleshooting](#troubleshooting)
+- [Known limitations](#known-limitations)
+- [Security and deployment](#security-and-deployment)
+- [Tests](#tests)
 - [Project Structure](#project-structure)
 - [Methodology Notes](#methodology-notes)
 
@@ -83,7 +88,7 @@ environment (`envs/circrna.yaml`):
 | fastp, FastQC, MultiQC | QC and trimming |
 | sra-tools, aria2c | SRA/GEO data download |
 | R ≥ 4.2 (edgeR, DESeq2, limma, qvalue) | Differential expression |
-| Python ≥ 3.7 (pandas, plotly, scipy, Flask) | Analysis scripts + Web UI |
+| Python (pandas, plotly, scipy, Flask) | Analysis scripts + Web UI. `envs/circrna.yaml` pins Python 3.9; the scripts are kept Python 3.7-compatible because the maintainer's HPC server runs 3.7 |
 
 You will also need a **reference genome** (hg19 by default) with pre-built
 BWA, HISAT2, and STAR indices, and a GTF annotation file.
@@ -146,7 +151,7 @@ conda activate ciriquant   # or: your equivalent environment
 #    (see Reference genome / Configuration Reference for exactly what to change)
 
 # 3. Start the Web UI
-python scripts/web_ui.py --host 0.0.0.0 --port 5000
+python scripts/web_ui.py --host 127.0.0.1 --port 5000   # use 0.0.0.0 only behind a reverse proxy, see Security
 ```
 
 > ⚠️ **`config.yaml` and `config/ciriquant.yaml` are checked into this repo
@@ -163,6 +168,25 @@ Then open `http://<your-server-ip>:5000` in a browser, paste a GEO accession
 start. The status page will show live progress through download → QC →
 detection → differential expression → report generation, and you'll be able
 to open the finished HTML report directly from the browser once it's done.
+
+---
+
+## Minimal reproducible example
+
+No genome, no aligners, no network, under one second — only Python 3:
+
+```bash
+git clone <this-repo> circRNA_agent && cd circRNA_agent
+bash examples/minimal/run.sh
+# ...
+# OK: output matches examples/minimal/expected/
+```
+
+It runs the dual-tool consensus step (CIRIquant + DCC) on hand-made toy data and diffs the result against
+`examples/minimal/expected/`. `examples/minimal/README.md` lists, scenario by scenario, which toy circRNAs are kept
+(exact match, within `slop`, exempt from the ratio QC) and which are dropped (outside `slop`, one tool only,
+`BSJ < min-bsj`, pseudo-circRNA QC). It checks one step only; a full run needs everything under
+[Installation](#installation) and takes hours to days depending on dataset size.
 
 ---
 
@@ -293,8 +317,11 @@ Open `http://<host>:5000` in a browser. If email login is configured
 (`PIPELINE_ALLOWED_EMAILS` environment variable + either `RESEND_API_KEY` or
 SMTP credentials), you'll be asked to sign in via a one-time magic link sent
 to your email; the link is valid for 30 minutes and the resulting session
-lasts 7 days. If no email is configured, the console will print the magic
-link directly so you can copy it into the browser.
+lasts 7 days. Without a mail provider no e-mail can be sent, so for **local
+development only** start the server with `PIPELINE_DEV_PRINT_LINK=1` (and
+`PIPELINE_COOKIE_SECURE=0` when browsing over plain `http://`); the magic link
+is then printed to the console. Do not enable this on a public deployment: it
+writes login tokens to the log.
 
 ### 2. Choosing an input method
 
@@ -428,6 +455,41 @@ python scripts/agent.py --gse GSE113230 --cluster "sbatch ..." --jobs 50
 
 ---
 
+## Inputs and expected outputs
+
+**Inputs for one analysis**
+
+| Input | Format |
+|-------|--------|
+| `metadata/library_info.csv` | `srr_id,paired` — one row per sequencing run (paired-end, `paired=true`) |
+| `metadata/sample_groups.csv` | `srr_id,condition` (+ optional `patient_id` → paired design `~patient + condition`); labels must match `de.tumor_label` / `de.normal_label` |
+| FASTQ | downloaded from SRA automatically, or symlinked as `{raw_dir}/{sample}_1.fastq.gz` / `_2.fastq.gz` |
+| Reference | hg19 FASTA + GTF and BWA / HISAT2 / STAR indices (see [Reference genome](#reference-genome)) |
+| `config.yaml` | one run's settings (the Web UI writes a per-project snapshot under `config/projects/`) |
+
+`python scripts/agent.py --gse GSE113230` (or the Web UI) creates the two metadata files from GEO/SRA for you.
+
+**Outputs** (under `results_dir`)
+
+```
+qc/multiqc_report.html, qc/fastp/{srr}.json
+circRNA/{srr}/{srr}.gtf                  CIRIquant calls (BSJ + FSJ counts)
+circRNA/{srr}/DCC/CircCoordinates        DCC calls
+circRNA/{srr}/high_confidence.bed        consensus circRNAs per sample (+ consensus_summary.tsv)
+circRNA/count_matrix.tsv                 BSJ counts, circRNA x sample
+circRNA/fsj_count_matrix.tsv             FSJ counts
+circRNA/isoform_groups.tsv               host gene / strand / exon span / region
+circRNA/circbase_annotated.tsv           circBase match (hg19)
+de/de_results.tsv                        main DE table (+ de_results_{edgeR_ciriquant,deseq2,limma}.tsv)
+de/biomarker_candidates.tsv              composite-score ranking
+de/isoform_switching.tsv, de/iui_matrix.tsv
+de/interactions.json                     miRNA / RBP predictions
+plots/{volcano,heatmap,pca}.pdf
+report.html                              self-contained interactive report
+```
+
+---
+
 ## Configuration Reference
 
 `config.yaml` (or a per-project snapshot under `config/projects/`) controls
@@ -463,7 +525,7 @@ de:
   method:              edgeR_ciriquant  # report's default display method
   fdr_cutoff:          0.05
   log2fc_cutoff:       1.0
-  de_sig_by:           pvalue           # pvalue (nominal) or padj (BH-corrected)
+  de_sig_by:           auto             # auto (Storey q < 0.2, else nominal p < 0.05) | pvalue | padj | qvalue
   tumor_label:         tumor
   normal_label:        normal
 
@@ -554,6 +616,26 @@ A pre-built image with every dependency (CIRIquant, DCC, STAR, HISAT2, BWA,
 R/Bioconductor, Snakemake) is published to Docker Hub, and can be converted
 to a Singularity/Apptainer image for HPC clusters that don't allow Docker.
 
+### 0 — Plain Docker (single machine)
+
+The image contains the tool stack (CIRIquant, DCC, STAR, HISAT2, BWA, samtools, R/Bioconductor, Snakemake 7.32)
+but **not this repository's code**: mount a clone of the repo at the image's working directory, and mount your
+data and reference directories at the same paths that `config.yaml` uses.
+
+```bash
+docker pull choukaihsuan/circrna-pipeline:1.0.1
+docker run --rm -it \
+    -v "$PWD":/pipeline \
+    -v /path/to/data:/path/to/data \
+    -v /path/to/reference:/path/to/reference \
+    choukaihsuan/circrna-pipeline:1.0.1 \
+    snakemake --snakefile workflow/Snakefile --configfile config.yaml --cores 8 --keep-going
+```
+
+Set `use_container: true` in `config.yaml` first (it selects `config/ciriquant_container.yaml`, which uses the
+in-container tool paths). Use `--cores` and memory limits that fit your machine — see
+[Minimum Hardware Requirements](#minimum-hardware-requirements).
+
 ### 1 — Build and test locally (optional — only needed if you're modifying the image)
 
 ```bash
@@ -615,6 +697,50 @@ snakemake \
   NCBI eUtils endpoints those accessions rely on; use the Web UI's manual
   CSV upload instead, after fetching metadata from a machine that does have
   access (`python scripts/download_geo.py --gse PRJNAxxxxxx`).
+
+---
+
+## Known limitations
+
+- **Scale.** A real run is not laptop-sized: tens to hundreds of GB of disk and, per large total-RNA sample,
+  roughly 10–12 h for CIRIquant on network storage (see [Minimum Hardware Requirements](#minimum-hardware-requirements)).
+  Use the [minimal example](#minimal-reproducible-example) to check the logic without that cost.
+- **Genome / library.** Built and validated for human **hg19**, **paired-end**, **rRNA-depleted or RNase R** total RNA.
+  poly-A libraries and reads shorter than ~100 bp give very few circRNAs (50 bp reads make DCC essentially unusable;
+  the adaptive fallback then runs CIRIquant-only).
+- **Statistics.** Small studies (3 vs. 3) rarely pass BH correction; the default `de_sig_by: auto` falls back to nominal
+  p < 0.05 when nothing passes the q-value step, which must be reported as such. RNase R-enriched libraries make the FSJ offset of `edgeR_ciriquant` unreliable
+  (FSJ ≈ 0), so fold-change *direction* is not comparable with total-RNA datasets.
+- **DCC performance.** DCC 0.5.0 can become extremely slow on very large chimeric-junction files (RNase R libraries) and
+  in gene-dense loci; some published runs used CIRIquant-only for that reason (documented per dataset in `CLAUDE.md`).
+- **Software versions.** Published results were produced on a server with Python 3.7, R 4.2.2 and edgeR 3.40.
+  `envs/circrna.yaml` resolves to Python 3.9, R 4.3.1 and **edgeR 4.x**, so a fresh environment may give slightly
+  different DE numbers. Pin the versions yourself if you need to reproduce a published table exactly.
+- **Network.** SRA download needs NCBI/S3 access; PRJNA/SRP metadata lookups use E-utilities endpoints that some
+  firewalls block (use the manual CSV upload). GEO metadata lookup needs `pysradb` (included in `envs/circrna.yaml`).
+- **Single node.** The Web UI's job queue runs one Snakemake job at a time on the machine hosting it.
+
+---
+
+## Security and deployment
+
+The Web UI is meant to sit behind a reverse proxy with HTTPS. Example `gunicorn`, `systemd` and `nginx` files are in
+`deploy/`; environment variables (never commit them): `PIPELINE_PUBLIC_URL`, `PIPELINE_ALLOWED_EMAILS`,
+`PIPELINE_TRUSTED_PROXY`, `PIPELINE_SECRET_KEY`, `PIPELINE_FASTQ_ROOTS`, `PIPELINE_COOKIE_SECURE`. Details and the
+list of hardening measures: `audit/security_hardening_20261008.md`. Run gunicorn with a **single worker**
+(the queue worker lives in the process).
+
+---
+
+## Tests
+
+```bash
+pip install -r requirements-test.txt
+pytest -q
+```
+
+Covers Web UI input validation / XSS / path traversal, config → command-line wiring (Snakemake **dry-run** only —
+nothing is executed), the minimal example, and `study_title` handling. CI: `.github/workflows/tests.yml`.
 
 ---
 
