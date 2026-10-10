@@ -19,11 +19,17 @@ Arabic 1/2/3/4 column numbers (not circled), panel (b)'s layout -- is kept ident
 the frozen content list the thesis author read off the published image. Panel (b)'s
 numbers are read from compute_cost.tsv at run time, never hardcoded.
 
-Box sizes for columns 3/4 (and every box's containment, in fact) are computed from the
-*actual rendered* text extent (fig.canvas.draw() + get_window_extent()), not a fixed
-guessed width -- a fixed width previously let several lines overflow their box on two
-separate review passes. A hard assert checks every line's bbox is fully inside its box's
-bbox before the figure is saved; if that assert ever fires, the figure is NOT written.
+Box sizes for columns 3/4 are computed from the *actual rendered* text extent
+(fig.canvas.draw() + get_window_extent()), not a fixed guessed width.
+
+Containment is checked against the SAVED PNG's actual pixels, not matplotlib's internal
+bbox model. An internal-bbox assert was tried first and it passed cleanly while the saved
+PNG still had two lines overflowing their box -- the failure mode is specifically
+"the internal model says it's fine, the rendered output isn't", which checking the
+internal model can never catch, because constrained_layout keeps re-adjusting axa's
+position/size as more content (axb, headers added after a box's own containment was
+checked) gets added, so an early-measured bbox goes stale by save time. The pixel check
+below runs once, at the very end, against the file that was actually written.
 
 usage: fig_benchmark_overview.py <compute_cost.tsv> <out_dir>
 """
@@ -92,7 +98,11 @@ for label, pid in BAR_ROWS:
 # ============================== figure / layout ==============================
 
 fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI, constrained_layout=True)
+fig.set_dpi(DPI)  # explicit: measurement and savefig must share one dpi, not just agree by
+                    # construction default -- make that a visible invariant, not an accident
 gs = fig.add_gridspec(2, 1, height_ratios=[1.05, 1.0])
+
+ALL_BOXES = []  # (name, FancyBboxPatch) for every box() call, checked post-save at the end
 
 # ---------------------------- Panel (a): diagram ----------------------------
 axa = fig.add_subplot(gs[0])
@@ -100,6 +110,45 @@ axa.set_xlim(0, 100)
 axa.set_ylim(0, 58)
 axa.axis("off")
 axa.set_title("(a)", loc="left", fontweight="bold", fontsize=13, pad=2)
+
+# ---------------------------- Panel (b): wall-time bars ----------------------------
+# Built HERE, before any of panel (a)'s text/box measurement, not after. Reason this
+# matters: constrained_layout re-settles axa's on-screen size every time subplot
+# content changes, including when axb is first added. text_extent_du() (below)
+# converts a rendered pixel width to axa DATA units using whatever axa.transData is
+# current AT THE TIME of measurement; if axa's pixel-per-data-unit ratio is still
+# going to shift once axb exists, a width measured now is already stale by the time
+# the figure is actually saved -- which is exactly what happened on the previous
+# pass: col3_w/col4_w were computed before axb existed, two box titles ended up
+# wider than their (too-narrow) box in the saved PNG despite the internal numbers
+# looking consistent at computation time. Building axb's real, final content first
+# means every later text_extent_du() call already sees the TRUE final layout.
+axb = fig.add_subplot(gs[1])
+axb.set_title("(b)", loc="left", fontweight="bold", fontsize=13, pad=2)
+
+y_pos = list(range(len(bar_data)))[::-1]
+for (label, vals, total), y in zip(bar_data, y_pos):
+    left = 0.0
+    for v, c in zip(vals, TOOL_COLORS):
+        if v > 0:
+            axb.barh(y, v, left=left, color=c, edgecolor="none", height=0.55)
+        left += v
+    axb.text(left + 15, y, f"{total:,.0f} min", va="center", ha="left",
+              fontsize=10, color="#555555")
+
+axb.set_yticks(y_pos)
+axb.set_yticklabels([b[0] for b in bar_data], fontsize=11)
+axb.set_xlim(0, 1400)
+axb.set_xlabel("Wall time (min · single sample · 8 cores)", fontsize=10)
+axb.set_ylim(-0.7, len(bar_data) - 0.3)
+axb.spines[["top", "right", "left"]].set_visible(False)
+axb.grid(axis="x", color="#e5e7eb", linewidth=0.8, zorder=0)
+axb.set_axisbelow(True)
+axb.tick_params(axis="y", length=0)
+
+handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in TOOL_COLORS]
+axb.legend(handles, TOOL_LABELS, loc="upper center", bbox_to_anchor=(0.5, -0.18),
+           ncol=5, frameon=False, fontsize=9.5, handlelength=1.2, handleheight=1.2)
 
 renderer = fig.canvas.get_renderer()
 
@@ -131,12 +180,25 @@ def text_extent_du(s, fontsize, weight="normal"):
 PAD_X, PAD_Y = 1.6, 1.1  # data-unit padding inside each box
 
 
-def box(ax, x, y_bottom, lines, fc=BLUE, ec=BLUE_EDGE, fs=7.6, title_fs=9.0, lw=1.3,
-        min_w=None):
+def box(ax, name, x, y_bottom, lines, fc=BLUE, ec=BLUE_EDGE, fs=7.6, title_fs=9.0, lw=1.3,
+        min_w=None, skip_sides=()):
     """Draw one rounded box sized to fit its own text exactly (measured, not guessed).
     `lines[0]` is the box's bold dark-blue title line; the rest render at `fs` in
     body black. Box width = widest rendered line + padding (or `min_w` if larger, so
-    columns can still share a width when desired). Returns (x, y_bottom, w, h)."""
+    columns can still share a width when desired). Returns (x, y_bottom, w, h).
+
+    `name` is only for diagnostics: the patch is registered in ALL_BOXES and checked
+    against the SAVED PNG's pixels at the very end of this script (see
+    check_box_margins_in_saved_png), not here -- an in-construction check here would
+    use whatever position constrained_layout has settled on *so far*, which keeps
+    changing as later content (more boxes, axb) is added, so it can pass while the
+    final saved file still overflows. See the module docstring.
+
+    `skip_sides`: sides to exclude from that post-save check, for boxes with another,
+    intentionally-nearby element on that side that isn't an overflow bug -- e.g. the
+    four top-row boxes each sit a few pixels below their own column's bold header
+    ("1 Inputs" etc.), so a "top" check there trips on that header's own ink, not on
+    this box's content leaking out."""
     sizes = [text_extent_du(lines[0], title_fs, "bold")]
     for ln in lines[1:]:
         sizes.append(text_extent_du(ln, fs, "normal"))
@@ -165,26 +227,7 @@ def box(ax, x, y_bottom, lines, fc=BLUE, ec=BLUE_EDGE, fs=7.6, title_fs=9.0, lw=
         if i < len(gaps):
             y_cursor -= gaps[i]
 
-    # hard containment check -- measured, not eyeballed; a failure here means the
-    # figure is wrong and must not be silently written out. A bare "text bbox is a
-    # subset of the box bbox" check passed even when a line's edge was tangent to
-    # the border (touching it, zero clearance) -- require an actual MIN_MARGIN_PT
-    # of breathing room on every side, not just non-overflow.
-    MIN_MARGIN_PT = 4.0
-    margin_du = MIN_MARGIN_PT * DU_PER_PT
-    _redraw()
-    box_bb = p.get_window_extent(renderer=renderer).transformed(ax.transData.inverted())
-    for ln, t in zip(lines, text_objs):
-        tb = t.get_window_extent(renderer=renderer).transformed(ax.transData.inverted())
-        assert tb.x0 >= box_bb.x0 + margin_du - 1e-6 and tb.x1 <= box_bb.x1 - margin_du + 1e-6, (
-            f"STOP: text {ln!r} has less than {MIN_MARGIN_PT}pt horizontal margin: "
-            f"text=({tb.x0:.2f},{tb.x1:.2f}) box=({box_bb.x0:.2f},{box_bb.x1:.2f}) "
-            f"margin_du={margin_du:.3f}")
-        assert tb.y0 >= box_bb.y0 + margin_du - 1e-6 and tb.y1 <= box_bb.y1 - margin_du + 1e-6, (
-            f"STOP: text {ln!r} has less than {MIN_MARGIN_PT}pt vertical margin: "
-            f"text=({tb.y0:.2f},{tb.y1:.2f}) box=({box_bb.y0:.2f},{box_bb.y1:.2f}) "
-            f"margin_du={margin_du:.3f}")
-
+    ALL_BOXES.append((name, p, set(skip_sides)))  # checked against the saved PNG's pixels at the end
     return (x, y_bottom, w, h)
 
 
@@ -195,19 +238,27 @@ def arrow(ax, p0, p1, **kw):
 
 
 # title box -- fixed #1: GSE55872 -> SRP011042
-box(axa, 8, 50,
+box(axa, "title", 8, 50,
     ["Three pipelines compared (SRP011042)",
      "circDEX (CIRIquant + DCC) · CirComPara2 (4 tools) · nf-core/circrna (3 tools)"],
     fc=BLUE, ec=TITLE_BLUE_EDGE, fs=8.6, title_fs=10.5, lw=1.6, min_w=84)
 
 col_x = [1, 25, 49, None]  # col_x[3] is filled in once column 3's measured width is known
 col_w_12 = 21  # columns 1-2 already fit at this fixed width; only 3-4 need measuring
-HEADER_Y = 44.6
+HEADER_Y = 47.3
+
+
+ALL_HEADERS = []  # text artists for the four column headers, masked out before the
+                    # pixel ink-check below (a header can sit close enough to an
+                    # adjacent column's box that it falls inside that box's own
+                    # margin strip -- that's the header rendering exactly where it's
+                    # meant to, not content leaking out of the box being checked)
 
 
 def draw_header(cx, text):
-    axa.text(cx, HEADER_Y, text, ha="center", va="center", fontsize=9.3,
-              fontweight="bold", color=HEADER_BLACK)
+    t = axa.text(cx, HEADER_Y, text, ha="center", va="center", fontsize=9.3,
+                  fontweight="bold", color=HEADER_BLACK)
+    ALL_HEADERS.append(t)
 
 
 draw_header(col_x[0] + col_w_12 / 2, "1  Inputs")
@@ -217,19 +268,19 @@ draw_header(col_x[1] + col_w_12 / 2, "2  Ground truth")
 # copy left a visible sliver of the first draw in an earlier version of this script.
 
 # column 1: Inputs
-b_in1 = box(axa, col_x[0], 34.0,
+b_in1 = box(axa, "Inputs:SRP011042", col_x[0], 34.0,
             ["SRP011042", "Hs68 · hg19", "Total RNA, RNase R ×2"],
             fs=7.6, title_fs=8.6, min_w=col_w_12)
-b_in2 = box(axa, col_x[0], 21.0,
+b_in2 = box(axa, "Inputs:Runtime logs", col_x[0], 21.0,
             ["Runtime logs", "/usr/bin/time -v", "single sample, 8 cores"],
             fs=7.6, title_fs=8.6, min_w=col_w_12)
 
 # column 2: Ground truth
-b_gt1 = box(axa, col_x[1], 34.0,
+b_gt1 = box(axa, "Ground truth:Enrichment ratio", col_x[1], 34.0,
             ["Enrichment ratio", "ER = RNase R BSJ", "/ Total BSJ"],
             fs=7.6, title_fs=8.6, min_w=col_w_12)
 # fixed #2: strict </> -> inclusive >=/<=
-b_gt2 = box(axa, col_x[1], 21.0,
+b_gt2 = box(axa, "Ground truth:Label by ER", col_x[1], 21.0,
             ["Label by ER", "ER ≥ 1.5 → TP", "ER ≤ 0.5 → TN"],
             fs=7.6, title_fs=8.6, min_w=col_w_12)
 
@@ -240,32 +291,34 @@ t1_lines = ["Task 1 · Detection accuracy", "3 pipelines vs ground truth",
             "Precision · Recall · F1", "Specificity · AUC-PR"]
 t2_lines = ["Task 2 · Compute cost", "wall time · peak RAM · CPU-h",
             "same sample, 8 cores"]
-T3_FS, T3_TITLE_FS = 6.7, 7.3
+T3_FS, T3_TITLE_FS = 5.3, 5.8
 col3_w = max(
     max(text_extent_du(t1_lines[0], T3_TITLE_FS, "bold")[0],
         max(text_extent_du(l, T3_FS, "normal")[0] for l in t1_lines[1:])),
     max(text_extent_du(t2_lines[0], T3_TITLE_FS, "bold")[0],
         max(text_extent_du(l, T3_FS, "normal")[0] for l in t2_lines[1:])),
 ) + 2 * PAD_X
-b_t1 = box(axa, col_x[2], 31.0, t1_lines, fs=T3_FS, title_fs=T3_TITLE_FS, min_w=col3_w)
-b_t2 = box(axa, col_x[2], 18.5, t2_lines, fc=PURPLE, ec=PURPLE_EDGE, fs=T3_FS,
+b_t1 = box(axa, "Task1:Detection accuracy", col_x[2], 31.0, t1_lines, fs=T3_FS,
            title_fs=T3_TITLE_FS, min_w=col3_w)
+b_t2 = box(axa, "Task2:Compute cost", col_x[2], 18.5, t2_lines, fc=PURPLE, ec=PURPLE_EDGE,
+           fs=T3_FS, title_fs=T3_TITLE_FS, min_w=col3_w)
 draw_header(col_x[2] + col3_w / 2, "3  Benchmark tasks")
 
 # column 4: Outputs -- same measure-first approach
 out1_lines = ["Accuracy outputs", "accuracy_summary.tsv"]
 out2_lines = ["Cost outputs", "compute_cost.tsv", "wall time per step · peak RAM"]
-T4_FS, T4_TITLE_FS = 7.0, 7.5
+T4_FS, T4_TITLE_FS = 5.5, 5.9
 col4_w = max(
     max(text_extent_du(out1_lines[0], T4_TITLE_FS, "bold")[0],
         max(text_extent_du(l, T4_FS, "normal")[0] for l in out1_lines[1:])),
     max(text_extent_du(out2_lines[0], T4_TITLE_FS, "bold")[0],
         max(text_extent_du(l, T4_FS, "normal")[0] for l in out2_lines[1:])),
 ) + 2 * PAD_X
-col_x[3] = col_x[2] + col3_w + 2.0
-b_out1 = box(axa, col_x[3], 31.0, out1_lines, fs=T4_FS, title_fs=T4_TITLE_FS, min_w=col4_w)
-b_out2 = box(axa, col_x[3], 18.5, out2_lines, fc=PURPLE, ec=PURPLE_EDGE, fs=T4_FS,
+col_x[3] = col_x[2] + col3_w + 0.5
+b_out1 = box(axa, "Outputs:Accuracy outputs", col_x[3], 31.0, out1_lines, fs=T4_FS,
              title_fs=T4_TITLE_FS, min_w=col4_w)
+b_out2 = box(axa, "Outputs:Cost outputs", col_x[3], 18.5, out2_lines, fc=PURPLE,
+             ec=PURPLE_EDGE, fs=T4_FS, title_fs=T4_TITLE_FS, min_w=col4_w)
 
 right_edge = col_x[3] + col4_w
 xlim_right = axa.get_xlim()[1]
@@ -334,37 +387,131 @@ hline(axa, p_under, p_up)
 arrow(axa, p_up, p_end)
 harrow(axa, b_t2, b_out2)
 
-# ---------------------------- Panel (b): wall-time bars ----------------------------
-axb = fig.add_subplot(gs[1])
-axb.set_title("(b)", loc="left", fontweight="bold", fontsize=13, pad=2)
+# ---- final layout is now fully settled (axb, headers, arrows all added) -- measure
+# every box's on-screen pixel extent ONCE, here, then save, then check the SAVED FILE
+# against those regions. No savefig(bbox_inches="tight") anywhere (that re-crops at
+# save time and would invalidate a pre-save measurement); dpi is the same DPI used at
+# figure creation (fig.set_dpi(DPI) above) and passed to savefig below -- one number,
+# not two that happen to agree.
+_redraw()
+box_pixel_regions = []  # (name, x0, x1, y0_img, y1_img, skip_sides) in SAVED-PNG pixel coords
+for name, patch, skip_sides in ALL_BOXES:
+    bb = patch.get_window_extent(renderer=renderer)  # display coords, origin bottom-left
+    y0_img, y1_img = H_PX - bb.y1, H_PX - bb.y0  # flip to image-array row coords (origin top-left)
+    box_pixel_regions.append((name, bb.x0, bb.x1, y0_img, y1_img, skip_sides))
 
-y_pos = list(range(len(bar_data)))[::-1]
-for (label, vals, total), y in zip(bar_data, y_pos):
-    left = 0.0
-    for v, c in zip(vals, TOOL_COLORS):
-        if v > 0:
-            axb.barh(y, v, left=left, color=c, edgecolor="none", height=0.55)
-        left += v
-    axb.text(left + 15, y, f"{total:,.0f} min", va="center", ha="left",
-              fontsize=10, color="#555555")
+header_pixel_regions = []  # same, for the 4 column headers -- masked out before checking,
+                            # not excluded via per-box skip_sides, because a header can bleed
+                            # into a NEIGHBOR box's margin (narrow inter-column gap), not just
+                            # the margin of the box directly below it
+HEADER_MASK_PAD_PX = 3
+for t in ALL_HEADERS:
+    bb = t.get_window_extent(renderer=renderer)
+    y0_img, y1_img = H_PX - bb.y1, H_PX - bb.y0
+    header_pixel_regions.append((bb.x0, bb.x1, y0_img, y1_img))
 
-axb.set_yticks(y_pos)
-axb.set_yticklabels([b[0] for b in bar_data], fontsize=11)
-axb.set_xlim(0, 1400)
-axb.set_xlabel("Wall time (min · single sample · 8 cores)", fontsize=10)
-axb.set_ylim(-0.7, len(bar_data) - 0.3)
-axb.spines[["top", "right", "left"]].set_visible(False)
-axb.grid(axis="x", color="#e5e7eb", linewidth=0.8, zorder=0)
-axb.set_axisbelow(True)
-axb.tick_params(axis="y", length=0)
-
-handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in TOOL_COLORS]
-axb.legend(handles, TOOL_LABELS, loc="upper center", bbox_to_anchor=(0.5, -0.18),
-           ncol=5, frameon=False, fontsize=9.5, handlelength=1.2, handleheight=1.2)
+# A DIFFERENT failure mode from box-content overflow: a header colliding with the
+# BOX below it (not a box's own content crossing its own border). Masking headers
+# out of the ink-check above means that check literally cannot see this -- it would
+# pass even with a header drawn right on top of a box. Caught once by eye on this
+# exact script (row-1 box heights grew slightly once measured post-axb, same root
+# cause as the column-width drift, and pushed their tops up into the header): check
+# it explicitly, geometrically, rather than relying on looking every time.
+for hx0, hx1, hy0, hy1 in header_pixel_regions:
+    for name, patch, _ in ALL_BOXES:
+        bb = patch.get_window_extent(renderer=renderer)
+        bx0, bx1 = bb.x0, bb.x1
+        by0_img, by1_img = H_PX - bb.y1, H_PX - bb.y0
+        overlap_x = hx0 < bx1 and hx1 > bx0
+        overlap_y = hy0 < by1_img and hy1 > by0_img
+        if overlap_x and overlap_y:
+            raise SystemExit(
+                f"STOP: a column header overlaps box {name!r} -- header pixel bbox "
+                f"x=({hx0:.1f},{hx1:.1f}) y=({hy0:.1f},{hy1:.1f}) vs box bbox "
+                f"x=({bx0:.1f},{bx1:.1f}) y=({by0_img:.1f},{by1_img:.1f})")
 
 fig.savefig(os.path.join(OUT, "figure6.png"), dpi=DPI)
 fig.savefig(os.path.join(OUT, "figure6.pdf"), dpi=DPI)
 print("wrote figure6.png/pdf to", OUT)
 print("panel (b) totals:", {b[0]: b[2] for b in bar_data})
 print("col3_w", col3_w, "col4_w", col4_w, "col_x[3]", col_x[3])
-print("all containment asserts passed")
+
+
+def check_box_margins_in_saved_png(png_path, regions, header_regions=(), gap_px=2,
+                                     strip_px=8, ink_sum_max=240, header_mask_pad=3):
+    """Read the FILE that was actually written and check a thin strip of pixels just
+    outside each of a box's four edges (gap_px past the border, strip_px wide) for
+    TEXT-colored ink. This is the check that actually matters: an earlier version of
+    this script asserted containment against matplotlib's internal bbox model DURING
+    construction, which passed cleanly while the saved PNG still had two lines
+    overflowing their box -- constrained_layout kept re-adjusting axa's position as
+    later content was added, so an early-measured bbox had gone stale by save time.
+    This function instead opens the saved file and looks at actual pixels, so it
+    cannot be fooled by that kind of staleness.
+
+    First pass used "any deviation from pure white" and produced 32 false positives
+    on a figure that (per manual pixel inspection) had only 2 real overflows: every
+    box's own anti-aliased rounded corner/border bleeds a few pale pixels past its
+    nominal edge (R+G+B well above 600), and the gray connector arrows legitimately
+    touch some boxes by design (R+G+B=408) -- neither is "text leaking out". Text ink
+    (BODY_BLACK #1a1a1a sum=78, BOXTITLE_BLUE #1a3f6b sum=196) is categorically
+    darker than every box border color in this script (289-350) or the arrow gray
+    (408), so thresholding on R+G+B (not on "is it exactly white") separates the two
+    cleanly with real margin on both sides.
+
+    Second pass (ink threshold in place) still had a false positive: a column
+    header's own text can sit close enough to an ADJACENT column's box (narrow
+    inter-column gap) to land inside that box's margin strip, even though the header
+    isn't that box's content overflowing -- it's rendering exactly where it's meant
+    to. `header_regions` are painted white (with header_mask_pad px of slack) in the
+    loaded array before any box is checked, so header ink can never trigger either
+    box's check, on any side, regardless of which box it happens to sit near."""
+    from PIL import Image
+    import numpy as np
+    arr = np.array(Image.open(png_path).convert("RGB")).astype(int)
+    full_h, full_w = arr.shape[0], arr.shape[1]
+    for hx0, hx1, hy0, hy1 in header_regions:
+        mx0 = max(int(round(hx0)) - header_mask_pad, 0)
+        mx1 = min(int(round(hx1)) + header_mask_pad, full_w)
+        my0 = max(int(round(hy0)) - header_mask_pad, 0)
+        my1 = min(int(round(hy1)) + header_mask_pad, full_h)
+        arr[my0:my1, mx0:mx1] = 255
+    failures = []
+    for name, x0, x1, y0_img, y1_img, skip_sides in regions:
+        x0, x1 = int(round(x0)), int(round(x1))
+        y0_img, y1_img = int(round(y0_img)), int(round(y1_img))
+        sides = {
+            "right":  (x1 + gap_px, x1 + gap_px + strip_px, y0_img, y1_img),
+            "left":   (x0 - gap_px - strip_px, x0 - gap_px, y0_img, y1_img),
+            "top":    (x0, x1, y0_img - gap_px - strip_px, y0_img - gap_px),
+            "bottom": (x0, x1, y1_img + gap_px, y1_img + gap_px + strip_px),
+        }
+        for side in skip_sides:
+            sides.pop(side, None)
+        for side, (cx0, cx1, cy0, cy1) in sides.items():
+            cx0, cy0 = max(cx0, 0), max(cy0, 0)
+            cx1, cy1 = min(cx1, full_w), min(cy1, full_h)
+            if cx1 <= cx0 or cy1 <= cy0:
+                continue
+            region = arr[cy0:cy1, cx0:cx1]
+            is_ink = region.sum(axis=-1) < ink_sum_max
+            if is_ink.any():
+                ys, xs = np.where(is_ink)
+                failures.append(
+                    f"{name} [{side}]: text-dark pixel at image (row={cy0 + int(ys[0])}, "
+                    f"col={cx0 + int(xs[0])}), RGB={tuple(int(v) for v in region[ys[0], xs[0]])}, "
+                    f"checked rows[{cy0}:{cy1}] cols[{cx0}:{cx1}]")
+    return failures
+
+
+png_failures = check_box_margins_in_saved_png(
+    os.path.join(OUT, "figure6.png"), box_pixel_regions, header_pixel_regions)
+print(f"pixel containment check: {len(box_pixel_regions)} boxes x 4 sides, "
+      f"{len(png_failures)} failures (gap=2px, strip=8px, tol=10)")
+if png_failures:
+    for f in png_failures:
+        print("  FAIL:", f)
+    raise SystemExit(f"STOP: {len(png_failures)} pixel-level overflow(s) in the saved PNG "
+                      f"(see FAIL lines above) -- figure6.png was still written to disk for "
+                      f"inspection, but is WRONG, do not use it")
+print("pixel containment check: PASSED, 0 overflows")
