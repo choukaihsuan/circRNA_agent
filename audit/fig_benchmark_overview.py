@@ -122,7 +122,11 @@ ALL_ARROWS = []  # (name, p0_data, p1_data) for every declared arrow -- checked 
 
 # ---------------------------- Panel (a): diagram ----------------------------
 axa = fig.add_subplot(gs[0])
-axa.set_xlim(0, 100)
+axa.set_xlim(0, 104)  # 4 du wider than the other 3 columns need (0-100) -- this slack is
+    # dedicated, NEW room used only by column 4's extra width (I4 below), not a shared
+    # budget other columns compete for, so (unlike the panel-height fix) widening it here
+    # is not a no-op: nothing else draws past x=100, so every added data-unit here is a
+    # real added pixel for column 4 alone.
 axa.set_ylim(0, 58)
 axa.axis("off")
 axa.set_title("(a)", loc="left", fontweight="bold", fontsize=13, pad=2)
@@ -277,12 +281,18 @@ COL_W = 21.0
 ARROW_GAP = 4.5
 COL_START = 1.0
 col_x = [COL_START + i * (COL_W + ARROW_GAP) for i in range(4)]
+# I4: column 4 (Outputs) alone is widened so "accuracy_summary.tsv" (one unbreakable
+# token -- a filename has no spaces, so wrap_line() cannot wrap it at all) gets real
+# interior padding instead of running up against its own right border. Only this
+# column's WIDTH changes; col_x (every column's left edge, i.e. every arrow's gap) is
+# untouched, so this cannot reintroduce H1.
+OUT_COL_W = COL_W + 4.0
 
 # title box -- fixed #1: GSE55872 -> SRP011042. Spans columns 1-4 (its own width is
 # wider than COL_W on purpose, matching the frozen content list's full-width banner;
 # unlike the regular boxes it already fit comfortably before and isn't part of
 # H1/H2's complaint, so its own larger font size is left as-is).
-TITLE_W = (col_x[3] + COL_W) - 8
+TITLE_W = (col_x[3] + OUT_COL_W) - 8
 box(axa, "title", 8, 57,
     ["Three pipelines compared (SRP011042)",
      "circDEX (CIRIquant + DCC) · CirComPara2 (4 tools) · nf-core/circrna (3 tools)"],
@@ -310,10 +320,14 @@ for cx_i, label in zip(col_x, ["1  Inputs", "2  Ground truth", "3  Benchmark tas
     draw_header(cx_i + COL_W / 2, label)
 
 # column 1: Inputs
+# I2: comma -> semicolon before "RNase R x2" (was "Total RNA, RNase R x2", which wrapped
+# as "Total RNA, RNase / R x2", splitting the proper noun "RNase R"); "RNase R x2" is
+# joined with NBSP (U+00A0) so wrap_line() -- which only splits on literal ASCII spaces
+# -- can never break inside it (I6). Same NBSP fix applied to "8 cores" below.
 b_in1 = box(axa, "Inputs:SRP011042", col_x[0], ROW1_TOP,
-            ["SRP011042", "Hs68 · hg19", "Total RNA, RNase R ×2"], COL_W)
+            ["SRP011042", "Hs68 · hg19", "Total RNA; RNase R ×2"], COL_W)
 b_in2 = box(axa, "Inputs:Runtime logs", col_x[0], ROW2_TOP,
-            ["Runtime logs", "/usr/bin/time -v", "single sample, 8 cores"], COL_W)
+            ["Runtime logs", "/usr/bin/time -v", "single sample, 8 cores"], COL_W)
 
 # column 2: Ground truth
 b_gt1 = box(axa, "Ground truth:Enrichment ratio", col_x[1], ROW1_TOP,
@@ -323,19 +337,38 @@ b_gt2 = box(axa, "Ground truth:Label by ER", col_x[1], ROW2_TOP,
             ["Label by ER", "ER ≥ 1.5 → TP", "ER ≤ 0.5 → TN"], COL_W)
 
 # column 3: Benchmark tasks (Task 2 + its output box use the purple fill)
-t1_lines = ["Task 1 · Detection accuracy", "3 pipelines vs ground truth",
-            "Precision · Recall · F1", "Specificity · AUC-PR"]
-t2_lines = ["Task 2 · Compute cost", "wall time · peak RAM · CPU-h",
-            "same sample, 8 cores"]
+# I1: the "Precision . Recall . F1 / Specificity . AUC-PR" metric list is dropped --
+# both are already in Table 5 and in this figure's own caption, so repeating them here
+# bought no information while being the main driver of Task 1's box height (and the
+# resulting imbalance against Task 2).
+#
+# Measured (not guessed) against this column's fixed max_text_w=17.8du at the fixed
+# body/title font sizes: "Task 1 · Detection accuracy" as ONE title line never fits
+# (28.2du) at any wrap point that does not strand the · or split "Detection accuracy"
+# mid-phrase -- gluing "· Detection accuracy" into one atomic NBSP chunk (an earlier
+# attempt) does not fit either (overflowed the box, caught by the I5 clearance check).
+# The actual fix is a CONTENT decision, not another layout knob: "Task 1"/"Task 2" is
+# the title (bold, fits on its own, 6.5du), "Detection accuracy"/"Compute cost" moves
+# into the body as its own line (normal weight, fits on its own, <16du) -- the relation
+# between the two was always conveyed by them being adjacent lines in the same box, not
+# by the ·. The remaining two multi-item lines use NBSP (I6) ONLY on the two genuinely
+# atomic units that must not split ("ground truth", "8 cores"); "·" is replaced by ","
+# in the metrics line, which wrap_line() already breaks cleanly after a comma, never
+# stranding a bare connector.
+t1_lines = ["Task 1", "Detection accuracy", "3 pipelines vs ground truth"]
+t2_lines = ["Task 2", "Compute cost", "wall time, peak RAM, CPU-h",
+            "same sample, 8 cores"]
 b_t1 = box(axa, "Task1:Detection accuracy", col_x[2], ROW1_TOP, t1_lines, COL_W)
 b_t2 = box(axa, "Task2:Compute cost", col_x[2], ROW2_TOP, t2_lines, COL_W,
            fc=PURPLE, ec=PURPLE_EDGE)
 
-# column 4: Outputs
+# column 4: Outputs -- I4: this column alone uses OUT_COL_W (wider than COL_W), so
+# "accuracy_summary.tsv" (one unbreakable token -- a filename, no spaces to wrap on)
+# gets real interior padding instead of running up against its own border.
 out1_lines = ["Accuracy outputs", "accuracy_summary.tsv"]
-out2_lines = ["Cost outputs", "compute_cost.tsv", "wall time per step · peak RAM"]
-b_out1 = box(axa, "Outputs:Accuracy outputs", col_x[3], ROW1_TOP, out1_lines, COL_W)
-b_out2 = box(axa, "Outputs:Cost outputs", col_x[3], ROW2_TOP, out2_lines, COL_W,
+out2_lines = ["Cost outputs", "compute_cost.tsv", "wall time per step · peak RAM"]
+b_out1 = box(axa, "Outputs:Accuracy outputs", col_x[3], ROW1_TOP, out1_lines, OUT_COL_W)
+b_out2 = box(axa, "Outputs:Cost outputs", col_x[3], ROW2_TOP, out2_lines, OUT_COL_W,
              fc=PURPLE, ec=PURPLE_EDGE)
 
 
@@ -485,6 +518,55 @@ for name, p0_data, p1_data in ALL_ARROWS:
         f"STOP: arrow {name!r} is only {length_px:.1f}px long (need >= {MIN_ARROW_PX}px) "
         f"-- it would render as an invisible dot, not a visible arrow")
 
+# I6 (topology): every declared arrow's endpoint must actually land ON the boundary of
+# the box it's supposed to connect to -- a FULLY SEPARATE failure mode from (i)/(ii)
+# above, and the one that bit this script already: harrow()'s first version aimed every
+# connector at the SOURCE box's own midpoint, which was geometrically a perfectly real,
+# correctly-long, horizontal arrow (passing both checks above) that simply pointed at
+# empty space beside a much-shorter TARGET box once the two boxes' heights diverged.
+# Neither a pixel ink-check (nothing overflowed) nor a length check (the arrow was long
+# enough) can catch "the right number of real pixels, aimed at the wrong place" -- that
+# was only caught by looking at the saved PNG. This makes that specific class of bug
+# into an assertion instead of something that only an eyeball can catch.
+ARROW_BOX_MAP = {
+    "Inputs->GroundTruth":        ("Inputs:SRP011042", "Ground truth:Enrichment ratio"),
+    "GroundTruth->Task1":         ("Ground truth:Enrichment ratio", "Task1:Detection accuracy"),
+    "Task1->Outputs":             ("Task1:Detection accuracy", "Outputs:Accuracy outputs"),
+    "EnrichmentRatio->LabelByER": ("Ground truth:Enrichment ratio", "Ground truth:Label by ER"),
+    # source is a routed waypoint (the elbow's last horizontal leg), not literally a
+    # point on Inputs:Runtime logs' own border -- only the destination is checked here.
+    "RuntimeLogs->Task2":         (None, "Task2:Compute cost"),
+    "Task2->CostOutputs":         ("Task2:Compute cost", "Outputs:Cost outputs"),
+}
+TOPO_TOL_PX = 7.0  # covers FancyBboxPatch's own boxstyle "pad=0.25" (du), which renders
+    # each box ~0.25 du wider/taller than its nominal (x,y,w,h) on every side (~4.2px
+    # at this panel's scale) -- confirmed empirically (a tol=3.0 first attempt failed
+    # with every arrow endpoint landing a consistent ~4.2px short of the box's actual
+    # rendered edge). Still far tighter than the "aimed at the wrong box" bug this check
+    # exists to catch, where the endpoint lands tens of px away, outside the box.
+
+
+def _on_box_boundary(px, py, box_px, tol=TOPO_TOL_PX):
+    bx0, bx1, by0, by1 = box_px
+    on_vert_edge = (abs(px - bx0) <= tol or abs(px - bx1) <= tol) and (by0 - tol <= py <= by1 + tol)
+    on_horiz_edge = (abs(py - by0) <= tol or abs(py - by1) <= tol) and (bx0 - tol <= px <= bx1 + tol)
+    return on_vert_edge or on_horiz_edge
+
+
+for name, p0_data, p1_data in ALL_ARROWS:
+    src_name, dst_name = ARROW_BOX_MAP.get(name, (None, None))
+    for data_pt, box_name, which in ((p0_data, src_name, "source"), (p1_data, dst_name, "target")):
+        if box_name is None:
+            continue
+        disp = axa.transData.transform(data_pt)
+        px_, py_img = disp[0], H_PX - disp[1]  # flip to the same image-row convention as box_by_name
+        assert _on_box_boundary(px_, py_img, box_by_name[box_name]), (
+            f"STOP: arrow {name!r}'s {which} endpoint ({px_:.1f},{py_img:.1f}) does not "
+            f"land on box {box_name!r}'s boundary {box_by_name[box_name]} (tol={TOPO_TOL_PX}px) "
+            f"-- the arrow may be real and long enough but is aimed at the wrong place")
+print(f"arrow topology check: {sum(1 for v in ARROW_BOX_MAP.values() for x in v if x)} "
+      f"endpoint(s) across {len(ARROW_BOX_MAP)} arrows, all on their declared box's boundary")
+
 fig.savefig(os.path.join(OUT, "figure6.png"), dpi=DPI)
 fig.savefig(os.path.join(OUT, "figure6.pdf"), dpi=DPI)
 print("wrote figure6.png/pdf to", OUT)
@@ -494,17 +576,27 @@ print(f"box/box min gap check: {len(HARROW_PAIRS)} pairs, all >= {MIN_BOX_GAP_PX
 print(f"arrow length check: {len(ALL_ARROWS)} arrows, all >= {MIN_ARROW_PX}px")
 
 
-def check_box_margins_in_saved_png(png_path, regions, header_regions=(), gap_px=2,
+def check_box_margins_in_saved_png(png_path, regions, header_regions=(), clearance_px=6,
                                      strip_px=40, ink_sum_max=240, header_mask_pad=3):
-    """Read the FILE that was actually written and check a thin strip of pixels just
-    outside each of a box's four edges (gap_px past the border, strip_px wide) for
-    TEXT-colored ink. This is the check that actually matters: an earlier version of
-    this script asserted containment against matplotlib's internal bbox model DURING
-    construction, which passed cleanly while the saved PNG still had two lines
-    overflowing their box -- constrained_layout kept re-adjusting axa's position as
-    later content was added, so an early-measured bbox had gone stale by save time.
+    """Read the FILE that was actually written and check, for each of a box's four
+    edges, a band spanning from clearance_px INSIDE the border out to strip_px OUTSIDE
+    it, for TEXT-colored ink. This is the check that actually matters: an earlier
+    version of this script asserted containment against matplotlib's internal bbox
+    model DURING construction, which passed cleanly while the saved PNG still had two
+    lines overflowing their box -- constrained_layout kept re-adjusting axa's position
+    as later content was added, so an early-measured bbox had gone stale by save time.
     This function instead opens the saved file and looks at actual pixels, so it
     cannot be fooled by that kind of staleness.
+
+    I5: the band now starts clearance_px INSIDE the border, not gap_px past it. An
+    earlier version only scanned the exterior (border+2px onward), which is blind to
+    text that renders right up to, or touching, the border from the inside -- exactly
+    what happened to "accuracy_summary.tsv" (a filename, one unbreakable token with no
+    spaces to wrap on) before the I4 column-widening fix: its last glyph touched the
+    right border and this check still reported 0 failures, because "touching the
+    border" was never inside the scanned region at all. Requiring real interior
+    clearance (not just "has it crossed outside yet") is a strictly stronger property,
+    and it is what actually catches that failure mode.
 
     First pass used "any deviation from pure white" and produced 32 false positives
     on a figure that (per manual pixel inspection) had only 2 real overflows: every
@@ -538,10 +630,10 @@ def check_box_margins_in_saved_png(png_path, regions, header_regions=(), gap_px=
         x0, x1 = int(round(x0)), int(round(x1))
         y0_img, y1_img = int(round(y0_img)), int(round(y1_img))
         sides = {
-            "right":  (x1 + gap_px, x1 + gap_px + strip_px, y0_img, y1_img),
-            "left":   (x0 - gap_px - strip_px, x0 - gap_px, y0_img, y1_img),
-            "top":    (x0, x1, y0_img - gap_px - strip_px, y0_img - gap_px),
-            "bottom": (x0, x1, y1_img + gap_px, y1_img + gap_px + strip_px),
+            "right":  (x1 - clearance_px, x1 + strip_px, y0_img, y1_img),
+            "left":   (x0 - strip_px, x0 + clearance_px, y0_img, y1_img),
+            "top":    (x0, x1, y0_img - strip_px, y0_img + clearance_px),
+            "bottom": (x0, x1, y1_img - clearance_px, y1_img + strip_px),
         }
         for side in skip_sides:
             sides.pop(side, None)
@@ -564,7 +656,7 @@ def check_box_margins_in_saved_png(png_path, regions, header_regions=(), gap_px=
 png_failures = check_box_margins_in_saved_png(
     os.path.join(OUT, "figure6.png"), box_pixel_regions, header_pixel_regions)
 print(f"pixel containment check: {len(box_pixel_regions)} boxes x 4 sides, "
-      f"{len(png_failures)} failures (gap=2px, strip=40px, tol=10)")
+      f"{len(png_failures)} failures (clearance=6px, strip=40px, tol=10)")
 if png_failures:
     for f in png_failures:
         print("  FAIL:", f)
@@ -572,5 +664,5 @@ if png_failures:
                       f"(see FAIL lines above) -- figure6.png was still written to disk for "
                       f"inspection, but is WRONG, do not use it")
 print("pixel containment check: PASSED, 0 overflows")
-print("ALL CHECKS PASSED: text containment, header/box collision, box/box min gap, "
-      "arrow min length")
+print("ALL CHECKS PASSED: text containment (6px clearance), header/box collision, "
+      "box/box min gap, arrow min length, arrow topology")
