@@ -19,17 +19,24 @@ Arabic 1/2/3/4 column numbers (not circled), panel (b)'s layout -- is kept ident
 the frozen content list the thesis author read off the published image. Panel (b)'s
 numbers are read from compute_cost.tsv at run time, never hardcoded.
 
-Box sizes for columns 3/4 are computed from the *actual rendered* text extent
-(fig.canvas.draw() + get_window_extent()), not a fixed guessed width.
+LAYOUT MODEL (revised after a round that let column width float with content, which
+broke three other things): every column is the SAME fixed width (COL_W) and every
+regular box uses the SAME font sizes. A fixed ARROW_GAP is reserved between columns
+regardless of content, so the connecting arrow always has a real, visible shaft. If a
+line of text doesn't fit COL_W at the fixed font size, it WRAPS onto another line --
+the box never grows wider and the font never shrinks to make content fit. Boxes in the
+same row share one y_top, so every row is flush across all four columns, regardless of
+how many lines any one box's content wrapped onto.
 
 Containment is checked against the SAVED PNG's actual pixels, not matplotlib's internal
-bbox model. An internal-bbox assert was tried first and it passed cleanly while the saved
-PNG still had two lines overflowing their box -- the failure mode is specifically
-"the internal model says it's fine, the rendered output isn't", which checking the
-internal model can never catch, because constrained_layout keeps re-adjusting axa's
-position/size as more content (axb, headers added after a box's own containment was
-checked) gets added, so an early-measured bbox goes stale by save time. The pixel check
-below runs once, at the very end, against the file that was actually written.
+bbox model (an internal-bbox assert passed cleanly once while the saved PNG still had
+two lines overflowing their box -- constrained_layout re-settles axa's size as more
+content is added, so an early-measured bbox goes stale by save time; the pixel check
+re-opens the file that was actually written, so it can't be fooled by that staleness).
+Two more checks run the same way: every pair of horizontally-connected boxes keeps a
+minimum real pixel gap (a column-width-driven layout can let two boxes end up touching,
+which silently reduces their connecting arrow to a zero-length dot), and every declared
+arrow has a non-trivial pixel length in the final layout.
 
 usage: fig_benchmark_overview.py <compute_cost.tsv> <out_dir>
 """
@@ -100,9 +107,18 @@ for label, pid in BAR_ROWS:
 fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI, constrained_layout=True)
 fig.set_dpi(DPI)  # explicit: measurement and savefig must share one dpi, not just agree by
                     # construction default -- make that a visible invariant, not an accident
-gs = fig.add_gridspec(2, 1, height_ratios=[1.05, 1.0])
+gs = fig.add_gridspec(2, 1, height_ratios=[2.0, 1.0])  # panel (a) needs more of the
+    # figure's actual physical height now that columns 3/4's genuinely longer phrases
+    # ("Task 1 · Detection accuracy" etc, vs column 1/2's short "SRP011042" etc.) wrap
+    # onto several more lines at the fixed uniform font size -- this is real extra
+    # content height, not a measurement artifact, so the fix is giving panel (a) more
+    # pixels (which makes each data-unit MORE pixels, so the same fixed-pt-size text
+    # needs FEWER data-units), not stretching axa's ylim (that only relabels data
+    # units without changing how many pixels anything actually gets -- confirmed
+    # earlier in this project's work that widening an axis range alone never helps).
 
-ALL_BOXES = []  # (name, FancyBboxPatch) for every box() call, checked post-save at the end
+ALL_BOXES = []   # (name, FancyBboxPatch, skip_sides) for every box() call
+ALL_ARROWS = []  # (name, p0_data, p1_data) for every declared arrow -- checked post-save
 
 # ---------------------------- Panel (a): diagram ----------------------------
 axa = fig.add_subplot(gs[0])
@@ -118,11 +134,8 @@ axa.set_title("(a)", loc="left", fontweight="bold", fontsize=13, pad=2)
 # converts a rendered pixel width to axa DATA units using whatever axa.transData is
 # current AT THE TIME of measurement; if axa's pixel-per-data-unit ratio is still
 # going to shift once axb exists, a width measured now is already stale by the time
-# the figure is actually saved -- which is exactly what happened on the previous
-# pass: col3_w/col4_w were computed before axb existed, two box titles ended up
-# wider than their (too-narrow) box in the saved PNG despite the internal numbers
-# looking consistent at computation time. Building axb's real, final content first
-# means every later text_extent_du() call already sees the TRUE final layout.
+# the figure is actually saved. Building axb's real, final content first means every
+# later text_extent_du() call already sees the TRUE final layout.
 axb = fig.add_subplot(gs[1])
 axb.set_title("(b)", loc="left", fontweight="bold", fontsize=13, pad=2)
 
@@ -177,75 +190,107 @@ def text_extent_du(s, fontsize, weight="normal"):
     return abs(bb_data.width), abs(bb_data.height)
 
 
+def wrap_line(text, max_w_du, fontsize, weight):
+    """Greedy word-wrap: split `text` onto as many lines as needed so each one's
+    rendered width fits max_w_du at this fontsize/weight. Returns [text] unchanged if
+    it already fits. This is the H1/H2 fix's actual mechanism: box width and font size
+    are both fixed inputs here, never adjusted to make content fit."""
+    w, _ = text_extent_du(text, fontsize, weight)
+    if w <= max_w_du:
+        return [text]
+    words = text.split(" ")
+    lines, cur = [], ""
+    for word in words:
+        trial = (cur + " " + word).strip()
+        tw, _ = text_extent_du(trial, fontsize, weight)
+        if tw <= max_w_du or not cur:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 PAD_X, PAD_Y = 1.6, 1.1  # data-unit padding inside each box
 
 
-def box(ax, name, x, y_bottom, lines, fc=BLUE, ec=BLUE_EDGE, fs=7.6, title_fs=9.0, lw=1.3,
-        min_w=None, skip_sides=()):
-    """Draw one rounded box sized to fit its own text exactly (measured, not guessed).
-    `lines[0]` is the box's bold dark-blue title line; the rest render at `fs` in
-    body black. Box width = widest rendered line + padding (or `min_w` if larger, so
-    columns can still share a width when desired). Returns (x, y_bottom, w, h).
+def box(ax, name, x, y_top, lines, w, fc=BLUE, ec=BLUE_EDGE, fs=7.6, title_fs=8.6, lw=1.3,
+        skip_sides=()):
+    """Draw one rounded box of FIXED width `w`, anchored at its TOP edge (`y_top`), so
+    boxes in the same row stay flush at the top regardless of how tall each one's
+    content makes it (H3). `lines[0]` is the box's bold dark-blue title; the rest
+    render at `fs` in body black. Any line (including the title) that doesn't fit `w`
+    at its given font size is word-wrapped onto more lines -- `w` and the font sizes
+    are never adjusted to make content fit (H1/H2). Returns (x, y_bottom, w, h).
 
     `name` is only for diagnostics: the patch is registered in ALL_BOXES and checked
-    against the SAVED PNG's pixels at the very end of this script (see
-    check_box_margins_in_saved_png), not here -- an in-construction check here would
-    use whatever position constrained_layout has settled on *so far*, which keeps
-    changing as later content (more boxes, axb) is added, so it can pass while the
-    final saved file still overflows. See the module docstring.
+    against the SAVED PNG's pixels at the very end of this script, not here -- an
+    in-construction check would use whatever position constrained_layout has settled
+    on *so far*, which keeps changing as later content is added. See module docstring.
 
-    `skip_sides`: sides to exclude from that post-save check, for boxes with another,
-    intentionally-nearby element on that side that isn't an overflow bug -- e.g. the
-    four top-row boxes each sit a few pixels below their own column's bold header
-    ("1 Inputs" etc.), so a "top" check there trips on that header's own ink, not on
-    this box's content leaking out."""
-    sizes = [text_extent_du(lines[0], title_fs, "bold")]
+    `skip_sides`: sides to exclude from that post-save ink check, for boxes with
+    another, intentionally-nearby element on that side that isn't an overflow bug --
+    e.g. a column header sitting a few pixels above a row-1 box."""
+    max_text_w = w - 2 * PAD_X
+    wrapped = []  # (text, is_title)
+    for s in wrap_line(lines[0], max_text_w, title_fs, "bold"):
+        wrapped.append((s, True))
     for ln in lines[1:]:
-        sizes.append(text_extent_du(ln, fs, "normal"))
-    w = max(s[0] for s in sizes) + 2 * PAD_X
-    if min_w:
-        w = max(w, min_w)
+        for s in wrap_line(ln, max_text_w, fs, "normal"):
+            wrapped.append((s, False))
+
+    sizes = [text_extent_du(s, title_fs if is_t else fs, "bold" if is_t else "normal")
+             for s, is_t in wrapped]
     line_heights = [s[1] for s in sizes]
-    gaps = [h * 1.5 for h in line_heights]  # 1.5x glyph height as baseline-to-baseline step
+    gaps = [lh * 1.5 for lh in line_heights]  # 1.5x glyph height as baseline-to-baseline step
     total_h = sum(gaps[:-1]) + line_heights[-1]
     h = total_h + 2 * PAD_Y
+    y_bottom = y_top - h
 
     p = FancyBboxPatch((x, y_bottom), w, h, boxstyle="round,pad=0.25,rounding_size=0.6",
                         linewidth=lw, edgecolor=ec, facecolor=fc, zorder=2)
     ax.add_patch(p)
 
-    cy_top = y_bottom + h - PAD_Y  # baseline of the first (title) line
-    y_cursor = cy_top
-    text_objs = []
-    for i, ln in enumerate(lines):
-        is_title = i == 0
-        t = ax.text(x + w / 2, y_cursor, ln, ha="center", va="top",
-                     fontsize=(title_fs if is_title else fs),
-                     fontweight="bold" if is_title else "normal",
-                     color=(BOXTITLE_BLUE if is_title else BODY_BLACK), zorder=3)
-        text_objs.append(t)
+    y_cursor = y_top - PAD_Y
+    for i, (s, is_t) in enumerate(wrapped):
+        ax.text(x + w / 2, y_cursor, s, ha="center", va="top",
+                 fontsize=(title_fs if is_t else fs), fontweight="bold" if is_t else "normal",
+                 color=(BOXTITLE_BLUE if is_t else BODY_BLACK), zorder=3)
         if i < len(gaps):
             y_cursor -= gaps[i]
 
-    ALL_BOXES.append((name, p, set(skip_sides)))  # checked against the saved PNG's pixels at the end
+    ALL_BOXES.append((name, p, set(skip_sides)))
     return (x, y_bottom, w, h)
 
 
-def arrow(ax, p0, p1, **kw):
+def arrow(ax, name, p0, p1, **kw):
     a = FancyArrowPatch(p0, p1, arrowstyle="-|>", mutation_scale=14,
                          linewidth=1.3, color="#888888", zorder=1, **kw)
     ax.add_patch(a)
+    ALL_ARROWS.append((name, p0, p1))
 
 
-# title box -- fixed #1: GSE55872 -> SRP011042
-box(axa, "title", 8, 50,
+# ---- fixed column geometry: same width, same reserved arrow gap, for every column ----
+COL_W = 21.0
+ARROW_GAP = 4.5
+COL_START = 1.0
+col_x = [COL_START + i * (COL_W + ARROW_GAP) for i in range(4)]
+
+# title box -- fixed #1: GSE55872 -> SRP011042. Spans columns 1-4 (its own width is
+# wider than COL_W on purpose, matching the frozen content list's full-width banner;
+# unlike the regular boxes it already fit comfortably before and isn't part of
+# H1/H2's complaint, so its own larger font size is left as-is).
+TITLE_W = (col_x[3] + COL_W) - 8
+box(axa, "title", 8, 57,
     ["Three pipelines compared (SRP011042)",
      "circDEX (CIRIquant + DCC) · CirComPara2 (4 tools) · nf-core/circrna (3 tools)"],
-    fc=BLUE, ec=TITLE_BLUE_EDGE, fs=8.6, title_fs=10.5, lw=1.6, min_w=84)
+    TITLE_W, fc=BLUE, ec=TITLE_BLUE_EDGE, fs=8.6, title_fs=10.5, lw=1.6)
 
-col_x = [1, 25, 49, None]  # col_x[3] is filled in once column 3's measured width is known
-col_w_12 = 21  # columns 1-2 already fit at this fixed width; only 3-4 need measuring
-HEADER_Y = 47.3
+HEADER_Y = 46.0
+ROW1_TOP = 44.0
+ROW2_TOP = 18.0
 
 
 ALL_HEADERS = []  # text artists for the four column headers, masked out before the
@@ -261,73 +306,37 @@ def draw_header(cx, text):
     ALL_HEADERS.append(t)
 
 
-draw_header(col_x[0] + col_w_12 / 2, "1  Inputs")
-draw_header(col_x[1] + col_w_12 / 2, "2  Ground truth")
-# headers for columns 3 and 4 are drawn later, once their measured widths/positions
-# are known -- drawing a guessed position first and painting over it with a second
-# copy left a visible sliver of the first draw in an earlier version of this script.
+for cx_i, label in zip(col_x, ["1  Inputs", "2  Ground truth", "3  Benchmark tasks", "4  Outputs"]):
+    draw_header(cx_i + COL_W / 2, label)
 
 # column 1: Inputs
-b_in1 = box(axa, "Inputs:SRP011042", col_x[0], 34.0,
-            ["SRP011042", "Hs68 · hg19", "Total RNA, RNase R ×2"],
-            fs=7.6, title_fs=8.6, min_w=col_w_12)
-b_in2 = box(axa, "Inputs:Runtime logs", col_x[0], 21.0,
-            ["Runtime logs", "/usr/bin/time -v", "single sample, 8 cores"],
-            fs=7.6, title_fs=8.6, min_w=col_w_12)
+b_in1 = box(axa, "Inputs:SRP011042", col_x[0], ROW1_TOP,
+            ["SRP011042", "Hs68 · hg19", "Total RNA, RNase R ×2"], COL_W)
+b_in2 = box(axa, "Inputs:Runtime logs", col_x[0], ROW2_TOP,
+            ["Runtime logs", "/usr/bin/time -v", "single sample, 8 cores"], COL_W)
 
 # column 2: Ground truth
-b_gt1 = box(axa, "Ground truth:Enrichment ratio", col_x[1], 34.0,
-            ["Enrichment ratio", "ER = RNase R BSJ", "/ Total BSJ"],
-            fs=7.6, title_fs=8.6, min_w=col_w_12)
+b_gt1 = box(axa, "Ground truth:Enrichment ratio", col_x[1], ROW1_TOP,
+            ["Enrichment ratio", "ER = RNase R BSJ", "/ Total BSJ"], COL_W)
 # fixed #2: strict </> -> inclusive >=/<=
-b_gt2 = box(axa, "Ground truth:Label by ER", col_x[1], 21.0,
-            ["Label by ER", "ER ≥ 1.5 → TP", "ER ≤ 0.5 → TN"],
-            fs=7.6, title_fs=8.6, min_w=col_w_12)
+b_gt2 = box(axa, "Ground truth:Label by ER", col_x[1], ROW2_TOP,
+            ["Label by ER", "ER ≥ 1.5 → TP", "ER ≤ 0.5 → TN"], COL_W)
 
-# column 3: Benchmark tasks (Task 2 + its output box use the purple fill). Width is
-# measured from content (previously a fixed guess caused the overflow in F1/F2) and
-# shared between the two boxes in this column so their left/right edges align.
+# column 3: Benchmark tasks (Task 2 + its output box use the purple fill)
 t1_lines = ["Task 1 · Detection accuracy", "3 pipelines vs ground truth",
             "Precision · Recall · F1", "Specificity · AUC-PR"]
 t2_lines = ["Task 2 · Compute cost", "wall time · peak RAM · CPU-h",
             "same sample, 8 cores"]
-T3_FS, T3_TITLE_FS = 5.3, 5.8
-col3_w = max(
-    max(text_extent_du(t1_lines[0], T3_TITLE_FS, "bold")[0],
-        max(text_extent_du(l, T3_FS, "normal")[0] for l in t1_lines[1:])),
-    max(text_extent_du(t2_lines[0], T3_TITLE_FS, "bold")[0],
-        max(text_extent_du(l, T3_FS, "normal")[0] for l in t2_lines[1:])),
-) + 2 * PAD_X
-b_t1 = box(axa, "Task1:Detection accuracy", col_x[2], 31.0, t1_lines, fs=T3_FS,
-           title_fs=T3_TITLE_FS, min_w=col3_w)
-b_t2 = box(axa, "Task2:Compute cost", col_x[2], 18.5, t2_lines, fc=PURPLE, ec=PURPLE_EDGE,
-           fs=T3_FS, title_fs=T3_TITLE_FS, min_w=col3_w)
-draw_header(col_x[2] + col3_w / 2, "3  Benchmark tasks")
+b_t1 = box(axa, "Task1:Detection accuracy", col_x[2], ROW1_TOP, t1_lines, COL_W)
+b_t2 = box(axa, "Task2:Compute cost", col_x[2], ROW2_TOP, t2_lines, COL_W,
+           fc=PURPLE, ec=PURPLE_EDGE)
 
-# column 4: Outputs -- same measure-first approach
+# column 4: Outputs
 out1_lines = ["Accuracy outputs", "accuracy_summary.tsv"]
 out2_lines = ["Cost outputs", "compute_cost.tsv", "wall time per step · peak RAM"]
-T4_FS, T4_TITLE_FS = 5.5, 5.9
-col4_w = max(
-    max(text_extent_du(out1_lines[0], T4_TITLE_FS, "bold")[0],
-        max(text_extent_du(l, T4_FS, "normal")[0] for l in out1_lines[1:])),
-    max(text_extent_du(out2_lines[0], T4_TITLE_FS, "bold")[0],
-        max(text_extent_du(l, T4_FS, "normal")[0] for l in out2_lines[1:])),
-) + 2 * PAD_X
-col_x[3] = col_x[2] + col3_w + 0.5
-b_out1 = box(axa, "Outputs:Accuracy outputs", col_x[3], 31.0, out1_lines, fs=T4_FS,
-             title_fs=T4_TITLE_FS, min_w=col4_w)
-b_out2 = box(axa, "Outputs:Cost outputs", col_x[3], 18.5, out2_lines, fc=PURPLE,
-             ec=PURPLE_EDGE, fs=T4_FS, title_fs=T4_TITLE_FS, min_w=col4_w)
-
-right_edge = col_x[3] + col4_w
-xlim_right = axa.get_xlim()[1]
-assert right_edge <= xlim_right, (
-    f"STOP: column 4 content (right edge {right_edge:.2f}) overflows the panel's "
-    f"xlim (0, {xlim_right}) -- widen the canvas or shrink columns 3/4 further, "
-    f"don't just eyeball the render.")
-
-draw_header(col_x[3] + col4_w / 2, "4  Outputs")
+b_out1 = box(axa, "Outputs:Accuracy outputs", col_x[3], ROW1_TOP, out1_lines, COL_W)
+b_out2 = box(axa, "Outputs:Cost outputs", col_x[3], ROW2_TOP, out2_lines, COL_W,
+             fc=PURPLE, ec=PURPLE_EDGE)
 
 
 def mid_right(b):
@@ -347,29 +356,41 @@ def hline(ax, p0, p1):
               solid_capstyle="round", zorder=1)
 
 
-def harrow(ax, bA, bB):
-    """Horizontal arrow from box bA's right edge to box bB's left edge, both ends at
-    bA's own mid-height. Box heights are now sized to content, so two boxes in the
-    same "row" rarely share an exact mid-y; a diagonal FancyArrowPatch between them
-    (short segment + the panel's strongly anisotropic x:y data scale) was found to
-    render with its arrowhead at the WRONG end (confirmed by an isolated repro) --
-    forcing the connector perfectly horizontal (or, for the routed one below,
-    perfectly horizontal/vertical per segment) avoids the diagonal entirely rather
-    than trying to out-guess when the matplotlib bug does or doesn't trigger."""
-    y = bA[1] + bA[3] / 2
-    arrow(ax, (bA[0] + bA[2], y), (bB[0], y))
+def harrow(ax, name, bA, bB):
+    """Horizontal arrow from box bA's right edge to box bB's left edge. Since every
+    column now shares one fixed width and the columns are laid out COL_W + ARROW_GAP
+    apart, bA and bB are guaranteed to be ARROW_GAP data-units apart here -- the
+    earlier content-driven column width let this gap shrink to ~0 for several pairs,
+    silently collapsing the arrow into an invisible dot (H1). The connector is forced
+    perfectly horizontal rather than running box-center to box-center: a diagonal
+    FancyArrowPatch over a short segment under this panel's strongly anisotropic x:y
+    data scale was found, in an earlier pass, to render with its arrowhead at the
+    WRONG end (confirmed by an isolated repro).
+
+    y-position: the midpoint of whichever box is SHORTER. Both boxes in a row share
+    the same y_top (H3), so the shorter box's entire vertical extent is a subset of
+    the taller one's -- using its midpoint guarantees the arrow is level with real
+    content in BOTH boxes. Using the source box's midpoint unconditionally (the
+    first version of this function) pointed the arrow at empty space beside a much
+    shorter target box whenever the source was the taller one (e.g. Task 1's long
+    wrapped title vs. Accuracy outputs' two short lines) -- a defect the box-gap and
+    arrow-length checks don't catch, since the arrow itself was perfectly real and
+    long enough, just aimed at the wrong height. Caught by eye, not by an assert."""
+    y = bA[1] + bA[3] / 2 if bA[3] <= bB[3] else bB[1] + bB[3] / 2
+    arrow(ax, name, (bA[0] + bA[2], y), (bB[0], y))
 
 
 # Inputs(SRP011042) -> Ground truth(Enrichment ratio) -> Benchmark(Task1) -> Outputs(Accuracy)
-harrow(axa, b_in1, b_gt1)
-harrow(axa, b_gt1, b_t1)
-harrow(axa, b_t1, b_out1)
+harrow(axa, "Inputs->GroundTruth", b_in1, b_gt1)
+harrow(axa, "GroundTruth->Task1", b_gt1, b_t1)
+harrow(axa, "Task1->Outputs", b_t1, b_out1)
 # Ground truth(Enrichment ratio) feeds Label by ER (vertical, within the column --
 # this one is axis-aligned the other way (constant x), so it isn't susceptible to
 # the diagonal-arrowhead bug above)
 gt1_bottom = b_gt1[1]
 gt2_top = b_gt2[1] + b_gt2[3]
-arrow(axa, (col_x[1] + col_w_12 / 2, gt1_bottom), (col_x[1] + col_w_12 / 2, gt2_top))
+arrow(axa, "EnrichmentRatio->LabelByER",
+      (col_x[1] + COL_W / 2, gt1_bottom), (col_x[1] + COL_W / 2, gt2_top))
 # Runtime logs -> Task 2: routed BELOW the Ground truth column (a straight line
 # would pass directly behind the "Label by ER" box, which draws on top and makes
 # the arrow look cut off there) using ONLY axis-aligned segments -- every bend is a
@@ -378,14 +399,14 @@ arrow(axa, (col_x[1] + col_w_12 / 2, gt1_bottom), (col_x[1] + col_w_12 / 2, gt2_
 run_y = b_gt2[1] - 1.8  # a bit below Label-by-ER's bottom edge
 p_start = mid_right(b_in2)
 p_down = (p_start[0], run_y)
-p_under = (col_x[1] + col_w_12 + 1.0, run_y)
+p_under = (col_x[1] + COL_W + 1.0, run_y)
 p_up = (p_under[0], mid_left(b_t2)[1])
 p_end = mid_left(b_t2)
 hline(axa, p_start, p_down)
 hline(axa, p_down, p_under)
 hline(axa, p_under, p_up)
-arrow(axa, p_up, p_end)
-harrow(axa, b_t2, b_out2)
+arrow(axa, "RuntimeLogs->Task2", p_up, p_end)
+harrow(axa, "Task2->CostOutputs", b_t2, b_out2)
 
 # ---- final layout is now fully settled (axb, headers, arrows all added) -- measure
 # every box's on-screen pixel extent ONCE, here, then save, then check the SAVED FILE
@@ -395,10 +416,12 @@ harrow(axa, b_t2, b_out2)
 # not two that happen to agree.
 _redraw()
 box_pixel_regions = []  # (name, x0, x1, y0_img, y1_img, skip_sides) in SAVED-PNG pixel coords
+box_by_name = {}
 for name, patch, skip_sides in ALL_BOXES:
     bb = patch.get_window_extent(renderer=renderer)  # display coords, origin bottom-left
     y0_img, y1_img = H_PX - bb.y1, H_PX - bb.y0  # flip to image-array row coords (origin top-left)
     box_pixel_regions.append((name, bb.x0, bb.x1, y0_img, y1_img, skip_sides))
+    box_by_name[name] = (bb.x0, bb.x1, y0_img, y1_img)
 
 header_pixel_regions = []  # same, for the 4 column headers -- masked out before checking,
                             # not excluded via per-box skip_sides, because a header can bleed
@@ -430,15 +453,49 @@ for hx0, hx1, hy0, hy1 in header_pixel_regions:
                 f"x=({hx0:.1f},{hx1:.1f}) y=({hy0:.1f},{hy1:.1f}) vs box bbox "
                 f"x=({bx0:.1f},{bx1:.1f}) y=({by0_img:.1f},{by1_img:.1f})")
 
+# H1 (i): any two horizontally-adjacent, arrow-connected boxes must keep a real pixel
+# gap between them -- the failure mode this catches (two boxes rendered touching, so
+# their connecting arrow collapses to a zero-length dot) is invisible to the text-
+# containment check above, which only checks text against ITS OWN box, never box
+# against box.
+MIN_BOX_GAP_PX = 15
+HARROW_PAIRS = [
+    ("Inputs:SRP011042", "Ground truth:Enrichment ratio"),
+    ("Ground truth:Enrichment ratio", "Task1:Detection accuracy"),
+    ("Task1:Detection accuracy", "Outputs:Accuracy outputs"),
+    ("Task2:Compute cost", "Outputs:Cost outputs"),
+]
+for left_name, right_name in HARROW_PAIRS:
+    lx0, lx1, _, _ = box_by_name[left_name]
+    rx0, rx1, _, _ = box_by_name[right_name]
+    gap_px = rx0 - lx1
+    assert gap_px >= MIN_BOX_GAP_PX, (
+        f"STOP: boxes {left_name!r} and {right_name!r} are only {gap_px:.1f}px apart "
+        f"(need >= {MIN_BOX_GAP_PX}px) -- their connecting arrow would be invisible")
+
+# H1 (ii): every declared arrow must have a non-trivial pixel length in the final
+# layout -- same root cause as (i), checked directly on the arrow geometry itself
+# rather than inferring it from box spacing (covers the routed elbow segments too).
+MIN_ARROW_PX = 10
+for name, p0_data, p1_data in ALL_ARROWS:
+    disp0 = axa.transData.transform(p0_data)
+    disp1 = axa.transData.transform(p1_data)
+    length_px = ((disp1[0] - disp0[0]) ** 2 + (disp1[1] - disp0[1]) ** 2) ** 0.5
+    assert length_px >= MIN_ARROW_PX, (
+        f"STOP: arrow {name!r} is only {length_px:.1f}px long (need >= {MIN_ARROW_PX}px) "
+        f"-- it would render as an invisible dot, not a visible arrow")
+
 fig.savefig(os.path.join(OUT, "figure6.png"), dpi=DPI)
 fig.savefig(os.path.join(OUT, "figure6.pdf"), dpi=DPI)
 print("wrote figure6.png/pdf to", OUT)
 print("panel (b) totals:", {b[0]: b[2] for b in bar_data})
-print("col3_w", col3_w, "col4_w", col4_w, "col_x[3]", col_x[3])
+print(f"COL_W={COL_W} ARROW_GAP={ARROW_GAP} col_x={[round(c,2) for c in col_x]}")
+print(f"box/box min gap check: {len(HARROW_PAIRS)} pairs, all >= {MIN_BOX_GAP_PX}px")
+print(f"arrow length check: {len(ALL_ARROWS)} arrows, all >= {MIN_ARROW_PX}px")
 
 
 def check_box_margins_in_saved_png(png_path, regions, header_regions=(), gap_px=2,
-                                     strip_px=8, ink_sum_max=240, header_mask_pad=3):
+                                     strip_px=40, ink_sum_max=240, header_mask_pad=3):
     """Read the FILE that was actually written and check a thin strip of pixels just
     outside each of a box's four edges (gap_px past the border, strip_px wide) for
     TEXT-colored ink. This is the check that actually matters: an earlier version of
@@ -507,7 +564,7 @@ def check_box_margins_in_saved_png(png_path, regions, header_regions=(), gap_px=
 png_failures = check_box_margins_in_saved_png(
     os.path.join(OUT, "figure6.png"), box_pixel_regions, header_pixel_regions)
 print(f"pixel containment check: {len(box_pixel_regions)} boxes x 4 sides, "
-      f"{len(png_failures)} failures (gap=2px, strip=8px, tol=10)")
+      f"{len(png_failures)} failures (gap=2px, strip=40px, tol=10)")
 if png_failures:
     for f in png_failures:
         print("  FAIL:", f)
@@ -515,3 +572,5 @@ if png_failures:
                       f"(see FAIL lines above) -- figure6.png was still written to disk for "
                       f"inspection, but is WRONG, do not use it")
 print("pixel containment check: PASSED, 0 overflows")
+print("ALL CHECKS PASSED: text containment, header/box collision, box/box min gap, "
+      "arrow min length")
