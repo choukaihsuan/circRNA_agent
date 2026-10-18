@@ -49,6 +49,18 @@ SECRET_KEY_FILE = BASE_DIR / "jobs" / "secret_key.txt"
 SESSION_DAYS = 7          # session lifetime
 TOKEN_MINUTES = 30        # magic link expiry
 
+# Email whitelist gate: CLAUDE.md has long documented this as reading
+# PIPELINE_ALLOWED_EMAILS, but no code anywhere in this file ever checked it --
+# the login flow accepted and emailed a magic link to ANY address. Until this
+# platform has the scale gate / rate limiting from item 13, this whitelist is
+# the only thing standing between a public accession-triggered Snakemake run
+# and anyone who finds the subdomain in a CT log. Empty means "deny everyone"
+# (fail closed), not "allow everyone" -- the previous unwritten behavior was
+# effectively "allow everyone," which is the bug this fixes.
+ALLOWED_EMAILS = {
+    e.strip().lower() for e in os.environ.get("PIPELINE_ALLOWED_EMAILS", "").split(",") if e.strip()
+}
+
 
 def _get_secret_key() -> str:
     SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -88,9 +100,21 @@ app.jinja_env.filters["mask_email"] = _mask_email
 
 # ── Job registry ──────────────────────────────────────────────────────────────
 
+# job_id has its own shape (project id + "-" + 4-char suffix), so it needs its
+# own regex rather than reusing PROJECT_ID_RE (which would false-reject a
+# 40-char project id once "-XXXX" is appended).
+JOB_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,39}-[A-Za-z0-9]{4}$')
+
+
 def generate_job_id(gse_id: str) -> str:
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
-    return f"{gse_id}-{suffix}"
+    job_id = f"{gse_id}-{suffix}"
+    # gse_id is expected to already be _validate_project_id()-clean at every
+    # call site; this asserts that invariant rather than re-validating
+    # external input (there is none here -- job_id is produced by this
+    # process, not supplied by a caller).
+    assert JOB_ID_RE.match(job_id), f"generate_job_id produced an invalid id: {job_id!r}"
+    return job_id
 
 
 def load_registry() -> dict:
@@ -120,6 +144,12 @@ def register_job(job_id: str, gse_id: str, log_path: Path, cores: int) -> None:
 
 
 def job_log_path(job_id: str) -> Path:
+    # Structural choke point, not just a current-call-sites check: today every
+    # caller passes a job_id fresh out of generate_job_id(), but this function
+    # is where the path gets built, so it is validated here too -- the same
+    # reasoning as _project_config_path()/_project_meta_dir().
+    if not JOB_ID_RE.match(job_id or ""):
+        abort(400, description=f"invalid job id: {job_id!r}")
     return BASE_DIR / "logs" / f"pipeline_{job_id}.log"
 
 
@@ -485,6 +515,13 @@ def login():
         if not email or "@" not in email:
             error    = "請輸入有效的 Email 地址。"
             error_en = "Please enter a valid email address."
+        elif email not in ALLOWED_EMAILS:
+            # Deliberately the same error as "invalid address": telling an
+            # unauthorized caller "that address isn't on the list" confirms
+            # the list exists and invites enumeration by trying addresses.
+            error    = "請輸入有效的 Email 地址。"
+            error_en = "Please enter a valid email address."
+            auth_log(email, "login_rejected_not_whitelisted", request.remote_addr)
         else:
             token = auth_create_token(email)
             base = request.url_root.rstrip("/")
@@ -562,7 +599,21 @@ def _self_heal_failed_jobs() -> None:
     for j in queue_list():
         if j["status"] != "failed" or not j.get("started_at"):
             continue
-        cfg_path = BASE_DIR / "config" / "projects" / f"{j['gse_id']}.yaml"
+        # Historic queue rows may predate PROJECT_ID_RE; skip (don't crash the
+        # whole self-heal pass / the /queue page) rather than calling the
+        # strict _project_config_path(), whose abort() is meant for request
+        # handlers, not a best-effort background scan over many unrelated jobs.
+        # Logged, not silent: this project has been bitten three times before
+        # by failures that passed quietly (--keep-going hiding a failed dcc
+        # job, DCC's zero-output case stalling the workflow unnoticed, and
+        # the accuracy_benchmark wiring bug that produced byte-identical
+        # results) -- a skip here must be visible too.
+        if not PROJECT_ID_RE.match((j.get("gse_id") or "").strip().upper()):
+            app.logger.warning(
+                "self-heal: skipping job %s, invalid project id %r",
+                j.get("id"), j.get("gse_id"))
+            continue
+        cfg_path = _project_config_path(j["gse_id"])
         if not cfg_path.exists():
             continue
         try:
@@ -652,12 +703,77 @@ def save_config(cfg: dict) -> None:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
+# Project/accession ids become path components (config/projects/{id}.yaml,
+# metadata/{id}/) and, via _update_paths_for_project's string substitution,
+# end up inside raw_dir/trimmed_dir/results_dir -- which Snakemake splices
+# unquoted into shell: templates (e.g. circrna.smk's dcc rule: "cd {params.outdir}
+# && DCC ..."). An id with shell metacharacters or ".." is therefore both a
+# path-traversal and a command-injection vector. Anchored at the first char so
+# a leading "-" can't be read as a CLI flag by whatever the id is later passed to.
+PROJECT_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$')
+
+
+def _validate_project_id(pid: str) -> str:
+    """Normalize and validate a project/accession id before it is used as a
+    path component. This is the single choke point: every function that turns
+    a project id into a filesystem path goes through here, so a new caller
+    (route or background job) is protected automatically without having to
+    remember to validate upstream."""
+    pid = (pid or "").strip().upper()
+    if not PROJECT_ID_RE.match(pid):
+        abort(400, description=f"invalid project identifier: {pid!r}")
+    return pid
+
+
+# Accession-format whitelist for the /run_gse entry point specifically (stricter
+# than PROJECT_ID_RE, which also has to admit CUSTOM/LOCAL for the manual-upload
+# and local-FASTQ routes). Prefixes match exactly what download_geo.py's
+# fetch_metadata() actually dispatches on (_SRA_PREFIXES plus GSE) -- not a
+# guessed list, read from that file directly so the two can't silently drift.
+ACCESSION_RE = re.compile(r'^(GSE|PRJNA|SRP|SRX|SRS|SRR|ERP|DRP)\d+$')
+
+# Per-run-accession whitelist for manual/CSV SRR entry (run_manual). SRR/ERR/DRR
+# are the three run-accession prefixes NCBI/EBI/DDBJ issue; this is deliberately
+# narrower than ACCESSION_RE (which also admits study/project/experiment-level
+# accessions that are not valid individual run ids).
+SRR_RE = re.compile(r'^(SRR|ERR|DRR)\d+$')
+
+
+def _validate_accession(acc: str) -> str:
+    """Stricter sibling of _validate_project_id for the GEO/SRA accession the
+    /run_gse route accepts: must look like a real accession, not just be
+    path-safe. Rejects (400) rather than attempting to sanitize and retry."""
+    acc = (acc or "").strip().upper()
+    if not ACCESSION_RE.match(acc):
+        abort(400, description=f"invalid accession format: {acc!r} "
+                                f"(expected one of GSE/PRJNA/SRP/SRX/SRS/SRR/ERP/DRP + digits)")
+    return acc
+
+
+def _validate_srr(srr: str, context: str = "") -> str:
+    """Validate one run accession from manual entry or CSV upload. Rejects (400)
+    rather than silently dropping or sanitizing the bad row -- run_manual calls
+    this for every row before writing ANY of them to metadata, so one bad row
+    fails the whole submission instead of silently shrinking the sample list.
+    `context` (e.g. "CSV row 7", "entry 3") is prepended to the error so the
+    caller can see exactly which row was rejected."""
+    srr = (srr or "").strip().upper()
+    if not SRR_RE.match(srr):
+        where = f"{context}: " if context else ""
+        abort(400, description=f"invalid run accession ({where}{srr!r}) "
+                                f"(expected SRR/ERR/DRR + digits) -- entire "
+                                f"submission rejected, no rows were written")
+    return srr
+
+
 def _project_config_path(gse_id: str) -> Path:
-    return BASE_DIR / "config" / "projects" / f"{gse_id.strip().upper()}.yaml"
+    gse_id = _validate_project_id(gse_id)
+    return BASE_DIR / "config" / "projects" / f"{gse_id}.yaml"
 
 
 def _project_meta_dir(gse_id: str) -> Path:
-    return BASE_DIR / "metadata" / gse_id.strip().upper()
+    gse_id = _validate_project_id(gse_id)
+    return BASE_DIR / "metadata" / gse_id
 
 
 def _configfile_for(gse_id: str) -> str:
@@ -1205,7 +1321,7 @@ def update():
 
     if request.form.get("action") == "run":
         cores = cfg["threads"] * 4
-        gse_id = cfg.get("project_id", "pipeline").strip().upper()
+        gse_id = _validate_project_id(cfg.get("project_id", "pipeline"))
         job_id = generate_job_id(gse_id)
         log_path = job_log_path(job_id)
         user_email = (request.form.get("notify_email", "").strip()
@@ -1232,12 +1348,18 @@ def run_gse():
     cores  = max(1, min(int(request.form.get("cores", 8)), 24))
     if not gse_id:
         return redirect(url_for("index"))
+    # Accession-format check first (this is the only route that triggers a
+    # fresh network download off a user-supplied id), then the generic
+    # path-safety check both routes share.
+    gse_id = _validate_accession(gse_id)
+    gse_id = _validate_project_id(gse_id)
 
     job_id = generate_job_id(gse_id)
     log_path = job_log_path(job_id)
 
     cfg = load_project_config(gse_id)
     cfg["project_id"] = gse_id
+    cfg["source_type"] = "accession"
     cfg["threads"]    = cores
     cfg = _update_paths_for_project(cfg, gse_id)
 
@@ -1276,7 +1398,14 @@ def run_gse():
             "--rerun-incomplete",
         ]
     else:
-        # Fresh dataset: agent.py handles metadata download + snakemake launch
+        # Fresh dataset: agent.py handles metadata download + snakemake launch.
+        # This is the one place in the app where a project's own id (not a
+        # per-sample SRR id) is passed as a download argument -- assert the
+        # structural guarantee explicitly rather than relying on "this branch
+        # is only reachable from /run_gse" being true by inspection forever.
+        assert cfg.get("source_type") == "accession", (
+            f"refusing to build an agent.py --gse download command for "
+            f"{gse_id!r}: source_type={cfg.get('source_type')!r}, not 'accession'")
         cmd = [_sys.executable, "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)]
 
     queue_add(job_id, gse_id, cmd, str(log_path), cores, user_email)
@@ -1288,7 +1417,7 @@ def run_gse():
 def run_manual():
     """Start pipeline from manual SRR list or uploaded CSV."""
     cores      = max(1, min(int(request.form.get("cores", 8)), 24))
-    project_id = (request.form.get("project_id", "").strip().upper() or "CUSTOM")
+    project_id = _validate_project_id(request.form.get("project_id", "").strip().upper() or "CUSTOM")
     tumor_label  = request.form.get("tumor_label",  "tumor").strip()  or "tumor"
     normal_label = request.form.get("normal_label", "normal").strip() or "normal"
 
@@ -1300,23 +1429,31 @@ def run_manual():
     if csv_file and csv_file.filename:
         content = csv_file.read().decode("utf-8-sig")
         reader  = csv.DictReader(io.StringIO(content))
-        for r in reader:
+        for line_no, r in enumerate(reader, start=2):  # row 1 is the header
             srr = (r.get("srr_id") or r.get("SRR_ID") or r.get("run") or "").strip()
-            if srr:
-                rows.append({
-                    "srr_id":    srr,
-                    "condition": (r.get("condition") or r.get("group") or "tumor").strip(),
-                    "paired":    (r.get("paired") or "true").strip(),
-                })
+            if not srr:
+                continue
+            # Validate before appending ANYTHING -- one bad row aborts the whole
+            # upload (no partial write of the rows already seen), per the
+            # requirement that a short-circuit never silently shrink the
+            # sample list down to whatever happened to validate.
+            srr = _validate_srr(srr, context=f"CSV row {line_no}")
+            rows.append({
+                "srr_id":    srr,
+                "condition": (r.get("condition") or r.get("group") or "tumor").strip(),
+                "paired":    (r.get("paired") or "true").strip(),
+            })
     else:
         # Option B: manual SRR entries from the form
         srr_ids    = request.form.getlist("srr_id[]")
         conditions = request.form.getlist("condition[]")
-        for srr, cond in zip(srr_ids, conditions):
+        for i, (srr, cond) in enumerate(zip(srr_ids, conditions), start=1):
             srr  = srr.strip()
             cond = cond.strip()
-            if srr:
-                rows.append({"srr_id": srr, "condition": cond, "paired": "true"})
+            if not srr:
+                continue
+            srr = _validate_srr(srr, context=f"entry {i}")
+            rows.append({"srr_id": srr, "condition": cond, "paired": "true"})
 
     if not rows:
         return redirect(url_for("index"))
@@ -1350,6 +1487,7 @@ def run_manual():
     cfg = load_project_config(project_id)
     cfg = _update_paths_for_project(cfg, project_id)
     cfg["project_id"]          = project_id
+    cfg["source_type"]         = "local"
     cfg["threads"]             = cores
     cfg["metadata"]            = str(proj_lib_path.relative_to(BASE_DIR))
     cfg["groups"]              = str(proj_grp_path.relative_to(BASE_DIR))
@@ -1427,7 +1565,7 @@ def api_scan_fastq():
 @app.route("/run_local", methods=["POST"])
 def run_local():
     """Start pipeline with local FASTQ files (server-side paths via symlinks)."""
-    project_id   = (request.form.get("project_id", "").strip().upper() or "LOCAL")
+    project_id   = _validate_project_id(request.form.get("project_id", "").strip().upper() or "LOCAL")
     tumor_label  = request.form.get("tumor_label",  "tumor").strip() or "tumor"
     normal_label = request.form.get("normal_label", "normal").strip() or "normal"
     cores        = max(1, min(int(request.form.get("cores", 8)), 24))
@@ -1498,6 +1636,7 @@ def run_local():
                 w.writerow({"srr_id": r["srr_id"], "condition": r["condition"]})
 
     cfg["project_id"]                        = project_id
+    cfg["source_type"]                       = "local"
     cfg["threads"]                           = cores
     cfg["metadata"]                          = str((proj_meta / "library_info.csv").relative_to(BASE_DIR))
     cfg["groups"]                            = str((proj_meta / "sample_groups.csv").relative_to(BASE_DIR))
