@@ -249,3 +249,85 @@ item 13) would need but does not pick any threshold values itself.
   summed across all runs in a dataset, from the same pysradb/eUtils query)
   is the number a scale gate would compare against whatever threshold gets
   chosen — it is not itself a threshold recommendation.
+
+## Disk resource gate: `disk_gb` in Snakemake, dynamic at launch
+
+Two pieces, both implemented, neither verified by actually running Snakemake
+(not even `--dry-run` — out of scope for this round per instruction; treat
+both as unverified until someone runs the real pipeline against them):
+
+1. **Rule-level claims** (`workflow/rules/circrna.smk`): the `ciriquant`,
+   `star_align`, `star_align_mate1`, and `star_align_mate2` rules each now
+   declare `resources: disk_gb = 200` (via the shared
+   `_DISK_GB_PER_SAMPLE_ESTIMATE` constant, with its provenance documented
+   in-line where it's defined). This is the same 200 GB/sample figure this
+   note already flagged elsewhere as *estimated, not measured* — reused
+   as-is here per instruction, not re-derived.
+2. **Dynamic budget at launch** (`scripts/utils.py`'s `disk_gb_resource()`):
+   `--resources disk_gb=N` is now computed at the moment each job is
+   launched from `shutil.disk_usage(data_root).free * 0.7`, replacing what
+   would otherwise be a hardcoded ceiling that goes stale the instant real
+   disk usage changes. Wired into all five job-launching code paths
+   (`/update`'s re-run tail, `/run_gse`'s two branches — the re-run branch
+   directly, the fresh-dataset branch indirectly via `agent.py` →
+   `utils.run_snakemake()` — `/run_manual`, `/run_local`).
+
+**Batching consequence, hand-calculated (not dry-run), current numbers (632G
+available, 0.7 safety factor → 442 GB disk_gb budget, 200 GB/rule claim):**
+floor(442/200) = **2** concurrent disk_gb-constrained jobs, globally, across
+the *entire* running DAG — not per sample, not per dataset. This is lower
+than the 4 concurrent samples previously achievable from `mem_gb`/`--cores`
+alone (`min(36/8, 300/16) = 4`, per this project's own documented standard
+launch command). **A single sample's own four disk-heavy rules
+(`ciriquant` + `star_align` + `star_align_mate1` + `star_align_mate2`) can
+all become `resources.disk_gb`-ready at the same time** (they share no
+dependency on each other, only on the same trimmed FASTQ), so the 200 GB
+claim is not just competing across samples — it is also competing across a
+single sample's own parallel rule instances, through the same global pool.
+For a 10-sample dataset: 10 samples × 4 disk_gb-claiming rule-instances = 40
+jobs through a 2-slot pool → **20 batches** purely from the disk_gb
+constraint, versus the 3 batches (`ceil(10/4)`) the old mem_gb/cores-only
+scheduling would have produced for CIRIquant alone. **This is a real,
+non-trivial parallelism reduction, not a rounding effect** — introduced
+because `disk_gb=200` was applied uniformly to all four rules per
+instruction ("預留值先用200"), without first addressing that those four
+rules share one global resource pool across both samples AND rule types.
+If 200 GB/rule turns out, once measured (see the disk-sampler below), to be
+a real per-rule peak rather than an overestimate inherited from a single
+large-sample incident, this reduced concurrency is the pipeline actually
+respecting a genuine disk constraint it was previously violating silently.
+If it's an overestimate, this is leaving real throughput on the table until
+corrected. Either way, this consequence should be visible to whoever reviews
+the first few runs under this gate, not discovered by surprise.
+
+## Disk-usage sampler: turning the 200 GB estimate into a measurement
+
+`scripts/sample_disk_usage.py`, backgrounded inside the `ciriquant` rule's
+`shell:` block (started before, `kill`ed unconditionally after, so it never
+outlives the rule whether CIRIquant succeeds or fails): appends one row
+every 60s to `logs/disk_usage_{srr}.tsv` — a timestamp, free space under the
+sample's own working directory's filesystem, and that directory's total size
+via `du -sb`. Near-zero cost (one `shutil.disk_usage` call plus one `du -sb`
+per minute). **Deliberately not run as, or to trigger, any kind of dedicated
+measurement analysis** — per instruction, it only collects data as a
+byproduct of whatever real sample happens to run through this rule next.
+Once real rows accumulate, `_DISK_GB_PER_SAMPLE_ESTIMATE` and the 0.7 safety
+factor in `disk_gb_resource()` can both be corrected from a real measured
+peak instead of the current incident-reconstruction estimate.
+
+## Convention: grep the old value across the whole repo before correcting a fact
+
+When correcting a previously-wrong fact anywhere in this project's
+documentation (CLAUDE.md or elsewhere), **grep the old (wrong) value across
+the entire repository first and review every hit before changing any of
+them** — do not stop at the one occurrence that was first noticed wrong.
+This project's own CLAUDE.md already contains at least one instance of this
+exact failure mode: GSE136569's `资料集特性稽核校正` table was corrected to
+its real read length (100 bp) at some point, but GSE136569's own narrative
+section elsewhere in the same file still says 150 bp — the correction never
+propagated past the one place it was first made. A systematic repo-wide
+`grep -rn "<old value>"` pass, reviewed line-by-line to confirm which hits
+are actually the fact being corrected (versus a different, legitimately
+different dataset/value that happens to share the same string), is what
+catches every occurrence in one pass instead of leaving siblings to be found
+one at a time, incident by incident.

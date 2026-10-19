@@ -958,7 +958,7 @@ $PY $SCRIPTS/generate_comparison_report.py \
 
 | 問題 | 原因 | 解決方法 |
 |------|------|----------|
-| PRJNA/SRP metadata 抓取失敗（server 上）| Server 防火牆封鎖 NCBI eUtils HTTP；GSE 透過 pysradb 走不同 endpoint 可成功 | 見下方詳述 |
+| PRJNA/SRP metadata 抓取失敗（server 上）| Server 曾封鎖 NCBI eUtils HTTP（2026-07 文件記載）；2026-10-19 實測 efetch.fcgi 已可用（curl 確認 HTTP 200 + 真實 SRA XML 內容，非僅狀態碼；未測試是否仍有其他 endpoint 被封鎖，也無法判斷是防火牆規則改了還是原本就沒封鎖）；GSE 透過 pysradb 可成功 | 見下方詳述 |
 | DCC `TypeError: NoneType has no len()` | DCC 0.5.0 不支援缺少 `-mt2` | 加入 `star_align_mate1` 和 `star_align_mate2` rule，分別比對 R1/R2 |
 | DCC `command not found` | 指令為大寫 `DCC` | shell command 改為 `DCC` |
 | DCC `-A` flag error | DCC 0.5.0 BAM 參數是 `-B` 不是 `-A` | 改為 `-B {bam}` |
@@ -1709,7 +1709,7 @@ Yang et al. 2017 *Nature Communications*（PMID 28194035）。HCC 肝細胞癌�
 
 **✅ 完成（2026-06 期間）。** 報告位置：`~/GSE130078_results/report.html`（5.9 MB，2026-06-29 13:17 最新版）
 
-食道鱗狀細胞癌（esophageal squamous cell carcinoma，ESCC）手術切除組織，tumor vs. adjacent normal，150bp PE，Total RNA（rRNA-depleted），Illumina，6 對配對 T/N，12 samples。
+食道鱗狀細胞癌（esophageal squamous cell carcinoma，ESCC）手術切除組織，tumor vs. adjacent normal，101bp PE（2026-10-19 查證更正，原誤記150bp；見下方「資料集特性稽核校正」表與fastp實測），Total RNA（rRNA-depleted），Illumina，6 對配對 T/N，12 samples。
 
 | 步驟 | 狀態 |
 |------|------|
@@ -1738,7 +1738,7 @@ Yang et al. 2017 *Nature Communications*（PMID 28194035）。HCC 肝細胞癌�
 **設定**：
 - case/control label：`tumor` / `normal`
 - genome：hg19；配對設計（6 pairs）
-- Library：Total RNA（rRNA-depleted），150bp PE，Illumina
+- Library：Total RNA（rRNA-depleted），101bp PE（2026-10-19更正，原誤記150bp），Illumina
 
 **Server config**（`config/projects/GSE130078.yaml`）路徑：
 - `raw_dir: /home3/choukaihsuan/GSE130078/raw`（已清理）
@@ -2099,7 +2099,7 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 
 **✅ 完成（2026-07-22 02:38）。** 報告位置：`~/GSE136569_results/report.html`（server，20MB）
 
-胰臟導管腺癌（Pancreatic ductal adenocarcinoma，PDAC）手術切除組織，tumor vs. adjacent normal tissue (NAT)，5 對配對 T/N，10 samples（SRR10030979–SRR10030988）。150bp PE，Total RNA，Illumina HiSeq X Ten。
+胰臟導管腺癌（Pancreatic ductal adenocarcinoma，PDAC）手術切除組織，tumor vs. adjacent normal tissue (NAT)，5 對配對 T/N，10 samples（SRR10030979–SRR10030988）。100bp PE（2026-10-19 查證更正，原誤記150bp；見下方「資料集特性稽核校正」表與fastp實測），Total RNA，Illumina HiSeq X Ten。
 
 | 步驟 | 狀態 |
 |------|------|
@@ -2144,7 +2144,7 @@ df.to_csv('metadata/GSE229705/sample_groups.csv', index=False)
 - case/control label：`tumor` / `normal`
 - SRR 清單（5T + 5N）：SRR10030979–SRR10030983（PDAC1–5）；SRR10030984–SRR10030988（NAT1–5）
 - genome：hg19；配對設計（patient_id：P1–P5）
-- Library：Ribozero 去 rRNA + RNase R 消化線性 RNA（GSM extract_protocol 原文；2026-10-03 查證，先前誤記為 Total RNA），150bp PE，Illumina HiSeq X Ten
+- Library：Ribozero 去 rRNA + RNase R 消化線性 RNA（GSM extract_protocol 原文；2026-10-03 查證，先前誤記為 Total RNA），100bp PE（2026-10-19更正，原誤記150bp），Illumina HiSeq X Ten
 - GEO：GSE136569（PRJNA563024）
 
 **Server config**（`config/projects/GSE136569.yaml`）路徑：
@@ -2313,10 +2313,11 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 | `PRJNA*` | `PRJNA808398` | NCBI SRA BioProject | NCBI eUtils API |
 | `SRP*` | `SRP156355` | NCBI SRA Study | NCBI eUtils API |
 
-**HPC 網路限制**：Server（172.16.0.178）防火牆封鎖**部分** NCBI eUtils endpoint：
+**HPC 網路限制**：Server（172.16.0.178）防火牆**曾**封鎖部分 NCBI eUtils endpoint（狀態已變更，見下）：
 - `eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi`（db=gds）✅ **可存取**（`_fetch_geo_title()` 使用）
-- `eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi`（PRJNA/SRP metadata）❌ **被封鎖**
-- PRJNA/SRP 需在本機執行 `python scripts/download_geo.py --gse PRJNA808398` 取得 metadata CSV，再透過 Web UI 的「手動 SRR 清單 → 上傳 CSV」路徑匯入
+- `eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi`（PRJNA/SRP metadata）⚠️ **2026-07 文件記載封鎖；2026-10-19 實測可用**（直接 curl 一個真實 accession，不只看狀態碼也檢查內容，確認回傳真正的 `<EXPERIMENT_PACKAGE_SET>` SRA XML，不是偽裝成 200 的錯誤頁。未測試是否仍有其他 eUtils endpoint 被封鎖，也無法判斷這是防火牆規則改了還是原本就沒封鎖、舊記錄本身有誤——只能確認「efetch.fcgi 被封鎖」這個具體說法現在不成立）
+- **（2026-10-19 新增）`scripts/download_geo.py`/`/run_gse`/`preflight_accession()` 三條程式路徑查過，全部呼叫同一個 `efetch.fcgi`，沒有任何程式碼層級的繞道或 fallback 邏輯**——下方「本機先抓再上傳 CSV」是文件記載的人工操作步驟，不是程式碼；efetch 現在可用後這個步驟理論上不再必要，但保留不刪，因為無法排除防火牆規則未來又變回封鎖。也因為三條路徑共用同一呼叫，preflight 查到的存在性/規模對實際下載是可信的保證，不會有「preflight 說有、下載時卻拿到不同/較少欄位」的風險。
+- PRJNA/SRP 需在本機執行 `python scripts/download_geo.py --gse PRJNA808398` 取得 metadata CSV，再透過 Web UI 的「手動 SRR 清單 → 上傳 CSV」路徑匯入（2026-07 文件記載的作法；2026-10-19 efetch.fcgi 實測可用後，理論上可省略此步驟直接用 `/run_gse`，但未長期驗證，暫不刪除此作法說明）
 - GSE 透過 pysradb 可在 server 上直接執行；`_fetch_geo_title()` 也在 server 上正常運作
 
 **Condition 自動偵測**（`prepare_metadata.py`）：
@@ -2331,17 +2332,19 @@ Pipeline 支援三種 accession 格式，輸入 `--gse` 或 Web UI 的「GEO 資
 
 ### 已分析/已調查資料集
 
-| 編號 | 樣本類型 | 對比組 | Library | Read length | 樣本數 | 定序深度 | circRNA 偵測 | DE 顯著數（edgeR）| 評估 |
+> **⚠️ 權威來源聲明（2026-10-19）**：本表的 **Library** 與 **Read length** 兩欄與上方「資料集特性稽核校正」表描述同一組事實（同一批 fastp 實測/GEO 原始資料），**上方校正表才是權威來源**。本表這兩欄過去曾三度與校正表不同步（GSE130078、GSE136569、GSE248612 的讀長都曾錯誤沿用舊值「150bp」，直到 2026-10-19 才發現並改正），根因是同一組事實在文件裡有多處平行表述、更正只改了其中一處。**修改任何資料集的 Library/Read length 事實時，務必同時檢查並同步上方校正表與本表，不要只改其中一個**；若兩表不一致，以校正表為準並回來修正本表。
+
+| 編號 | 樣本類型 | 對比組 | Library | Read length | 樣本數 | 定序深度（M reads，R1+R2 相加；2026-10-19 統一標註單位） | circRNA 偵測 | DE 顯著數（edgeR）| 評估 |
 |------|----------|--------|---------|-------------|--------|----------|-------------|-------------------|------|
 | **GSE113230** | 組織（TNBC tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 6（3T+3N）| ~100M reads/sample | 9,349（consensus）| **482** | ✅ 最佳示範 |
-| **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | **Poly(A)-selected**（2026-10-03更正，原誤記Total RNA；見GSE58135段落）| **50bp PE** | 10（5T+5N）| ~50M reads/sample | 1,607（CIRIquant-only）| **15** | ⚠️ 50bp讀長+poly(A) selection雙重例外，DCC失效→adaptive fallback；排除於15組跨資料集分析（有效單工具比例97.8%）|
-| **GSE323364** | **細胞株**（MDA-MB-436 TNBC）| EPZ6438 vs. DMSO | Total RNA | 150bp PE | 6（3+3）| ~60M reads/sample | 中等 | **15** | ⚠️ 細胞株+藥物，DE 極少 |
+| **GSE58135** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | **Poly(A)-selected**（2026-10-03更正，原誤記Total RNA；見GSE58135段落）| **50bp PE** | 10（5T+5N）| ~50M reads/sample（來源未明，疑為SRA標示值）／實測61.7M read pairs=123.4M reads（fastp，2026-10-19）| 1,607（CIRIquant-only）| **15** | ⚠️ 50bp讀長+poly(A) selection雙重例外，DCC失效→adaptive fallback；排除於15組跨資料集分析（有效單工具比例97.8%）|
+| **GSE323364** | **細胞株**（MDA-MB-436 TNBC）| EPZ6438 vs. DMSO | Total RNA | 150bp PE | 6（3+3）| ~60M reads/sample（來源未明）／實測45.4M reads（fastp，2026-10-19）| 中等 | **15** | ⚠️ 細胞株+藥物，DE 極少 |
 | **GSE133998** | 組織（乳癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N）| ~80M reads/sample | 10,979 | **84** | ✅ 配對設計，樣本數最多 |
-| **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100bp PE** | 12（6T+6N）| avg 48M spots（~96M reads）| **14,697**（consensus）| **152** | ✅ 完成；6 對配對 T/N；Type_I 95% / Type_II 5%；predict_interactions union 247 circRNAs；report 8.2 MB |
-| **GSE77509** | 組織（HCC 肝癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| **~100bp PE** | 12（6T+6N，6 pairs）| **57–118M spots/sample**（平均 ~85M）| 4,275（consensus）| **41** | ✅ 完成；Top：hsa_circ_0001181（BACH1，score=0.654）；36 Type_I / 5 Type_II；Yang et al. 2017 Nat Commun |
-| **GSE130078** | 組織（ESCC 食道鱗狀細胞癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 150bp PE | 12（6T+6N，6 pairs）| **79–101M reads/sample** ✅ | 8,925（consensus）| **12（edgeR）/ 623（limma）** | ⚠️ 深度充足但 BSJ counts 樣本間差異 5.5x（5,775–31,656）；filterByExpr 僅保留 231（2.6%）；ESCC circRNA 全局下調；建議以 limma 為主方法 |
-| **GSE248612** | 組織（胃癌 tumor vs. normal）| tumor vs. normal | Total RNA | 150bp PE | 12（6T+6N，6 pairs）| 未確認 | 18,391（consensus）| **46** | ✅ 完成；Top：hsa_circ_0004771（NRIP1，log2FC=5.58）；42 Type_I / 4 Type_II；6 對配對設計（LSS/QHZ/ZZJ/LFE/WHD/XXC）|
-| **PRJNA808398** | 組織（TNBC tumor vs. normal）| tumor vs. normal | **cDNA（poly-A）** | 150bp PE | 50（25T+25N）| avg 18M spots（低）| ❌ | ❌ | ❌ 不建議：poly-A selection，circRNA 接近零；A.C. CAMARGO 巴西 |
+| **SRP156355** | 組織（早期乳癌 IDC）| tumor vs. normal | rRNA-depleted（`other`）| **100–101bp PE** | 12（6T+6N）| avg 48M read pairs/sample（~96M reads）| **14,697**（consensus）| **152** | ✅ 完成；6 對配對 T/N；Type_I 95% / Type_II 5%；predict_interactions union 247 circRNAs；report 8.2 MB |
+| **GSE77509** | 組織（HCC 肝癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| **~100bp PE** | 12（6T+6N，6 pairs）| **57–118M read pairs/sample**（平均 ~85M read pairs）| 4,275（consensus）| **41** | ✅ 完成；Top：hsa_circ_0001181（BACH1，score=0.654）；36 Type_I / 5 Type_II；Yang et al. 2017 Nat Commun |
+| **GSE130078** | 組織（ESCC 食道鱗狀細胞癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA-depleted）| 101bp PE | 12（6T+6N，6 pairs）| **79–101M reads/sample** ✅ | 8,925（consensus）| **12（edgeR）/ 623（limma）** | ⚠️ 深度充足但 BSJ counts 樣本間差異 5.5x（5,775–31,656）；filterByExpr 僅保留 231（2.6%）；ESCC circRNA 全局下調；建議以 limma 為主方法 |
+| **GSE248612** | 組織（胃癌 tumor vs. normal）| tumor vs. normal | Total RNA（rRNA depletion 未載明，UNVERIFIED，見校正表）| 138–140bp PE | 12（6T+6N，6 pairs）| ~78.0M reads/sample（fastp 實測39.0M read pairs，2026-10-19）| 18,391（consensus）| **46** | ✅ 完成；Top：hsa_circ_0004771（NRIP1，log2FC=5.58）；42 Type_I / 4 Type_II；6 對配對設計（LSS/QHZ/ZZJ/LFE/WHD/XXC）|
+| **PRJNA808398** | 組織（TNBC tumor vs. normal）| tumor vs. normal | **cDNA（poly-A）** | 150bp PE（SRA metadata；poly-A 事前排除未進入pipeline，本機無fastp可核，2026-10-19查證：未驗證） | 50（25T+25N）| avg 18M read pairs/sample（低；SRA metadata，未本機驗證）| ❌ | ❌ | ❌ 不建議：poly-A selection，circRNA 接近零；A.C. CAMARGO 巴西 |
 
 ### 影響分析品質的關鍵因素
 
