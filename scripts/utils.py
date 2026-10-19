@@ -4,6 +4,7 @@ utils.py – Shared helpers for the circRNA agent.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -79,6 +80,28 @@ def check_tools(tools: list[str] | None = None) -> bool:
     return True
 
 
+# ── Disk resource gate ───────────────────────────────────────────────────────
+
+def disk_gb_resource(path: str = ".", safety_factor: float = 0.7) -> int:
+    """Return a conservative --resources disk_gb ceiling: whatever is
+    ACTUALLY free under `path` right now, times safety_factor, floored to an
+    integer GB. This replaces a hardcoded GB number with one that reflects
+    live disk state at launch time -- a fixed ceiling goes stale the moment
+    real usage changes, in either direction (too low wastes capacity once
+    something is cleaned up elsewhere; too high lets Snakemake schedule more
+    concurrent disk-heavy jobs than the disk can actually hold).
+
+    safety_factor (default 0.7) leaves headroom for: disk use by anything
+    else on the server outside this pipeline's control, and error in any
+    single rule's own disk_gb resource claim (itself currently an estimate,
+    not a measurement -- see workflow/rules/circrna.smk's
+    _DISK_GB_PER_SAMPLE_ESTIMATE comment). Not yet tuned against a measured
+    per-sample peak; revisit once logs/disk_usage_{srr}.tsv (written by
+    scripts/sample_disk_usage.py during a real run) gives one."""
+    free_bytes = shutil.disk_usage(path).free
+    return int(free_bytes / (1024 ** 3) * safety_factor)
+
+
 # ── Snakemake runner ─────────────────────────────────────────────────────────
 
 def run_snakemake(
@@ -86,6 +109,7 @@ def run_snakemake(
     cores: int = 8,
     extra_args: list[str] | None = None,
     dry_run: bool = False,
+    disk_check_path: str = ".",
 ) -> int:
     """Run Snakemake as a subprocess; return exit code."""
     cmd = [
@@ -93,6 +117,7 @@ def run_snakemake(
         "--snakefile", snakefile,
         "--cores", str(cores),
         "--directory", ".",
+        "--resources", f"disk_gb={disk_gb_resource(disk_check_path)}",
         "--rerun-incomplete",
         "--printshellcmds",
     ]

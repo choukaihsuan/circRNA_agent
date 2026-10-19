@@ -82,10 +82,11 @@ def cmd_run(args: argparse.Namespace) -> None:
         extra += ["--profile", args.profile]
 
     rc = run_snakemake(
-        snakefile  = "workflow/Snakefile",
-        cores      = args.cores,
-        extra_args = extra,
-        dry_run    = args.dry_run,
+        snakefile       = "workflow/Snakefile",
+        cores           = args.cores,
+        extra_args      = extra,
+        dry_run         = args.dry_run,
+        disk_check_path = cfg.get("data_root", "."),
     )
     sys.exit(rc)
 

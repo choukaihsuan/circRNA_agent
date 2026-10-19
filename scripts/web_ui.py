@@ -35,6 +35,8 @@ import io
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent))
 
+from utils import disk_gb_resource
+
 from flask import (Flask, abort, jsonify, redirect, render_template,
                    request, session, url_for)
 from flask_wtf.csrf import CSRFProtect
@@ -1378,12 +1380,15 @@ def update():
         log_path = job_log_path(job_id)
         user_email = (request.form.get("notify_email", "").strip()
                       or session.get("email", ""))
+        _disk_root = cfg.get("data_root") or str(BASE_DIR)
         cmd = [
             _snake_bin(),
             "--snakefile", "workflow/Snakefile",
             "--configfile", _configfile_for(gse_id),
             "--cores", str(cores),
-            "--resources", f"mem_gb={cfg.get('resources', {}).get('mem_gb', 300)}",
+            "--resources",
+            f"mem_gb={cfg.get('resources', {}).get('mem_gb', 300)}",
+            f"disk_gb={disk_gb_resource(_disk_root)}",
             "--keep-going",
             "--rerun-incomplete",
         ]
@@ -1461,12 +1466,15 @@ def run_gse():
     _proj_cfg  = _project_config_path(gse_id)
     _meta_ready = _meta_path.exists()
     if _proj_cfg.exists() and _meta_ready:
+        _disk_root = cfg.get("data_root") or str(BASE_DIR)
         cmd = [
             _snake_bin(),
             "--snakefile", "workflow/Snakefile",
             "--configfile", str(_proj_cfg.relative_to(BASE_DIR)),
             "--cores", str(cores),
-            "--resources", f"mem_gb={cfg.get('resources', {}).get('mem_gb', 300)}",
+            "--resources",
+            f"mem_gb={cfg.get('resources', {}).get('mem_gb', 300)}",
+            f"disk_gb={disk_gb_resource(_disk_root)}",
             "--keep-going",
             "--rerun-incomplete",
         ]
@@ -1578,11 +1586,13 @@ def run_manual():
     job_id   = generate_job_id(project_id)
     log_path = job_log_path(job_id)
     user_email = notify_email or session.get("email", "")
+    _disk_root = cfg.get("data_root") or str(BASE_DIR)
     cmd = [
         _snake_bin(),
         "--snakefile", "workflow/Snakefile",
         "--configfile", _configfile_for(project_id),
         "--cores", str(cores),
+        "--resources", f"disk_gb={disk_gb_resource(_disk_root)}",
         "--keep-going", "--rerun-incomplete",
     ]
     queue_add(job_id, project_id, cmd, str(log_path), cores, user_email)
@@ -1723,11 +1733,13 @@ def run_local():
     job_id     = generate_job_id(project_id)
     log_path   = job_log_path(job_id)
     user_email = notify_email or session.get("email", "")
+    _disk_root = cfg.get("data_root") or str(BASE_DIR)
     cmd = [
         _snake_bin(),
         "--snakefile", "workflow/Snakefile",
         "--configfile", _configfile_for(project_id),
         "--cores", str(cores),
+        "--resources", f"disk_gb={disk_gb_resource(_disk_root)}",
         "--keep-going", "--rerun-incomplete",
     ]
     queue_add(job_id, project_id, cmd, str(log_path), cores, user_email)

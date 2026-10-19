@@ -6,6 +6,23 @@ circRNA detection rules:
 import os
 
 
+# disk_gb resource claims below (ciriquant, star_align*) are a single shared
+# ESTIMATE (200 GB/sample), not a measured value. Provenance: a prior
+# benchmark run (SRR444655, large single total-RNA sample) filled the disk
+# mid-run (`OSError: [Errno 28] No space left on device`); the real
+# per-sample peak was never captured by a df/du time series. 200 GB is
+# reverse-engineered from two indirect signals: (a) the run completed
+# successfully once ~600GB of unrelated data was freed, and (b) this file's
+# own `ciriquant` rule already `rm -rf`s its circ/align/gene subdirectories
+# after the tool finishes, implying the original author already knew those
+# intermediates were large enough to be worth deleting. No rule here differs
+# in intermediate-file strategy between samples/datasets, so the same number
+# is applied to ciriquant and all three star_align* rules pending an actual
+# measurement -- see logs/disk_usage_{srr}.tsv (written by this file's
+# disk-sampler, scripts/sample_disk_usage.py) for real data once a future
+# run's samples accumulate it.
+_DISK_GB_PER_SAMPLE_ESTIMATE = 200
+
 wildcard_constraints:
     srr = r"[A-Z]+\d+"
 
@@ -43,10 +60,21 @@ rule ciriquant:
         no_gene  = "--no-gene" if config["tools"]["ciriquant"]["no_gene"] else "",
     threads: config["threads"]
     resources:
-        mem_gb = 16
+        mem_gb = 16,
+        disk_gb = _DISK_GB_PER_SAMPLE_ESTIMATE
     log: "logs/ciriquant/{srr}.log"
+    # Background disk sampler below (mkdir/python.../kill lines): near-zero
+    # cost (one df + one `du -sb` per minute), piggybacks on whatever real
+    # sample happens to run next through this rule -- never run this rule, or
+    # a dedicated analysis, just to collect this data (see
+    # scripts/sample_disk_usage.py's own docstring). Writes
+    # logs/disk_usage_{srr}.tsv; killed unconditionally after CIRIquant
+    # finishes (success or failure) so it never outlives the rule.
     shell:
         """
+        mkdir -p {params.outdir}
+        python scripts/sample_disk_usage.py {params.outdir} logs/disk_usage_{wildcards.srr}.tsv &
+        _SAMPLER_PID=$!
         CIRIquant \
             -t {threads} \
             -1 {input.r1} \
@@ -57,6 +85,7 @@ rule ciriquant:
             {params.anchor_arg} \
             {params.no_gene} \
             > {log} 2>&1
+        kill $_SAMPLER_PID 2>/dev/null || true
         rm -rf {params.outdir}/circ {params.outdir}/align {params.outdir}/gene
         """
 
@@ -75,7 +104,8 @@ rule star_align:
         tmp_dir = RESULTS_DIR + "/circRNA/{srr}/star_tmp",
     threads: config["threads"]
     resources:
-        mem_gb = 26
+        mem_gb = 26,
+        disk_gb = _DISK_GB_PER_SAMPLE_ESTIMATE
     log: "logs/star/{srr}.log"
     shell:
         """
@@ -116,7 +146,8 @@ rule star_align_mate1:
         tmp_dir = RESULTS_DIR + "/circRNA/{srr}/mate1_tmp",
     threads: config["threads"]
     resources:
-        mem_gb = 26
+        mem_gb = 26,
+        disk_gb = _DISK_GB_PER_SAMPLE_ESTIMATE
     log: "logs/star/{srr}_mate1.log"
     shell:
         """
@@ -150,7 +181,8 @@ rule star_align_mate2:
         tmp_dir = RESULTS_DIR + "/circRNA/{srr}/mate2_tmp",
     threads: config["threads"]
     resources:
-        mem_gb = 26
+        mem_gb = 26,
+        disk_gb = _DISK_GB_PER_SAMPLE_ESTIMATE
     log: "logs/star/{srr}_mate2.log"
     shell:
         """
