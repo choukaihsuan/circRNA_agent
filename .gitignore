@@ -22,6 +22,13 @@ build/
 logs/
 Log.out
 
+# web_ui.py runtime state: Flask secret_key.txt, job queue.db, auth_tokens.db
+# (magic-link tokens, hashed session data). Never committed historically (git
+# log --all --diff-filter=A --name-only confirms this, 2026-10-19 secret-scan),
+# but also never previously excluded here -- added defensively so a future
+# `git add -A` from inside jobs/ can't accidentally commit it.
+jobs/
+
 # Conda env (recreatable from envs/circrna.yaml)
 .conda/
 
@@ -69,3 +76,4 @@ audit/table2_components_GSE133998.tsv
 benchmark/component_stage1.tsv
 audit/appendix_A1_parameters.tsv
 audit/appendix_A2_per_dataset.tsv
+audit/table7_dataset_basics.tsv

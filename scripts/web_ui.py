@@ -768,6 +768,29 @@ def _validate_srr(srr: str, context: str = "") -> str:
     return srr
 
 
+def _is_within_root(candidate: Path, root: Path) -> bool:
+    """True iff `candidate`, once symlinks are resolved, is `root` itself or
+    strictly inside it. Resolves both sides before comparing, so a symlink
+    pointing outside root can't pass by having its own (unresolved) path
+    look like it's inside.
+
+    Uses Path.relative_to() rather than string-prefix matching
+    (`str(p).startswith(str(root))`) -- the prefix-match form is a classic
+    confinement bug: it also accepts a SIBLING directory whose name merely
+    starts with root's name. E.g. root=/home3/choukaihsuan,
+    candidate=/home3/choukaihsuanEVIL/secret.fastq.gz: the string
+    "/home3/choukaihsuanEVIL/secret.fastq.gz" does start with
+    "/home3/choukaihsuan", but that directory is a sibling, not a
+    descendant -- relative_to() correctly rejects it (raises ValueError,
+    since it cannot express "choukaihsuanEVIL" as a path relative to
+    "choukaihsuan"), while the old prefix check silently accepted it."""
+    try:
+        candidate.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def _project_config_path(gse_id: str) -> Path:
     gse_id = _validate_project_id(gse_id)
     return BASE_DIR / "config" / "projects" / f"{gse_id}.yaml"
@@ -1602,7 +1625,17 @@ def run_manual():
 
 @app.route("/api/scan_fastq")
 def api_scan_fastq():
-    """Scan a server-side directory for paired FASTQ files."""
+    """Scan a server-side directory for paired FASTQ files.
+
+    This route previously accepted ANY path a caller supplied with no
+    confinement at all -- not even the classic ".." traversal case, since
+    it took absolute paths directly: `?path=/etc` would have listed
+    `/etc`'s contents (filtered to FASTQ-suffix filenames, but the full
+    resolved path of every match is returned in the response regardless).
+    Confined to data_root (the same root project data is created under)
+    for the same reason /run_local's symlink target is confined: an
+    authenticated user should be able to browse the server's own data area
+    for FASTQ files to import, not arbitrary server paths."""
     path = request.args.get("path", "").strip()
     if not path:
         return jsonify({"error": "未指定路徑"}), 400
@@ -1611,6 +1644,9 @@ def api_scan_fastq():
         return jsonify({"error": f"路徑不存在：{path}"}), 404
     if not p.is_dir():
         return jsonify({"error": f"非目錄：{path}"}), 400
+    _scan_root = Path(_default_config().get("data_root") or str(BASE_DIR))
+    if not _is_within_root(p, _scan_root):
+        return jsonify({"error": f"路徑不在允許範圍內（僅限 {_scan_root} 之下）：{path}"}), 403
 
     PAIR_PATTERNS = [
         ("_1.fastq.gz",      "_2.fastq.gz"),
@@ -1683,10 +1719,13 @@ def run_local():
             if link.exists() or link.is_symlink():
                 link.unlink()
             if target:
-                # Validate target resolves within allowed root (prevent symlink attack)
+                # Validate target resolves within allowed root (prevent symlink/
+                # path-traversal attack). _is_within_root() resolves both sides
+                # and checks real containment -- not a string-prefix match,
+                # which would also wrongly accept a sibling directory whose
+                # name happens to start with the allowed root's name.
                 try:
-                    resolved = Path(target).resolve()
-                    if not str(resolved).startswith(str(_fastq_allowed_root)):
+                    if not _is_within_root(Path(target), _fastq_allowed_root):
                         app.logger.warning(
                             f"run_local: rejected symlink target outside allowed root: {target}")
                         continue
