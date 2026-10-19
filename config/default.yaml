@@ -1,0 +1,106 @@
+# Clean template for a brand-new project's web-UI-submitted config.
+#
+# This file is the ONLY source build_project_config() (scripts/web_ui.py)
+# reads from when a project has no config/projects/{id}.yaml of its own yet.
+# It deliberately contains NO per-project identity fields -- no project_id,
+# source_type, metadata, groups, raw_dir, trimmed_dir, results_dir, or
+# study_title. Those are always derived fresh from the submitted project id
+# inside build_project_config(), never inherited from here or from any other
+# project's settings. See docs/platform_security_notes.md for why this file
+# exists (a prior design read the mutable, shared config.yaml as the
+# fallback template, which silently handed a brand-new project id whatever
+# project had most recently been submitted by anyone, including that
+# project's real sample metadata).
+#
+# Every other key below IS safe to share across projects -- these are tool/
+# analysis parameters and shared reference-data locations, not identifying
+# information about any one dataset. Keep this file's own set of top-level
+# keys (tools, consensus, de, download, genome, data_root, threads,
+# circbase_file, ciriquant_config) in sync with whatever
+# build_project_config() asserts as required.
+
+ciriquant_config: config/ciriquant.yaml
+use_container: false
+
+# Shared filesystem root this server's web UI creates every new project
+# under: {data_root}/{project_id}/{raw,trimmed}, {data_root}/{project_id}_results.
+# This is infrastructure, not project identity -- same root for every project.
+data_root: /home3/choukaihsuan
+
+threads: 8
+
+tools:
+  ciriquant:
+    no_gene: false
+    anchor: 5
+  dcc:
+    threads: 4
+    count_threshold: 2
+    replicate_threshold: 1
+    filter_mito: true
+    filter_recommended: true
+    end_tol: 5
+    max_length: 1000000
+    min_length: 30
+
+consensus:
+  min_bsj_reads: 2
+  min_tools: 2
+  slop: 10
+  max_junction_ratio: 1.0
+  qc_bsj_threshold: 5
+  adaptive: true
+  adaptive_ratio: 0.1
+  min_confidence: 0.0
+  tools:
+  - ciriquant
+  - dcc
+
+de:
+  method: edgeR_ciriquant
+  fdr_cutoff: 0.05
+  log2fc_cutoff: 1.0
+  de_sig_by: pvalue
+  fsj_concordance_lfc: 0.0
+  isoform_fdr_cutoff: 0.1
+  delta_iui_cutoff: 0.1
+  heatmap_top_n: 10
+  interaction_top_n: 50
+  encori_clip_exp_num: 1
+  encori_program_num: 2
+  normal_label: normal
+  tumor_label: tumor
+  filter_expr_min_count: 5
+  filter_expr_min_total_count: 15
+  deseq2_size_factor_type: poscounts
+  paired_design_override: auto
+  biomarker:
+    sig_cap: 10
+    fc_cap: 5
+    components:
+      sig:   { enabled: true, weight: 1.0 }
+      fc:    { enabled: true, weight: 1.0 }
+      conf:  { enabled: true, weight: 1.0 }
+      known: { enabled: true, weight: 1.0 }
+      mirna: { enabled: true, weight: 1.0 }
+      rbp:   { enabled: true, weight: 1.0 }
+
+download:
+  max_concurrent: 2
+  retry: 3
+  ascp_speed: 500m
+  # sra_cache_dir / tmp_dir are NOT set here -- build_project_config() always
+  # re-derives them from the project's own (freshly-built) raw_dir, the same
+  # way _update_paths_for_project() used to, so they can never point at
+  # another project's directory either.
+
+genome:
+  fasta: /home3/choukaihsuan/reference/hg19/hg19.fa
+  bwa_index: /home3/choukaihsuan/reference/hg19/hg19.fa
+  hisat2_index: /home3/choukaihsuan/reference/hg19/hg19_hisat2_index
+  gtf: /home3/choukaihsuan/reference/hg19/genes.gtf
+  star_index: /home3/choukaihsuan/reference/hg19/star_index
+  species: hg19
+
+circbase_file: /home3/choukaihsuan/circRNA_agent/reference/circbase_hg19.txt
+log_dir: logs

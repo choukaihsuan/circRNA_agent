@@ -704,7 +704,7 @@ def save_config(cfg: dict) -> None:
 
 
 # Project/accession ids become path components (config/projects/{id}.yaml,
-# metadata/{id}/) and, via _update_paths_for_project's string substitution,
+# metadata/{id}/) and, via build_project_config()'s f-string construction,
 # end up inside raw_dir/trimmed_dir/results_dir -- which Snakemake splices
 # unquoted into shell: templates (e.g. circrna.smk's dcc rule: "cd {params.outdir}
 # && DCC ..."). An id with shell metacharacters or ".." is therefore both a
@@ -796,13 +796,109 @@ def save_project_snapshot(cfg: dict) -> None:
             yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
-def load_project_config(gse_id: str) -> dict:
-    """Load project-specific config if snapshot exists, else fall back to main config."""
-    p = _project_config_path(gse_id)
-    if p.exists():
-        with open(p) as f:
-            return yaml.safe_load(f)
-    return load_config()
+_DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "default.yaml"
+_DEFAULT_CONFIG_REQUIRED_KEYS = (
+    "tools", "consensus", "de", "download", "genome", "data_root", "threads",
+    "circbase_file", "ciriquant_config",
+)
+
+
+def _default_config() -> dict:
+    """Load config/default.yaml -- the clean template build_project_config()
+    starts a brand-new project from. Never contains any project's raw_dir/
+    trimmed_dir/results_dir/metadata/groups/project_id/study_title; those are
+    identity fields build_project_config() always derives fresh from the
+    submitted project id. Missing required keys raise immediately rather than
+    letting a route proceed with a half-populated cfg and fail confusingly
+    deep inside Snakemake later."""
+    with open(_DEFAULT_CONFIG_PATH) as f:
+        cfg = yaml.safe_load(f)
+    missing = [k for k in _DEFAULT_CONFIG_REQUIRED_KEYS if k not in cfg]
+    if missing:
+        raise RuntimeError(
+            f"{_DEFAULT_CONFIG_PATH} is missing required key(s): {missing}")
+    return cfg
+
+
+def build_project_config(project_id: str, source_type: str, threads: int = 8) -> dict:
+    """Single choke point for building/loading a project's config -- used by
+    all three submit routes (/run_gse, /run_manual, /run_local) instead of
+    each hand-rolling its own load-then-patch sequence. That per-route
+    duplication is exactly what let /run_gse skip setting metadata/groups in
+    the first place: a brand-new project id fell through to the mutable
+    global config.yaml (whatever project was last submitted by anyone,
+    including that project's own real sample metadata path), and nothing
+    forced metadata/groups back onto the new id before the "does metadata
+    already exist" re-run check ran against it. See
+    docs/platform_security_notes.md for the full incident writeup.
+
+    Loads the project's OWN existing snapshot if one exists (preserving
+    parameters a user previously customized for THIS project via /update),
+    else starts from the clean config/default.yaml template -- never from
+    the global config.yaml.
+
+    Identity/path fields (project_id, source_type, threads, raw_dir,
+    trimmed_dir, results_dir, metadata, groups, download.sra_cache_dir/
+    tmp_dir) are then UNCONDITIONALLY (re)derived from project_id in both the
+    new-project and existing-project cases, deterministically from data_root
+    -- never string-substituted from whatever the loaded config happened to
+    already contain (that substitution, in the old _update_paths_for_project,
+    is what made a stale/foreign path "look" like it belonged to the new id
+    when old_pid happened to already be embedded in it)."""
+    project_id = _validate_project_id(project_id)
+    existing = _project_config_path(project_id)
+    cfg = (yaml.safe_load(existing.read_text())
+           if existing.exists() else _default_config())
+
+    cfg["project_id"] = project_id
+    cfg["source_type"] = source_type
+    cfg["threads"] = threads
+
+    data_root = cfg.get("data_root") or _default_config()["data_root"]
+    cfg["data_root"] = data_root
+    cfg["raw_dir"]     = f"{data_root}/{project_id}/raw"
+    cfg["trimmed_dir"] = f"{data_root}/{project_id}/trimmed"
+    cfg["results_dir"] = f"{data_root}/{project_id}_results"
+    cfg["metadata"]    = f"metadata/{project_id}/library_info.csv"
+    cfg["groups"]      = f"metadata/{project_id}/sample_groups.csv"
+
+    dl = cfg.setdefault("download", {})
+    dl["sra_cache_dir"] = f"{data_root}/{project_id}/sra_cache"
+    dl["tmp_dir"]       = f"{data_root}/{project_id}/sra_tmp"
+
+    return cfg
+
+
+def _load_existing_project_config_or_none(project_id: str) -> Optional[dict]:
+    """Read-side counterpart of build_project_config(): returns a project's
+    own config/projects/{id}.yaml, or None if it doesn't exist -- NEVER
+    falling through to any other config (global or default) that could point
+    at a different project's real results_dir. Written as its own explicit
+    check rather than relying on build_project_config()'s fallback-to-
+    default-template behavior being incidentally safe here too -- a reader
+    should never guess. Used directly by /api/progress, which is a
+    best-effort polling endpoint that degrades gracefully (it supplements a
+    log-based progress parse with filesystem evidence when available, and
+    must keep working when that supplement isn't); the hard-404 variant
+    below is for the three routes that serve an actual report/file and have
+    nothing sensible to return without one."""
+    project_id = _validate_project_id(project_id)
+    p = _project_config_path(project_id)
+    if not p.exists():
+        return None
+    return yaml.safe_load(p.read_text())
+
+
+def _load_existing_project_config_or_404(project_id: str) -> dict:
+    """Hard-404 variant of _load_existing_project_config_or_none(), for
+    /report, /download, /qc -- routes that already abort(404) when the job_id
+    itself isn't in the registry, so aborting again when that job's own
+    project config is missing is consistent with their existing all-or-
+    nothing semantics."""
+    cfg = _load_existing_project_config_or_none(project_id)
+    if cfg is None:
+        abort(404, description=f"no config found for project {project_id!r}")
+    return cfg
 
 
 def _snake_bin() -> str:
@@ -843,50 +939,6 @@ def _snake_env() -> dict:
     if extra:
         env["PATH"] = extra + ":" + path
     return env
-
-
-def _update_paths_for_project(cfg: dict, new_pid: str) -> dict:
-    """Replace the old project_id embedded in raw/trimmed/results paths,
-    and ensure the download section exists with server-appropriate defaults."""
-    import re as _re
-    old_pid = cfg.get("project_id", "")
-    _GSE_PAT = _re.compile(r'(?:GSE|SRP|PRJNA|SRR)\d+')
-    for key in ("raw_dir", "trimmed_dir", "results_dir"):
-        if key not in cfg:
-            continue
-        path = cfg[key]
-        if new_pid in path:
-            continue  # already correct
-        # Try exact old_pid replacement first
-        if old_pid and old_pid in path:
-            cfg[key] = path.replace(old_pid, new_pid)
-        else:
-            # Fallback: replace any GSE/SRP/PRJNA accession pattern in the path
-            cfg[key] = _GSE_PAT.sub(new_pid, path)
-
-    # Always re-derive sra_cache_dir / tmp_dir from the (now-updated) raw_dir.
-    # String-replace of old_pid is unreliable because download paths may reference
-    # an even older project that doesn't match the current project_id field.
-    raw = cfg.get("raw_dir", "")
-    if raw:
-        parent = str(Path(raw).parent)
-        dl = cfg.get("download", {})
-        dl["sra_cache_dir"] = parent + "/sra_cache"
-        dl["tmp_dir"]       = parent + "/sra_tmp"
-        cfg["download"] = dl
-
-    # Ensure download section exists so download.smk doesn't KeyError
-    if "download" not in cfg:
-        # Derive a sensible cache dir from raw_dir (sibling directory)
-        raw = cfg.get("raw_dir", "")
-        parent = str(Path(raw).parent) if raw else str(Path.home())
-        cfg["download"] = {
-            "sra_cache_dir": parent + "/sra_cache",
-            "tmp_dir":       parent + "/sra_tmp",
-            "retry":         3,
-            "ascp_speed":    "500m",
-        }
-    return cfg
 
 
 PIPELINE_STAGES = [
@@ -1357,16 +1409,14 @@ def run_gse():
     job_id = generate_job_id(gse_id)
     log_path = job_log_path(job_id)
 
-    cfg = load_project_config(gse_id)
-    cfg["project_id"] = gse_id
-    cfg["source_type"] = "accession"
-    cfg["threads"]    = cores
-    cfg = _update_paths_for_project(cfg, gse_id)
+    cfg = build_project_config(gse_id, source_type="accession", threads=cores)
 
-    # Pre-detect labels if metadata is already available (re-run scenario)
-    _meta_path = BASE_DIR / cfg.get("metadata", f"metadata/{gse_id}/library_info.csv")
-    if not _meta_path.exists():
-        _meta_path = BASE_DIR / "metadata" / gse_id / "library_info.csv"
+    # metadata is now ALWAYS metadata/{gse_id}/library_info.csv (build_project_config
+    # derives it deterministically from gse_id; it is never inherited from
+    # another project), so this path is the one genuine signal for "has this
+    # id's own metadata already been prepared" -- a real re-run of THIS
+    # project, not of whatever project happened to be active globally before.
+    _meta_path = BASE_DIR / cfg["metadata"]
     if _meta_path.exists():
         try:
             import pandas as _pd
@@ -1484,13 +1534,13 @@ def run_manual():
                 w.writerow({"srr_id": r["srr_id"], "condition": r["condition"]})
 
     # ── Update config ───────────────────────────────────────────────────────────
-    cfg = load_project_config(project_id)
-    cfg = _update_paths_for_project(cfg, project_id)
-    cfg["project_id"]          = project_id
-    cfg["source_type"]         = "local"
-    cfg["threads"]             = cores
-    cfg["metadata"]            = str(proj_lib_path.relative_to(BASE_DIR))
-    cfg["groups"]              = str(proj_grp_path.relative_to(BASE_DIR))
+    cfg = build_project_config(project_id, source_type="local", threads=cores)
+    assert cfg["metadata"] == str(proj_lib_path.relative_to(BASE_DIR)), (
+        f"build_project_config() derived {cfg['metadata']!r} but the metadata "
+        f"file was actually written to {proj_lib_path!r} -- these must agree")
+    assert cfg["groups"] == str(proj_grp_path.relative_to(BASE_DIR)), (
+        f"build_project_config() derived {cfg['groups']!r} but the groups "
+        f"file was actually written to {proj_grp_path!r} -- these must agree")
     cfg["de"]["tumor_label"]   = tumor_label
     cfg["de"]["normal_label"]  = normal_label
     notify_email = request.form.get("notify_email", "").strip()
@@ -1579,8 +1629,7 @@ def run_local():
     if not samples:
         return redirect(url_for("index"))
 
-    cfg     = load_project_config(project_id)
-    cfg     = _update_paths_for_project(cfg, project_id)
+    cfg     = build_project_config(project_id, source_type="local", threads=cores)
     raw_dir = Path(cfg["raw_dir"])
     raw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1635,11 +1684,12 @@ def run_local():
             for r in rows:
                 w.writerow({"srr_id": r["srr_id"], "condition": r["condition"]})
 
-    cfg["project_id"]                        = project_id
-    cfg["source_type"]                       = "local"
-    cfg["threads"]                           = cores
-    cfg["metadata"]                          = str((proj_meta / "library_info.csv").relative_to(BASE_DIR))
-    cfg["groups"]                            = str((proj_meta / "sample_groups.csv").relative_to(BASE_DIR))
+    assert cfg["metadata"] == str((proj_meta / "library_info.csv").relative_to(BASE_DIR)), (
+        f"build_project_config() derived {cfg['metadata']!r} but the metadata "
+        f"file was actually written under {proj_meta!r} -- these must agree")
+    assert cfg["groups"] == str((proj_meta / "sample_groups.csv").relative_to(BASE_DIR)), (
+        f"build_project_config() derived {cfg['groups']!r} but the groups "
+        f"file was actually written under {proj_meta!r} -- these must agree")
     cfg.setdefault("de", {})["tumor_label"]  = tumor_label
     cfg["de"]["normal_label"]                = normal_label
     notify_email = request.form.get("notify_email", "").strip()
@@ -1798,8 +1848,8 @@ def api_progress():
     report_exists = False
     qc_exists = False
     if gse_id:
-        cfg = load_project_config(gse_id)
-        results_dir = cfg.get("results_dir", "")
+        cfg = _load_existing_project_config_or_none(gse_id)
+        results_dir = cfg.get("results_dir", "") if cfg else ""
         if results_dir:
             data["stages"] = _infer_stages_from_files(results_dir, data["stages"], cfg)
             report_exists = (Path(results_dir) / "report.html").exists()
@@ -1878,7 +1928,7 @@ def serve_report(job_id: str):
     if not job:
         abort(404)
     gse_id = job["gse_id"]
-    cfg = load_project_config(gse_id)
+    cfg = _load_existing_project_config_or_404(gse_id)
     results_dir = cfg.get("results_dir", "")
     report_path = Path(results_dir) / "report.html"
     if not report_path.exists():
@@ -1897,7 +1947,7 @@ def download_report(job_id: str):
     if not job:
         abort(404)
     gse_id = job["gse_id"]
-    cfg = load_project_config(gse_id)
+    cfg = _load_existing_project_config_or_404(gse_id)
     results_dir = cfg.get("results_dir", "")
     report_path = Path(results_dir) / "report.html"
     if not report_path.exists():
@@ -1915,7 +1965,7 @@ def serve_qc(job_id: str):
     if not job:
         return "<h2>找不到此 job。</h2>", 404
     gse_id = job["gse_id"]
-    cfg = load_project_config(gse_id)
+    cfg = _load_existing_project_config_or_404(gse_id)
     results_dir = cfg.get("results_dir", "")
     qc_path = Path(results_dir) / "qc" / "multiqc_report.html"
     if not qc_path.exists():

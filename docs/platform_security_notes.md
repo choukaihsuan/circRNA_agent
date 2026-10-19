@@ -59,3 +59,92 @@ command from an id that was never validated as a real accession.
 Applying `ACCESSION_RE` to `/run_manual`'s `project_id` field, or vice versa,
 would be wrong: `/run_manual`'s `project_id` is a free-form project label
 (`CUSTOM` by default), never a value passed to a download.
+
+## Incident: `load_project_config()` leaked one project's real metadata into another
+
+**What happened.** Testing the validation above against a brand-new,
+never-before-seen accession (`GSE999999`, chosen specifically because it
+should not exist) did not fail fast as expected — it downloaded real public
+sequencing data belonging to a *different*, real, already-published project
+(`GSE97239`) into a directory labeled `GSE999999`. A second test (a made-up
+`SRR12345678`, intended to be a syntactically-valid-but-nonexistent run
+accession) turned out to coincidentally be a real SRA accession and also
+began downloading and processing real data before being caught. Both runs
+were killed (`kill -9`) within roughly a minute of starting; all resulting
+files, config snapshots, metadata, queue rows, and logs were deleted
+afterward. Confirmed against all 20 published datasets' own
+`config/projects/*.yaml`: every one of them correctly points at its own
+metadata, before and after this incident — **this was not a published-result
+problem**, only a problem for ids typed into the web form during testing.
+
+**Root cause** (`scripts/web_ui.py`, pre-fix `load_project_config()`): when a
+project's own `config/projects/{id}.yaml` snapshot didn't exist yet, the
+function fell through to `load_config()` — the single, mutable, shared
+`config.yaml` that reflects whichever project was most recently submitted by
+*anyone*, through *any* route. `/run_gse` then only overwrote a handful of
+fields on that inherited config (`project_id`, `source_type`, `threads`, and
+the raw/trimmed/results directory names via now-removed
+`_update_paths_for_project()`'s string substitution) — critically, it never
+reset `metadata` or `groups`. So a brand-new id inherited the *previous*
+project's real `metadata` path, that path existed (because the previous
+project was real and already downloaded), and `/run_gse`'s "does metadata
+already exist → treat this as a re-run, skip `agent.py`'s download step and
+go straight to Snakemake" check fired on someone else's data.
+
+**The fix** (this change): `load_project_config()` is gone, replaced by two
+choke points:
+
+- `build_project_config(project_id, source_type, threads)` — used by all
+  three submit routes (`/run_gse`, `/run_manual`, `/run_local`) instead of
+  each hand-rolling its own load-then-patch sequence (that per-route
+  duplication is exactly how `/run_gse` ended up missing the `metadata`/
+  `groups` reset that the other two routes happened to include). When a
+  project has no snapshot of its own yet, it starts from `config/default.yaml`
+  — a clean, committed template with **no per-project identity fields at
+  all** — never from the shared `config.yaml`. In both the new-project and
+  existing-project cases, identity/path fields (`raw_dir`, `trimmed_dir`,
+  `results_dir`, `metadata`, `groups`, `download.sra_cache_dir`/`tmp_dir`)
+  are then *unconditionally* (re)derived from `project_id` and `data_root`
+  via plain f-string construction — never string-substituted from whatever
+  the loaded config happened to already contain, which is what let a stale
+  path "look" correct whenever the old id happened to already be embedded in
+  it.
+- `_load_existing_project_config_or_none()` / `_load_existing_project_config_or_404()`
+  — the read-side counterpart, used by `/api/progress`, `/report`,
+  `/download`, `/qc`. These never fall through to any other config either;
+  a missing snapshot means "nothing to show" (404, or a graceful no-op for
+  `/api/progress`'s best-effort polling), not "show whatever's currently
+  active globally." This closes a narrower, lower-probability sibling of the
+  same bug: if a job's own snapshot were ever missing, these routes could
+  previously have served a *different* project's `report.html`/QC report to
+  someone holding a valid `job_id` for the missing-snapshot one.
+
+Also fixed as a direct consequence: previously, *every* field a route didn't
+explicitly reset (`consensus.tools`, `circbase_file`, `de.method`,
+`de.fdr_cutoff`, `genome.*`, etc.) silently inherited the previous project's
+value too, on all three submit routes — not just `metadata`/`groups`, and
+not just `/run_gse`. `build_project_config()`'s clean-template-or-own-
+snapshot rule closes this for every field, not only the two that caused the
+visible incident.
+
+**Deferred, not fixed, in this round**: replacing "does `metadata/{id}/
+library_info.csv` exist" as the re-run-vs-fresh-download signal in `/run_gse`
+with an explicit status field recorded by the project itself. With
+`build_project_config()`'s fix, that path is now *deterministically* always
+`metadata/{project_id}/library_info.csv` — it can no longer resolve to a
+different, foreign project's real metadata the way it could before — so the
+check is safe again, just not as architecturally clean as an explicit status
+field would be. Implementing that properly requires `agent.py` (a separate
+process from `web_ui.py`, invoked as a subprocess) to write a completion
+marker back into the project's own config after `prepare_metadata.py`
+succeeds, which is a larger change than this round's scope. Tracked as a
+follow-up, not silently dropped.
+
+**Not investigated further in this round, flagged for awareness**: whether a
+published dataset's config could have been *transiently* mis-pointed at some
+earlier point and then overwritten by a later, correct submission before
+anyone looked — the current state and file mtimes are clean and consistent
+with "correct from the start," but mtimes alone cannot fully rule out a
+since-overwritten transient error. No evidence of this was found (no
+CLAUDE.md record, commit message, or leftover metadata directory suggests it
+happened), but absence of evidence isn't proof it didn't.
