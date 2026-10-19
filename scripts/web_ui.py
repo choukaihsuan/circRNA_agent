@@ -1406,17 +1406,40 @@ def run_gse():
     gse_id = _validate_accession(gse_id)
     gse_id = _validate_project_id(gse_id)
 
+    # metadata is now ALWAYS metadata/{gse_id}/library_info.csv -- a pure
+    # function of gse_id, computable before anything else runs. "Has this id's
+    # own metadata already been prepared" is a real re-run of THIS project,
+    # not of whatever project happened to be active globally before.
+    _meta_path = BASE_DIR / f"metadata/{gse_id}/library_info.csv"
+
+    # Preflight: for a genuinely new id (no local metadata yet), confirm the
+    # accession actually exists BEFORE creating any state -- no config file,
+    # no directory, no queue row, no notification email. This is what
+    # actually prevents the docs/platform_security_notes.md incident's class
+    # of problem for a *nonexistent* id (the config-isolation fix prevents it
+    # resolving to a FOREIGN project's data; this prevents it from creating
+    # any footprint at all when there's no real dataset behind it in the
+    # first place). Skipped for an existing re-run: re-querying the network
+    # on every re-run of an already-downloaded dataset would add 1-10s of
+    # latency for no safety benefit, since _meta_path already proves this id
+    # is real (its own data was downloaded before).
+    if not _meta_path.exists():
+        from download_geo import preflight_accession
+        pre = preflight_accession(gse_id)
+        if not pre["exists"]:
+            abort(400, description=(
+                f"preflight check failed for {gse_id!r}: "
+                f"{pre['error'] or 'accession does not exist'} -- "
+                f"no job was created"))
+
     job_id = generate_job_id(gse_id)
     log_path = job_log_path(job_id)
 
     cfg = build_project_config(gse_id, source_type="accession", threads=cores)
+    assert cfg["metadata"] == f"metadata/{gse_id}/library_info.csv", (
+        f"build_project_config() derived {cfg['metadata']!r}, expected the "
+        f"same path used for the preflight gate above -- these must agree")
 
-    # metadata is now ALWAYS metadata/{gse_id}/library_info.csv (build_project_config
-    # derives it deterministically from gse_id; it is never inherited from
-    # another project), so this path is the one genuine signal for "has this
-    # id's own metadata already been prepared" -- a real re-run of THIS
-    # project, not of whatever project happened to be active globally before.
-    _meta_path = BASE_DIR / cfg["metadata"]
     if _meta_path.exists():
         try:
             import pandas as _pd
@@ -1885,6 +1908,37 @@ def _fetch_geo_title(gse_id: str) -> str:
         return data.get("result", {}).get(uid, {}).get("title", "")
     except Exception:
         return ""
+
+
+@app.route("/api/preflight")
+def api_preflight():
+    """Validate-only existence/scale check for an accession, with ZERO side
+    effects -- no config written, no directory created, no queue row, no
+    subprocess. This is the route a "check before submit" UI control should
+    call; /run_gse also calls preflight_accession() itself for a genuinely
+    new id before creating any state, so this endpoint is for showing the
+    user what to expect before they click submit, not the only enforcement
+    point (the server-side one in /run_gse is -- never trust the client to
+    have called this first)."""
+    from download_geo import preflight_accession
+    gse_id = request.args.get("accession", "").strip().upper()
+    if not gse_id:
+        return jsonify({"error": "missing accession"}), 400
+    gse_id = _validate_accession(gse_id)
+    result = preflight_accession(gse_id)
+    result["accession"] = gse_id
+    result["total_bytes_human"] = (
+        _human_bytes(result["total_bytes"]) if result["total_bytes"] else None)
+    return jsonify(result)
+
+
+def _human_bytes(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
 
 
 @app.route("/api/detect_labels")

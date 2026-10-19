@@ -132,13 +132,23 @@ library_info.csv` exist" as the re-run-vs-fresh-download signal in `/run_gse`
 with an explicit status field recorded by the project itself. With
 `build_project_config()`'s fix, that path is now *deterministically* always
 `metadata/{project_id}/library_info.csv` — it can no longer resolve to a
-different, foreign project's real metadata the way it could before — so the
-check is safe again, just not as architecturally clean as an explicit status
-field would be. Implementing that properly requires `agent.py` (a separate
+*different, foreign* project's real metadata the way it could before. **This
+is not the same as "safe."** The residual, un-fixed risk is narrower but
+real: **a same-project, incomplete or partially-written `metadata/{id}/
+library_info.csv` (e.g. left behind by an interrupted or killed prior run)
+would still read as "exists" and be misjudged as a completed, ready-to-rerun
+dataset**, skipping `agent.py`'s fresh download/metadata-preparation step
+even though this project's own data was never actually finished. Existence
+of the file is not evidence of its completeness. The preflight check added
+alongside this note (`preflight_accession()` / `/run_gse`'s own gate / the
+`/api/preflight` endpoint) does not cover this case either — it only runs
+when the local file is *absent*, not when it's present-but-incomplete.
+Implementing a real fix (an explicit status field, set only after
+`prepare_metadata.py` fully succeeds) requires `agent.py` (a separate
 process from `web_ui.py`, invoked as a subprocess) to write a completion
-marker back into the project's own config after `prepare_metadata.py`
-succeeds, which is a larger change than this round's scope. Tracked as a
-follow-up, not silently dropped.
+marker back into the project's own config, which is a larger change than
+this round's scope. Tracked as a follow-up, not silently dropped, and not to
+be read as already handled by anything in this document.
 
 **Not investigated further in this round, flagged for awareness**: whether a
 published dataset's config could have been *transiently* mis-pointed at some
@@ -148,3 +158,94 @@ with "correct from the start," but mtimes alone cannot fully rule out a
 since-overwritten transient error. No evidence of this was found (no
 CLAUDE.md record, commit message, or leftover metadata directory suggests it
 happened), but absence of evidence isn't proof it didn't.
+
+## Preflight: confirming an accession exists before creating any state
+
+`/run_gse` (and the standalone `GET /api/preflight?accession=...` route, for
+a "check before submit" UI control) call `download_geo.preflight_accession()`
+before `/run_gse` builds or writes anything — no `config/projects/{id}.yaml`,
+no global `config.yaml` write, no queue row, no notification email. This is
+what actually prevents the config/queue/email footprint the two incident
+tests above left behind for a nonexistent id: the config-isolation fix (the
+section above) stops a bad id from resolving to a *different* project's real
+data, but on its own it would still create a config, a queue row, and an
+email for an id that turns out not to exist at all — `preflight_accession()`
+closes that separately.
+
+**Only runs when needed.** The gate is skipped when `metadata/{id}/
+library_info.csv` already exists locally — re-querying pysradb/NCBI on every
+re-run of an already-downloaded, real dataset would add 1–10s of network
+latency for no safety benefit, since the local file already proves the id
+is real. This means the gate specifically covers the exact case the incident
+was in: a genuinely new id, about to take the `agent.py --gse` fresh-download
+branch.
+
+**No extra query beyond what the download already makes.** `preflight_accession()`
+reuses the identical pysradb (`gse_to_srp`/`srp_to_srr(detailed=True)`) or
+NCBI eUtils (`esearch`+`efetch` RunInfo) calls `prepare_metadata()` already
+makes for the real download — it just reads fields
+(`library_layout`/`total_size`/`run_total_bases`/`total_spots` from pysradb;
+`LibraryLayout`/`size_MB`/`avgLength` from eUtils RunInfo) that
+`prepare_metadata()`'s own column-narrowing step discards, instead of issuing
+a second query. (`agent.py` still re-fetches the full per-sample dataframe
+later when it actually runs — the one redundant query this doesn't eliminate
+is the second, full `prepare_metadata()` call inside the queued job itself;
+avoiding that would mean passing preflight's already-fetched dataframe across
+the `web_ui.py` → `agent.py` subprocess boundary, out of scope for this
+round.)
+
+**Measured behavior** (server, 2026-10-19, isolated calls — no Snakemake, no
+published-result directories touched): a nonexistent `GSE999999` via pysradb
+failed in ~3s. A real 6-sample GSE (`GSE113230`) via pysradb took ~11s total
+(`gse_to_srp` ~1.3s + `srp_to_srr(detailed=True)` ~9.75s) and returned
+`total_size`/`library_layout`/derivable read length for every run. A real
+24-sample `SRP156355` via the eUtils path took ~1.2s. No rate limiting was
+observed in either path at this call volume (a handful of single-dataset
+queries); NCBI's own published guidance is ≤3 requests/sec without an API
+key, which this endpoint does not currently enforce or need to, since each
+preflight call only issues 1–2 requests.
+
+**PRJNA/SRP eUtils access from the server, corrected.** The known-issues
+table elsewhere in this project's documentation records "Server 防火牆封鎖
+NCBI eUtils HTTP" for `PRJNA/SRP metadata 抓取失敗`. Testing `esearch.fcgi`
+and `efetch.fcgi` directly against `SRP156355` from the server just now
+succeeded in ~1.2s. Either that restriction has since been lifted, or it was
+narrower than documented (e.g. specific to a different endpoint or a
+transient outage at the time). This note does not edit that other record —
+it's flagged here as current, directly-observed, contradicting evidence for
+whoever next relies on that documented limitation.
+
+**Error handling never defaults to "proceed."** `preflight_accession()` is
+designed to never raise — network failure, unexpected API schema, and
+genuine nonexistence all come back as `{"exists": False, "error": "..."}`,
+and `/run_gse` treats `exists: False` as a hard stop (400) regardless of
+*why* — a preflight query that fails for transient network reasons must not
+be read as "probably fine, let it through." This means a real but temporarily
+unreachable NCBI endpoint will also block submission; there is currently no
+retry or distinct "inconclusive, try again" state.
+
+## Scale-gate thresholds: data gathered, no threshold decided
+
+Per explicit instruction, this round gathers the numbers a scale gate (queue
+item 13) would need but does not pick any threshold values itself.
+
+- **Disk**: `df -h /home3` on 2026-10-19 reports **64% used, 632G available**
+  (1.8T total). This project's own CLAUDE.md elsewhere records "前次記錄是
+  86% 已用" — that figure is stale relative to this measurement; disk state
+  clearly fluctuates with cleanup cycles and should be re-checked at
+  threshold-decision time, not assumed from either number.
+- **Per-dataset footprint, post-cleanup** (`du -sh`, two completed, already-
+  cleaned-up datasets): `GSE113230_results/` = 2.0G, `GSE133998_results/` =
+  739M. These are *after* the standard practice (documented elsewhere in this
+  project) of deleting raw/trimmed/intermediate-BAM files once a dataset
+  finishes — not representative of peak usage during a run.
+- **Peak footprint during a run** is not separately re-measured in this
+  round; this project's own existing documentation already records CIRIquant
+  alone needing on the order of 200GB+ peak for a single large sample
+  (raw BAM/SAM intermediates before cleanup), from a prior incident where a
+  benchmark run filled the disk. A scale gate sized only off the small
+  post-cleanup numbers above would be sized wrong.
+- **`preflight_accession()`'s own `total_bytes` field** (SRA/public file size
+  summed across all runs in a dataset, from the same pysradb/eUtils query)
+  is the number a scale gate would compare against whatever threshold gets
+  chosen — it is not itself a threshold recommendation.

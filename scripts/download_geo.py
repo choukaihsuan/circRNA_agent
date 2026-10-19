@@ -194,6 +194,109 @@ def from_geo(gse_id: str) -> pd.DataFrame:
     return df
 
 
+def preflight_accession(accession: str) -> dict:
+    """Check a dataset accession's existence and scale WITHOUT any side
+    effects (no file writes, no directory creation, no config/queue state) --
+    safe to call before any job is created. Reuses exactly the same network
+    calls prepare_metadata() would make (pysradb for GSE*, NCBI eUtils for
+    PRJNA*/SRP*/SRX*/SRS*/SRR*/ERP*/DRP*), just reading fields
+    (library_layout, total/public size, total_spots/run_total_bases for GSE;
+    LibraryLayout/size_MB/avgLength for the eUtils RunInfo path) that
+    prepare_metadata()'s own column-narrowing step discards -- not issuing an
+    extra query beyond what the real download would already make.
+
+    Returns a dict, always (never raises): {"exists", "n_samples",
+    "total_bytes", "layout", "avg_read_length_bp", "error"}. "exists": False
+    with a populated "error" covers both "genuinely doesn't exist" and "query
+    failed for some other reason" (network/API trouble, unexpected schema) --
+    callers must treat both as "cannot proceed," never silently default to
+    proceeding on an inconclusive answer."""
+    acc = (accession or "").strip().upper()
+    empty = {"exists": False, "n_samples": None, "total_bytes": None,
+              "layout": None, "avg_read_length_bp": None, "error": None}
+    try:
+        if acc.startswith("GSE"):
+            from pysradb.sraweb import SRAweb  # type: ignore[import-untyped]
+            db = SRAweb()
+            srp_df = db.gse_to_srp(acc)
+            if srp_df is None or srp_df.empty:
+                return {**empty, "error": f"No SRP study found for {acc}"}
+            srp_id = srp_df["study_accession"].iloc[0]
+            df = db.srp_to_srr(srp_id, detailed=True)
+            if df is None or df.empty:
+                return {**empty, "error": f"No runs found under {srp_id}"}
+
+            layout = None
+            if "library_layout" in df.columns:
+                vals = df["library_layout"].dropna().unique()
+                layout = vals[0] if len(vals) == 1 else "/".join(sorted(set(str(v) for v in vals)))
+
+            total_bytes = None
+            if "total_size" in df.columns:
+                sizes = pd.to_numeric(df["total_size"], errors="coerce").dropna()
+                if len(sizes):
+                    total_bytes = int(sizes.sum())
+
+            avg_len = None
+            if "run_total_bases" in df.columns and "total_spots" in df.columns:
+                bases = pd.to_numeric(df["run_total_bases"], errors="coerce")
+                spots = pd.to_numeric(df["total_spots"], errors="coerce")
+                ratio = (bases / spots).dropna()
+                if len(ratio):
+                    divisor = 2 if layout and "PAIRED" in str(layout).upper() else 1
+                    avg_len = int(round(ratio.mean() / divisor))
+
+            return {"exists": True, "n_samples": len(df), "total_bytes": total_bytes,
+                    "layout": layout, "avg_read_length_bp": avg_len, "error": None}
+
+        elif any(acc.startswith(p) for p in _SRA_PREFIXES):
+            search_url = (
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+                f"?db=sra&term={acc}&retmax=500&retmode=json"
+            )
+            with urllib.request.urlopen(search_url, timeout=15) as r:
+                data = json.loads(r.read())
+            ids = data["esearchresult"]["idlist"]
+            if not ids:
+                return {**empty, "error": f"No SRA records found for {acc}"}
+
+            fetch_url = (
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+                f"?db=sra&id={','.join(ids)}&rettype=runinfo&retmode=text"
+            )
+            with urllib.request.urlopen(fetch_url, timeout=30) as r:
+                csv_text = r.read().decode("utf-8")
+            df = pd.read_csv(io.StringIO(csv_text))
+            if df.empty or "Run" not in df.columns:
+                return {**empty, "error": f"Unexpected or empty RunInfo for {acc}"}
+
+            layout = None
+            if "LibraryLayout" in df.columns:
+                vals = df["LibraryLayout"].dropna().unique()
+                layout = vals[0] if len(vals) == 1 else "/".join(sorted(set(str(v) for v in vals)))
+
+            total_bytes = None
+            if "size_MB" in df.columns:
+                mb = pd.to_numeric(df["size_MB"], errors="coerce").dropna()
+                if len(mb):
+                    total_bytes = int(mb.sum() * 1024 * 1024)
+
+            avg_len = None
+            if "avgLength" in df.columns:
+                lens = pd.to_numeric(df["avgLength"], errors="coerce").dropna()
+                if len(lens):
+                    divisor = 2 if layout and "PAIRED" in str(layout).upper() else 1
+                    avg_len = int(round(lens.mean() / divisor))
+
+            return {"exists": True, "n_samples": len(df), "total_bytes": total_bytes,
+                    "layout": layout, "avg_read_length_bp": avg_len, "error": None}
+
+        else:
+            return {**empty, "error": f"Unrecognised accession format: {acc!r}"}
+    except Exception as exc:
+        return {**empty, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def prepare_metadata(
     gse_id: str | None = None,
     runinfo_csv: str | None = None,
