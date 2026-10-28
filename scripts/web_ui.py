@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import random
@@ -22,6 +23,7 @@ import string
 import subprocess
 import threading
 import time
+import urllib.request
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -1403,7 +1405,12 @@ def update():
     cfg["de"]["fdr_cutoff"]              = float(request.form.get("fdr", 0.05))
     cfg["de"]["log2fc_cutoff"]           = float(request.form.get("log2fc", 1.0))
     cfg["threads"]                       = int(request.form.get("threads", 8))
+    # This is the one write site that takes a human-typed value directly off
+    # a form field, never through fetch_study_title()'s network call -- so it
+    # is tagged "manual" unconditionally, regardless of whether the typed
+    # text happens to match what a GEO/SRA fetch would have returned.
     cfg["study_title"]                   = request.form.get("study_title", "").strip()
+    cfg["study_title_source"]            = "manual"
 
     save_project_snapshot(cfg)
 
@@ -1489,6 +1496,13 @@ def run_gse():
             cfg.setdefault("de", {})["normal_label"]  = _ctrl
         except Exception:
             pass
+
+    # Auto-fetch title. Previously MISSING entirely on this route --
+    # /run_manual was the only path that ever called this, so any dataset
+    # created via /run_gse (the direct "paste a GSE id" entry point, likely
+    # the most common one) got no title at all, regardless of whether the
+    # NCBI request would have succeeded.
+    _maybe_autofetch_study_title(cfg, gse_id)
 
     save_project_snapshot(cfg)
 
@@ -1611,9 +1625,7 @@ def run_manual():
     notify_email = request.form.get("notify_email", "").strip()
     if notify_email:
         cfg.setdefault("notify", {})["email_to"] = notify_email
-    # Auto-fetch GEO title if not already set
-    if not cfg.get("study_title"):
-        cfg["study_title"] = _fetch_geo_title(project_id)
+    _maybe_autofetch_study_title(cfg, project_id)
     save_project_snapshot(cfg)
 
     # ── Enqueue job (FIFO) ──────────────────────────────────────────────────────
@@ -1778,6 +1790,16 @@ def run_local():
     notify_email = request.form.get("notify_email", "").strip()
     if notify_email:
         cfg.setdefault("notify", {})["email_to"] = notify_email
+
+    # Local FASTQ projects are usually given an arbitrary label (default
+    # "LOCAL"), not an NCBI accession, so this will mostly return
+    # ("", "fetch_failed") via fetch_study_title()'s format-mismatch branch --
+    # included anyway for the case where the project_id the user typed
+    # happens to be a real accession (e.g. re-importing local copies of a
+    # published dataset's FASTQs under its own GSE id), and for consistency
+    # with every other project-creating route.
+    _maybe_autofetch_study_title(cfg, project_id)
+
     save_project_snapshot(cfg)
 
     job_id     = generate_job_id(project_id)
@@ -1955,21 +1977,160 @@ def api_progress():
     return jsonify(data)
 
 
-def _fetch_geo_title(gse_id: str) -> str:
-    """Fetch GEO study title via NCBI eUtils. Returns empty string on failure."""
-    import re as _re, urllib.request as _ur, json as _js
-    m = _re.match(r"GSE(\d+)", gse_id.upper())
-    if not m:
-        return ""
-    uid = "200" + m.group(1)
-    url = (f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-           f"?db=gds&id={uid}&retmode=json")
+# Generic, content-free titles NCBI auto-generates when a submitter never
+# provided a real one (e.g. "Homo sapiens Transcriptome or Gene expression",
+# seen verbatim from both db=bioproject's project_title and db=sra's Study
+# name for PRJNA553289 during this feature's own verification) -- these are
+# worse than no title at all, since they read as a real answer but carry no
+# information. Applied uniformly to every source, not just bioproject.
+_GENERIC_TITLE_RE = re.compile(
+    r'^[A-Z][a-z]+ [a-z]+ (Transcriptome|Genome|Raw sequence reads)')
+
+# db=sra's esummary wraps its real content in an "expxml" field that is
+# itself an XML-ish string, not structured JSON. A single narrow regex pulls
+# just the one attribute needed; expxml is untrusted external content from
+# NCBI, and handing an entire XML parser a blob of it is a bigger attack
+# surface than matching one attribute pattern.
+_SRA_STUDY_NAME_RE = re.compile(r'<Study[^>]*\sname="([^"]*)"')
+
+# eUtils request identification, per NCBI's usage guidelines -- this app's
+# name, not a contact address. The user who runs this pipeline declined to
+# publish their own email in an outbound request header/query string, which
+# is their call to make; `tool` alone is sufficient for NCBI's own stated
+# purpose (identifying which software is making the request), `email` is not
+# required to get the normal (non-API-key) 3 req/sec rate, and nothing here
+# depends on NCBI being able to reach back to a human.
+_EUTILS_TOOL_PARAM = "tool=circDEX"
+
+
+def _normalize_ws(text: str) -> str:
+    """Collapse runs of whitespace to a single space. GEO's own esummary
+    title text sometimes contains doubled spaces verbatim (seen in
+    GSE121842's actual GEO record, not a transcription error on this side) --
+    comparing a freshly-fetched title against a stored one for the
+    study_title_source backfill must not report a mismatch over whitespace
+    NCBI itself is inconsistent about. Applied to every source uniformly,
+    not special-cased for GEO, since the next source to show this quirk is
+    only a matter of which record happens to have it."""
+    return " ".join((text or "").split())
+
+
+def _reject_if_generic(title: str, source: str) -> tuple:
+    title = _normalize_ws(title)
+    if title and _GENERIC_TITLE_RE.match(title):
+        return "", "generic_rejected"
+    return title, source
+
+
+def fetch_study_title(accession: str) -> tuple:
+    """Single entry point for fetching a dataset's study title from NCBI --
+    used by every route that creates a project config, instead of each
+    maintaining its own copy (that duplication is exactly how /run_gse ended
+    up never fetching a title at all; see docs/platform_security_notes.md).
+
+    Returns (text, source), where source is always exactly one of:
+    "geo", "sra_study", "bioproject_desc", "generic_rejected", "fetch_failed".
+    ("manual" is NOT returned by this function -- it's set by the one write
+    site, /update, that takes a human-typed value directly, never through
+    a network fetch.)
+
+    Dispatch is purely by accession format, matching exactly what each
+    prefix's own dedicated eUtils db actually returns useful content from
+    (verified empirically, not assumed symmetric across prefixes -- SRP's
+    best source is db=sra's Study name; PRJNA's is db=bioproject's
+    project_description, NOT its project_title, which was observed to be
+    exactly the kind of generic placeholder _GENERIC_TITLE_RE exists to
+    catch). GSE failing does not fall back to SRA -- a GSE id's own GEO
+    record is authoritative for it; treating a fallback's answer as
+    equivalent would blur exactly the "where did this text come from"
+    question this function and its source tag exist to answer.
+
+    Never raises: a request failure, timeout, or unexpected response shape
+    all return ("", "fetch_failed") -- logged with the accession, db, and
+    exception type/message first, not silently swallowed. The previous
+    version's bare `except Exception: return ""` is exactly why it was
+    impossible to tell, after the fact, whether GSE229705's empty title came
+    from a failed request or something else -- there was nothing left to
+    look at."""
+    acc = (accession or "").strip().upper()
     try:
-        with _ur.urlopen(url, timeout=8) as resp:
-            data = _js.loads(resp.read())
-        return data.get("result", {}).get(uid, {}).get("title", "")
-    except Exception:
-        return ""
+        if re.match(r'^GSE\d+$', acc):
+            # GEO's Series UID is "200" + the GSE number zero-padded to 6
+            # digits -- NOT a bare concatenation. Missing the zfill(6) silently
+            # breaks every GSE accession under 6 digits (verified against
+            # GSE58135/GSE77509/GSE97239 during this feature's own testing:
+            # "200" + "58135" produces an 8-digit UID that matches no record,
+            # so esummary.fcgi returns an empty result and this fell through
+            # to fetch_failed with no indication the UID itself was wrong).
+            uid = "200" + acc[3:].zfill(6)
+            url = (f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+                   f"?db=gds&id={uid}&retmode=json&{_EUTILS_TOOL_PARAM}")
+            with urllib.request.urlopen(url, timeout=8) as resp:
+                data = json.loads(resp.read())
+            title = data.get("result", {}).get(uid, {}).get("title", "")
+            if not title:
+                return "", "fetch_failed"
+            return _reject_if_generic(title, "geo")
+
+        elif re.match(r'^SRP\d+$', acc):
+            search_url = (f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+                          f"?db=sra&term={acc}&retmode=json&{_EUTILS_TOOL_PARAM}")
+            with urllib.request.urlopen(search_url, timeout=8) as resp:
+                sdata = json.loads(resp.read())
+            ids = sdata.get("esearchresult", {}).get("idlist", [])
+            if not ids:
+                return "", "fetch_failed"
+            sum_url = (f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+                       f"?db=sra&id={ids[0]}&retmode=json&{_EUTILS_TOOL_PARAM}")
+            with urllib.request.urlopen(sum_url, timeout=8) as resp:
+                data = json.loads(resp.read())
+            expxml = data.get("result", {}).get(ids[0], {}).get("expxml", "")
+            m = _SRA_STUDY_NAME_RE.search(expxml)
+            if not m:
+                return "", "fetch_failed"
+            title = html.unescape(m.group(1))
+            if not title:
+                return "", "fetch_failed"
+            return _reject_if_generic(title, "sra_study")
+
+        elif re.match(r'^PRJNA\d+$', acc):
+            search_url = (f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+                          f"?db=bioproject&term={acc}&retmode=json&{_EUTILS_TOOL_PARAM}")
+            with urllib.request.urlopen(search_url, timeout=8) as resp:
+                sdata = json.loads(resp.read())
+            ids = sdata.get("esearchresult", {}).get("idlist", [])
+            if not ids:
+                return "", "fetch_failed"
+            sum_url = (f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+                       f"?db=bioproject&id={ids[0]}&retmode=json&{_EUTILS_TOOL_PARAM}")
+            with urllib.request.urlopen(sum_url, timeout=8) as resp:
+                data = json.loads(resp.read())
+            desc = data.get("result", {}).get(ids[0], {}).get("project_description", "")
+            if not desc:
+                return "", "fetch_failed"
+            return _reject_if_generic(desc, "bioproject_desc")
+
+        else:
+            return "", "fetch_failed"
+    except Exception as exc:
+        print(f"[fetch_study_title] failed for accession={acc!r}: "
+              f"{type(exc).__name__}: {exc}", file=_sys.stderr)
+        return "", "fetch_failed"
+
+
+def _maybe_autofetch_study_title(cfg: dict, accession: str) -> None:
+    """Set cfg['study_title']/cfg['study_title_source'] via fetch_study_title(),
+    unless a human already typed a title through /update's settings form
+    ("manual" source) -- a manual entry is a deliberate choice and must never
+    be silently clobbered by a later automatic fetch, no matter which route
+    (/run_gse, /run_manual, /run_local) happens to re-save this project's
+    config afterward. This is a single explicit branch every such route
+    calls, not a rule each caller has to remember to apply itself -- the
+    previous "if not cfg.get('study_title')" check at each call site had no
+    way to express "but don't touch it if it was set on purpose."""
+    if cfg.get("study_title") and cfg.get("study_title_source") == "manual":
+        return
+    cfg["study_title"], cfg["study_title_source"] = fetch_study_title(accession)
 
 
 @app.route("/api/preflight")
@@ -2010,8 +2171,9 @@ def api_detect_labels():
     if not gse_id:
         return jsonify({"error": "missing gse"}), 400
 
-    # Fetch GEO title from NCBI eUtils (non-blocking; empty string on failure)
-    geo_title = _fetch_geo_title(gse_id)
+    # Fetch title from NCBI eUtils for frontend preview only -- not written to
+    # any config here (non-blocking; empty string on any failure).
+    geo_title, _ = fetch_study_title(gse_id)
 
     # Look for metadata in standard locations
     candidates = [

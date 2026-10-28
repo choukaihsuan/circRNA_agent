@@ -859,8 +859,16 @@ def _sample_overview_section(
     normal_label: str,
     results_dir: Optional[str] = None,
     study_title: str = "",
+    project_id: str = "",
 ) -> str:
-    """Return an HTML section describing samples + fastp QC stats."""
+    """Return an HTML section describing samples + fastp QC stats.
+
+    study_title comes from NCBI (GEO/SRA/BioProject free text) or a human
+    typing into the settings form -- either way it is content this script
+    did not generate, so it is HTML-escaped before being interpolated into
+    the page rather than trusted verbatim. When empty (fetch failed, or a
+    dataset predating fetch_study_title()'s auto-fetch wiring in web_ui.py),
+    the accession itself is shown instead of leaving a blank italic line."""
     if not groups_file or not Path(groups_file).exists():
         return ""
     try:
@@ -938,10 +946,11 @@ def _sample_overview_section(
         f'<div class="lbl">Other</div></div>'
     ) if n_other else ""
 
+    _title_text = _html_mod.escape(study_title) if study_title else _html_mod.escape(project_id)
     title_html = (
         f'<p style="font-size:14px;color:#374151;margin:0 0 12px;font-style:italic">'
-        f'{study_title}</p>'
-    ) if study_title else ""
+        f'{_title_text}</p>'
+    ) if _title_text else ""
 
     return f"""
 <h2>Samples</h2>
@@ -1900,7 +1909,7 @@ def build_report(
     results_dir    = str(Path(output_file).parent)
     sample_html    = _sample_overview_section(
         groups_file, tumor_label, normal_label,
-        results_dir=results_dir, study_title=study_title)
+        results_dir=results_dir, study_title=study_title, project_id=project_id)
     type_html      = _type_section(sig)
     biomarker_html = _biomarker_section(biomarker_files[de_method], interactions=interactions, iso_lookup=_iso_lookup)
     isoform_html   = _isoform_section(switching_file,
