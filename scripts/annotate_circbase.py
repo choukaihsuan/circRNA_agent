@@ -141,13 +141,28 @@ def annotate(summary_files: list[str], circbase_df: pd.DataFrame,
     frames = [pd.read_csv(f, sep="\t") for f in summary_files]
     df = pd.concat(frames, ignore_index=True)
 
-    # Keep the row with the highest confidence_score when duplicated
+    # Keep the row with the highest confidence_score when duplicated. Ties
+    # are real: the same circ_id can come from multiple samples'
+    # consensus_summary.tsv with an identical confidence_score. circ_id
+    # itself can't serve as the tie-break key here (it's the very column
+    # being deduplicated, so it's non-unique by construction) -- instead,
+    # tag each row with its position in the concat order (sample file order
+    # x original row order within that file, both fixed by the caller's
+    # summary_files list) before the sort collapses that information, so a
+    # tie always keeps the row from whichever sample appears first in
+    # summary_files, rather than whatever pandas's sort happens to leave on
+    # top.
+    df["_orig_order"] = range(len(df))
     if "confidence_score" in df.columns:
-        df = (df.sort_values("confidence_score", ascending=False)
+        df = (df.sort_values(["confidence_score", "_orig_order"],
+                              ascending=[False, True], kind="stable")
                 .drop_duplicates(subset="circ_id")
+                .drop(columns="_orig_order")
                 .reset_index(drop=True))
     else:
-        df = df.drop_duplicates(subset="circ_id").reset_index(drop=True)
+        df = (df.drop_duplicates(subset="circ_id")
+                .drop(columns="_orig_order")
+                .reset_index(drop=True))
 
     print(f"[circBase] {len(df)} unique circRNAs to annotate "
           f"(from {len(summary_files)} sample(s))", file=sys.stderr)
