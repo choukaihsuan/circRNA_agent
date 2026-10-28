@@ -939,10 +939,83 @@ def _load_existing_project_config_or_404(project_id: str) -> dict:
     return cfg
 
 
+def _pipeline_python() -> str:
+    """Single source for "which python interpreter runs pipeline code" --
+    agent.py's launch, _snake_bin() (below), and every _run_pipeline_call()
+    subprocess all read this instead of each hardcoding their own path.
+
+    Currently just `sys.executable`: web_ui.py itself still runs from the
+    ciriquant env (unchanged by this refactor -- see scripts/pipeline_call.py's
+    docstring and the commit that introduced it), so "the interpreter running
+    this process" and "the interpreter that has pandas/pysradb/snakemake" are
+    still the same thing. The only reason this is its own function and not
+    inlined at each call site: when the web process later moves to a
+    separate, pandas-free env, this is the one place that changes -- every
+    caller listed above keeps working unmodified.
+    """
+    return _sys.executable
+
+
 def _snake_bin() -> str:
-    """Return absolute path to snakemake in the current conda env."""
-    import sys as _sys
-    return str(Path(_sys.executable).parent / "snakemake")
+    """Return absolute path to snakemake in the pipeline conda env."""
+    return str(Path(_pipeline_python()).parent / "snakemake")
+
+
+_PIPELINE_CALL_SENTINEL = "===CIRCDEX_RESULT==="
+
+
+class PipelineCallError(RuntimeError):
+    """Raised by _run_pipeline_call() on a non-zero exit, or a response that
+    didn't follow the sentinel contract. Always carries a human-readable
+    message (including a tail of the subprocess's stderr) -- callers should
+    surface str(exc) to the user, not a generic "failed", so a route failing
+    never again looks like the GSE999999 incident (a downstream failure with
+    no visible reason)."""
+
+
+class PipelineCallTimeout(PipelineCallError):
+    """Raised by _run_pipeline_call() specifically when the subprocess didn't
+    finish in time. Deliberately a DIFFERENT exception from PipelineCallError
+    (not just the same message with a different string), because a timeout
+    and a genuine negative result mean opposite things to the user:
+    preflight-accession timing out on a slow NCBI response looks, from the
+    caller's position, exactly like "the accession doesn't exist" unless
+    this is distinguished -- someone whose real accession is correct would
+    otherwise read a timeout as "I typed it wrong" and go second-guess a
+    correct id. Callers MUST catch this before the broader PipelineCallError
+    and show a distinct, retry-worded message."""
+
+
+def _run_pipeline_call(args: list, timeout: float) -> dict:
+    """Run scripts/pipeline_call.py as a subprocess under the pipeline
+    interpreter and return its parsed JSON result.
+
+    Always argv-list + shell=False -- every argument here can originate
+    from user input (accession, file paths), so string concatenation into
+    a shell command is never acceptable. Raises PipelineCallTimeout on a
+    timeout, PipelineCallError on any other failure (non-zero exit or
+    malformed output) -- see PipelineCallTimeout's docstring for why these
+    are kept separate rather than both being PipelineCallError with
+    different text."""
+    cmd = [_pipeline_python(), str(Path(__file__).resolve().parent / "pipeline_call.py"), *args]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise PipelineCallTimeout(f"pipeline_call.py {args[0]!r} timed out after {timeout:.0f}s")
+
+    lines = proc.stdout.splitlines()
+    if _PIPELINE_CALL_SENTINEL in lines:
+        idx = lines.index(_PIPELINE_CALL_SENTINEL)
+        if idx + 1 < len(lines):
+            try:
+                return json.loads(lines[idx + 1])
+            except json.JSONDecodeError:
+                pass  # fall through to the generic failure below
+
+    stderr_tail = proc.stderr.strip()[-2000:]
+    raise PipelineCallError(
+        f"pipeline_call.py {args[0]!r} failed (exit {proc.returncode}): "
+        f"{stderr_tail or '(no stderr output)'}")
 
 
 def _snake_env() -> dict:
@@ -1470,8 +1543,16 @@ def run_gse():
     # latency for no safety benefit, since _meta_path already proves this id
     # is real (its own data was downloaded before).
     if not _meta_path.exists():
-        from download_geo import preflight_accession
-        pre = preflight_accession(gse_id)
+        try:
+            pre = _run_pipeline_call(["preflight-accession", gse_id], timeout=30)
+        except PipelineCallTimeout:
+            abort(400, description=(
+                f"NCBI query timed out (30s) for {gse_id!r} -- please retry. "
+                f"This does not mean the accession is wrong -- no job was created"))
+        except PipelineCallError as exc:
+            abort(400, description=(
+                f"preflight check failed for {gse_id!r}: {exc} -- "
+                f"no job was created"))
         if not pre["exists"]:
             abort(400, description=(
                 f"preflight check failed for {gse_id!r}: "
@@ -1488,14 +1569,15 @@ def run_gse():
 
     if _meta_path.exists():
         try:
-            import pandas as _pd
-            from prepare_metadata import detect_group_labels as _detect
-            _meta_df = _pd.read_csv(str(_meta_path))
-            _case, _ctrl = _detect(_meta_df)
-            cfg.setdefault("de", {})["tumor_label"]  = _case
-            cfg.setdefault("de", {})["normal_label"]  = _ctrl
-        except Exception:
-            pass
+            _labels = _run_pipeline_call(["detect-group-labels", str(_meta_path)], timeout=10)
+            cfg.setdefault("de", {})["tumor_label"]  = _labels["case"]
+            cfg.setdefault("de", {})["normal_label"]  = _labels["control"]
+        except PipelineCallError as exc:
+            # Best-effort convenience prefill, not a hard requirement for
+            # this route -- log and fall through to whatever default
+            # tumor_label/normal_label the config already has, same as the
+            # pre-refactor bare `except Exception: pass` did, but visibly.
+            print(f"  [run_gse] label auto-detect failed for {gse_id}: {exc}", flush=True)
 
     # Auto-fetch title. Previously MISSING entirely on this route --
     # /run_manual was the only path that ever called this, so any dataset
@@ -1535,7 +1617,7 @@ def run_gse():
         assert cfg.get("source_type") == "accession", (
             f"refusing to build an agent.py --gse download command for "
             f"{gse_id!r}: source_type={cfg.get('source_type')!r}, not 'accession'")
-        cmd = [_sys.executable, "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)]
+        cmd = [_pipeline_python(), "scripts/agent.py", "--gse", gse_id, "--cores", str(cores)]
 
     queue_add(job_id, gse_id, cmd, str(log_path), cores, user_email)
     _notify_queued(user_email, gse_id, job_id)
@@ -2143,12 +2225,20 @@ def api_preflight():
     user what to expect before they click submit, not the only enforcement
     point (the server-side one in /run_gse is -- never trust the client to
     have called this first)."""
-    from download_geo import preflight_accession
     gse_id = request.args.get("accession", "").strip().upper()
     if not gse_id:
         return jsonify({"error": "missing accession"}), 400
     gse_id = _validate_accession(gse_id)
-    result = preflight_accession(gse_id)
+    try:
+        result = _run_pipeline_call(["preflight-accession", gse_id], timeout=30)
+    except PipelineCallTimeout:
+        return jsonify({
+            "error": "NCBI query timed out (30s) -- please retry. "
+                     "This does not mean the accession is wrong.",
+            "accession": gse_id,
+        }), 504
+    except PipelineCallError as exc:
+        return jsonify({"error": str(exc), "accession": gse_id}), 502
     result["accession"] = gse_id
     result["total_bytes_human"] = (
         _human_bytes(result["total_bytes"]) if result["total_bytes"] else None)
@@ -2186,13 +2276,10 @@ def api_detect_labels():
                         "geo_title": geo_title, "note": "metadata not found yet"})
 
     try:
-        import pandas as _pd
-        from prepare_metadata import detect_group_labels as _detect
-        df = _pd.read_csv(str(meta_path))
-        case_label, ctrl_label = _detect(df)
-        return jsonify({"detected": True, "case": case_label, "control": ctrl_label,
-                        "rows": len(df), "geo_title": geo_title})
-    except Exception as exc:
+        labels = _run_pipeline_call(["detect-group-labels", str(meta_path)], timeout=10)
+        return jsonify({"detected": True, "case": labels["case"], "control": labels["control"],
+                        "rows": labels["rows"], "geo_title": geo_title})
+    except PipelineCallError as exc:
         return jsonify({"detected": False, "case": "tumor", "control": "normal",
                         "geo_title": geo_title, "error": str(exc)})
 
@@ -2541,16 +2628,28 @@ def cross_dataset():
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=5000)
-    args = parser.parse_args()
+# ── Startup actions, deliberately NOT run at module level ────────────────────
+# `import web_ui` (by a test, a tool script, or a WSGI server loading
+# web_ui:app) must be a no-op with zero side effects. Neither function below
+# is called anywhere except inside `if __name__ == "__main__":` and inside
+# gunicorn_conf.py's own hooks (on_starting / post_worker_init) -- never at
+# module import time. The reason this matters: start_background_workers()
+# launches the Queue Worker thread, which polls the SQLite job queue and, on
+# finding a pending job, actually runs Snakemake for it. If that happened as
+# an unconditional import side effect, every test run, every ad-hoc script
+# that does `from web_ui import X`, and any future preflight-style import
+# check would risk silently picking up and executing a real pipeline job --
+# this is exactly the kind of unintended-pipeline-run the project's standing
+# rules exist to prevent. Both functions must stay explicit opt-in calls.
 
-    # Import-chain preflight: refuse to start the service rather than start
-    # it with a pipeline step that will fail the first time a user reaches
-    # it. See scripts/preflight_imports.py for what this does and does not
-    # check, and the run_params.py incident it exists because of.
+_background_workers_started = False
+
+
+def run_preflight() -> None:
+    """Import-chain preflight: refuse to start the service rather than start
+    it with a pipeline step that will fail the first time a user reaches
+    it. See scripts/preflight_imports.py for what this does and does not
+    check, and the run_params.py incident it exists because of."""
     _preflight = subprocess.run(
         [_sys.executable, str(Path(__file__).resolve().parent / "preflight_imports.py")],
         capture_output=True, text=True,
@@ -2564,11 +2663,36 @@ if __name__ == "__main__":
         raise SystemExit(1)
     print(_preflight.stdout.strip(), flush=True)
 
-    # Initialise queue DB and start background worker
+
+def start_background_workers() -> None:
+    """Initialise the queue DB and start the Queue Worker thread.
+
+    Idempotent: under gunicorn with multiple worker PROCESSES this would
+    still be called once per process (via post_worker_init), which is
+    correct -- the danger this guards against is a second call *within
+    the same process* (e.g. a reload, or a caller invoking this function
+    more than once), which would start a second Queue Worker thread
+    competing with the first over the same SQLite queue and risking a job
+    being picked up and run twice. A second call is a no-op.
+    """
+    global _background_workers_started
+    if _background_workers_started:
+        return
+    _background_workers_started = True
     init_queue_db()
     _worker = threading.Thread(target=_queue_worker, daemon=True)
     _worker.start()
     print("  [Queue Worker] started (FIFO, SQLite)", flush=True)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=5000)
+    args = parser.parse_args()
+
+    run_preflight()
+    start_background_workers()
 
     print(f"  CircDEX  →  http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, debug=False)
