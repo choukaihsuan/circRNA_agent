@@ -193,7 +193,16 @@ def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
                     "cb":   info.get("cb", "novel"),
                     "m":    ", ".join(info.get("methods", [])),
                 })
-            rows.sort(key=lambda r: r["pval"])
+            # Secondary key (circ_id, lexicographic) makes the order fully
+            # deterministic even when two circRNAs in the same Venn region
+            # have an identical p-value -- without it, ties are broken by
+            # whatever order `for cid in cid_set` happened to iterate a
+            # Python set in (set iteration order is not guaranteed stable
+            # across runs/processes), so the same inputs could silently
+            # render the same region's list in a different order each time
+            # report generation ran. Found by diffing a report rebuilt from
+            # identical inputs against itself (docs/platform_security_notes.md).
+            rows.sort(key=lambda r: (r["pval"], r["id"]))
             venn_region_data[region] = {
                 "label_zh": f"{region_labels_zh[region]} ({counts[region]} 個)",
                 "label_en": f"{region_labels_en[region]} ({counts[region]})",
