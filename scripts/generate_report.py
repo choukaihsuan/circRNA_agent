@@ -961,9 +961,38 @@ def _sample_overview_section(
         f'{_title_text}</p>'
     ) if _title_text else ""
 
+    # Legacy-generation banner: file-feature detection (shared with the
+    # /cross_dataset dataset list in web_ui.py via utils.py), not a
+    # hardcoded accession list -- see utils.is_legacy_biomarker_generation()
+    # for why. sys.path handling follows the same pattern already used
+    # later in this file (the Snakemake entry point's run_params import),
+    # since this script's cwd at exec time is the repo root, not scripts/.
+    _legacy_banner_html = ""
+    if results_dir:
+        try:
+            import sys as _sys_lb
+            _scripts_dir = os.path.join(os.getcwd(), "scripts")
+            if _scripts_dir not in _sys_lb.path:
+                _sys_lb.path.insert(0, _scripts_dir)
+            from utils import is_legacy_biomarker_generation
+            if is_legacy_biomarker_generation(results_dir):
+                _legacy_en = ("This report was built by the 2026-08 generation of the "
+                              "generator and is not directly comparable to reports rebuilt "
+                              "after the 2026-10-04 biomarker-ranking migration.")
+                _legacy_zh = ("此報告由 2026-08 世代的產生器產生，與 2026-10-04 biomarker 排序遷移後"
+                              "重建的報告不可直接比較。")
+                _legacy_banner_html = (
+                    '<div style="background:#fef3c7;border:1px solid #fde68a;'
+                    'border-radius:6px;padding:8px 14px;margin:0 0 12px;font-size:13px;color:#92400e">'
+                    f'<span data-en="&#9888; {_html_mod.escape(_legacy_en)}">'
+                    f'&#9888; {_html_mod.escape(_legacy_zh)}</span></div>'
+                )
+        except Exception:
+            pass
+
     return f"""
 <h2>Samples</h2>
-{title_html}<div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px">
+{_legacy_banner_html}{title_html}<div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px">
   <div class="stat-box"><div class="num" style="color:#2c6fad">{n_case}</div><div class="lbl">{tumor_label.title()}</div></div>
   <div class="stat-box"><div class="num" style="color:#16a34a">{n_ctrl}</div><div class="lbl">{normal_label.title()}</div></div>
   {other_box}

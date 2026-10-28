@@ -131,6 +131,61 @@ def run_snakemake(
     return result.returncode
 
 
+# ── Report generation-era detection ──────────────────────────────────────────
+
+# The columns rank_biomarkers.py's v2 output format added; generate_report.py
+# (as of commit dd1da2b, 2026-10-04) requires every one of these to be present
+# in biomarker_candidates_v2_<method>.tsv before it will build a report. A
+# dataset's own report.html predates that requirement whenever its de/
+# directory never got these files -- there is no other way to tell from the
+# platform side, since report.html itself carries no version marker.
+_V2_BIOMARKER_REQUIRED_COLS = {
+    "rank", "rank_default", "pass_default",
+    "three_method_sig", "effect_stable", "biomarker_score",
+}
+_V2_BIOMARKER_METHODS = ("edgeR", "DESeq2", "limma")
+
+
+def _v2_biomarker_header_ok(tsv_path: Path) -> bool:
+    """True if tsv_path exists and its header line has every v2 column.
+    Reads only the first line -- these files can run into the thousands of
+    rows, and the header is all this check needs."""
+    if not tsv_path.exists():
+        return False
+    try:
+        with open(tsv_path, encoding="utf-8") as fh:
+            header = set(fh.readline().rstrip("\n").split("\t"))
+    except OSError:
+        return False
+    return _V2_BIOMARKER_REQUIRED_COLS.issubset(header)
+
+
+def is_legacy_biomarker_generation(results_dir: str) -> bool:
+    """True if this dataset's de/ directory predates the rank_biomarkers.py
+    v2 / generate_report.py dd1da2b migration (2026-10-04) -- i.e. the
+    current generate_report.py would raise SystemExit if asked to rebuild
+    this dataset's report.html right now, because at least one of the three
+    per-method biomarker_candidates_v2_<method>.tsv files (or its
+    .status.json sidecar) is missing, or lacks the v2 columns.
+
+    Deliberately file-feature-based, not a hardcoded accession list: the
+    2026-10-04 migration itself (~/run_rank_v2.sh, server-only, not in this
+    repo) WAS a hardcoded list of exactly 15 accessions, transcribed by hand
+    from CLAUDE.md's already-documented 15-dataset cross-reproducibility
+    inclusion criteria (資料集特性稽核校正) rather than read from any single
+    canonical list file -- see docs/platform_security_notes.md. A function
+    keyed on accession names would need to be remembered and updated by hand
+    on every future migration; checking the files this function actually
+    needs does not."""
+    R = Path(results_dir)
+    for m in _V2_BIOMARKER_METHODS:
+        tsv = R / f"de/biomarker_candidates_v2_{m}.tsv"
+        status_json = R / f"de/biomarker_candidates_v2_{m}.status.json"
+        if not _v2_biomarker_header_ok(tsv) or not status_json.exists():
+            return True
+    return False
+
+
 # ── Directory scaffolding ────────────────────────────────────────────────────
 
 def ensure_dirs() -> None:

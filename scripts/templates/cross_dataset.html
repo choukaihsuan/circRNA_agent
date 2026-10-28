@@ -69,6 +69,9 @@
     .ds-table tr:hover td { background:#f8fafc; }
     .organ-chip { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px;
                   border-radius:20px; background:#f0fdf4; color:#15803d; }
+    .legacy-gen-badge { display:inline-block; font-size:10px; font-weight:700; padding:1px 6px;
+                  margin-left:6px; border-radius:10px; background:#fef3c7; color:#92400e;
+                  border:1px solid #fde68a; cursor:help; }
     .n-sig { font-weight:700; color:var(--primary); }
     .arr-up   { color:var(--up);   font-weight:700; }
     .arr-dn   { color:var(--dn);   font-weight:700; }
@@ -207,7 +210,15 @@
         {% set res = datasets[gse_id] %}
         {% set meta = dataset_meta.get(gse_id, {}) %}
         <tr>
-          <td><strong>{{ gse_id }}</strong></td>
+          <td>
+            <strong>{{ gse_id }}</strong>
+            {% if res.is_legacy_generation %}
+            <span class="legacy-gen-badge"
+                  title="此報告由 2026-08 世代的產生器產生，與其餘報告不可直接比較"
+                  data-title-en="This report was built by the 2026-08 generation of the generator; not directly comparable to the others"
+                  data-en="⚠ legacy">⚠ 舊世代</span>
+            {% endif %}
+          </td>
           <td>
             <span data-en="{{ meta.get('cancer', gse_id) }}">{{ meta.get('cancer_zh', meta.get('cancer', gse_id)) }}</span>
           </td>
@@ -815,6 +826,10 @@ function applyLang() {
   document.querySelectorAll('[data-en]').forEach(el => {
     if (!el.dataset.zh) el.dataset.zh = el.textContent.trim();
     el.textContent = _LANG === 'en' ? el.dataset.en : el.dataset.zh;
+  });
+  document.querySelectorAll('[data-title-en]').forEach(el => {
+    if (!el.dataset.titleZh) el.dataset.titleZh = el.title;
+    el.title = _LANG === 'en' ? el.dataset.titleEn : el.dataset.titleZh;
   });
   if (UPSET_DATA && window.Plotly) { try { drawUpset(); } catch(e) { console.error('drawUpset error:', e); } }
 }

@@ -37,7 +37,7 @@ import io
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent))
 
-from utils import disk_gb_resource
+from utils import disk_gb_resource, is_legacy_biomarker_generation
 
 from flask import (Flask, abort, jsonify, redirect, render_template,
                    request, session, url_for)
@@ -2377,6 +2377,7 @@ def _load_cross_dataset_data() -> dict:
                 "study_title": cfg.get("study_title", ""),
                 "tumor_label": de_cfg.get("tumor_label", "tumor"),
                 "normal_label": de_cfg.get("normal_label", "normal"),
+                "is_legacy_generation": is_legacy_biomarker_generation(results_dir),
             }
         except Exception as exc:
             print(f"[cross_dataset] Error loading {gse_id}: {exc}", file=_sys.stderr)
