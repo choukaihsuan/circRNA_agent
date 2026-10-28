@@ -60,6 +60,19 @@ audit/extra_claims.txt
 audit/audit_report.md
 audit/summary.md
 audit/unverifiable.md
+# per-claim/manuscript audits and pre-submission analysis notes (same category
+# as the three lines above) -- added as found, see judgment criteria recorded
+# in the "analysis/" .gitignore comment below and in project memory
+audit/round3_audit.md
+audit/round4_audit.md
+audit/thesis_xref_audit.md
+audit/b1_b7_audit.md
+audit/stage0_report.md
+audit/benchmark_multi_single_cellline_generalization.md
+audit/fsj_three_case.md
+audit/docker_table3_comparison.md
+audit/server_env_table3_comparison.md
+audit/report_generation_inventory.md
 # generated figures/tables are not tracked, only the scripts that produce them
 audit/thesis_numbers/figs/
 # per-claim paper audit and the tools that produce it
