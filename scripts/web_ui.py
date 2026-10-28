@@ -79,6 +79,17 @@ app.secret_key = _get_secret_key()
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["SESSION_COOKIE_HTTPONLY"] = True   # JS cannot read session cookie
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"   # Allow cross-site GET (email magic link clicks)
+app.config["SESSION_COOKIE_SECURE"] = True      # Cookie only sent over HTTPS -- the real
+    # deployment is always behind nginx+TLS (circdex.cgm.ntu.edu.tw); ProxyFix (x_proto=1,
+    # configured below) makes Flask see the client-facing https:// scheme correctly through
+    # that proxy. KNOWN SIDE EFFECT, verified 2026-10-19: breaks session persistence for
+    # anyone accessing the app directly over plain HTTP (e.g. http://172.16.0.178:5000,
+    # which CLAUDE.md documents as a normal access path) -- the browser will not store or
+    # send a Secure-flagged cookie over an insecure connection, so login still "succeeds"
+    # (redirects normally) but the session never sticks, bouncing back to /login on the next
+    # request. This was requested with that trade-off explicitly flagged for review, not
+    # silently decided here -- if the direct-IP:5000 path still needs to work, this needs
+    # a different approach (e.g. serve it over HTTPS too, or accept cookie-less direct access).
 app.config["WTF_CSRF_TIME_LIMIT"] = 86400       # 24h; long sessions shouldn't expire mid-work
 # Trust X-Forwarded-Proto from reverse proxies (ngrok / Cloudflare Tunnel)
 # so request.url_root uses https:// and cookies are scheme-correct
