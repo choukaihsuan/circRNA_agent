@@ -77,3 +77,9 @@ benchmark/component_stage1.tsv
 audit/appendix_A1_parameters.tsv
 audit/appendix_A2_per_dataset.tsv
 audit/table7_dataset_basics.tsv
+# analysis/: narrative write-ups cite unpublished thesis-§3.3 numbers and
+# discuss submission-track conclusions -- pre-submission material, not
+# tracked. The scripts that produce them (zero-computation, read-only
+# reproducibility code) ARE tracked -- this is scoped to this directory's
+# .md files only, not analysis/ as a whole, so scripts are never hidden.
+analysis/*.md
