@@ -27,8 +27,16 @@ import argparse
 import json
 import sys
 import traceback
+from pathlib import Path
 
 SENTINEL = "===CIRCDEX_RESULT==="
+
+# Same derivation as web_ui.py's BASE_DIR (Path(__file__).parent.parent),
+# computed independently here rather than imported from web_ui.py -- this
+# script must stay importable/runnable without Flask on the path (see the
+# module docstring and scripts/preflight_imports.py's own note on keeping
+# this standalone), so it can't just `from web_ui import BASE_DIR`.
+ALLOWED_ROOT = (Path(__file__).resolve().parent.parent / "metadata").resolve()
 
 
 def _emit(result) -> None:
@@ -42,9 +50,36 @@ def cmd_preflight_accession(accession: str) -> None:
 
 
 def cmd_detect_group_labels(csv_path: str) -> None:
+    # Containment check BEFORE anything touches the filesystem with this
+    # path. This belongs here, in the subprocess, not only in web_ui.py:
+    # the parent-side check is a UX nicety (fail fast, nice error), this one
+    # is the actual security boundary -- this script can in principle be
+    # invoked by something other than web_ui.py later, and a boundary that
+    # only exists in one specific caller isn't a boundary.
+    #
+    # Path.relative_to(), not str(p).startswith(str(root)) -- the prefix
+    # form is the exact confinement bug fixed in 6ac3278
+    # (_is_within_root()): it also accepts a sibling directory whose name
+    # merely starts with the same characters as the allowed root (e.g.
+    # root=.../metadata wrongly matching .../metadata_evil/...).
+    #
+    # resolve() first so a traversal sequence (../../etc/passwd) or a
+    # symlink pointing outside ALLOWED_ROOT is caught by relative_to()
+    # rather than by string shape. The rejection message says nothing about
+    # whether the path exists, is a file vs directory, or why resolution
+    # failed -- only that it's outside the allowed directory -- so this
+    # can't be used to probe the filesystem via the stderr tail the caller
+    # surfaces to the user.
+    resolved = Path(csv_path).resolve()
+    try:
+        resolved.relative_to(ALLOWED_ROOT)
+    except ValueError:
+        raise PermissionError(
+            "csv_path is outside the allowed metadata directory; rejected")
+
     import pandas as pd
     from prepare_metadata import detect_group_labels
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(resolved)
     case_label, ctrl_label = detect_group_labels(df)
     _emit({"case": case_label, "control": ctrl_label, "rows": len(df)})
 
