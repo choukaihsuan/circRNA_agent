@@ -1,0 +1,58 @@
+# Single source of truth for which accessions are included in the
+# thesis/paper's 15-dataset cross-dataset reproducibility analysis.
+#
+# Before this file existed, the same 15-accession set was independently
+# hand-typed in at least three places that could silently drift apart:
+# CLAUDE.md's "資料集特性稽核校正" table (✅ 納入15組 column),
+# audit/thesis_dataset_table_19ds.tsv's in_cross_dataset_analysis column,
+# and a server-only, untracked migration script (~/run_rank_v2.sh) that
+# hand-transcribed the same list for an unrelated purpose (populating v2
+# biomarker files). This file exists so a *script* can check the other
+# representations against it (see audit/check_claudemd_consistency.py),
+# instead of relying on someone remembering to update every copy by hand.
+#
+# Do NOT make scripts/migrations/2026-10-04_rank_v2.sh read this file --
+# that script is a historical record of what actually ran on 2026-10-04,
+# and must stay exactly as it ran. This file is for future consistency
+# checks and future code, not for rewriting history.
+#
+# The 4 accessions NOT listed here (GSE58135, GSE229705, GSE192410,
+# GSE192849) are excluded from the cross-dataset analysis for reasons
+# recorded in audit/thesis_dataset_table_19ds.tsv's exclusion_reason
+# column (effective single-tool consensus ratio >= 97.8%, or -- for
+# GSE229705 -- the same plus other disqualifying factors). GSE323364 (a
+# cell-line EZH2-inhibitor dataset) is excluded for a different reason: it
+# was never part of the tumor/normal cross-dataset reproducibility design
+# to begin with, so it has no row in that 19/15 framework at all.
+
+datasets:
+  - accession: GSE113230
+    reason: "TNBC tumor vs. normal, 6 samples -- primary demonstration dataset"
+  - accession: GSE133998
+    reason: "Breast cancer tumor vs. normal, 12 samples, paired design"
+  - accession: SRP156355
+    reason: "Early-stage IDC breast cancer, 6 paired tumor/normal"
+  - accession: GSE77509
+    reason: "Hepatocellular carcinoma, 6 paired tumor/normal (Yang et al. 2017)"
+  - accession: GSE130078
+    reason: "Esophageal squamous cell carcinoma, 6 paired tumor/normal"
+  - accession: GSE248612
+    reason: "Gastric cancer, 6 paired tumor/normal"
+  - accession: GSE221107
+    reason: "Prostate cancer, 4 paired tumor/normal (kept despite 0.2% single-tool ratio; see audit/thesis_dataset_table_19ds.tsv)"
+  - accession: PRJNA553289
+    reason: "Small cell lung cancer, 6 paired tumor/normal (Nanjing Chest Hospital)"
+  - accession: GSE148036
+    reason: "Lung adenocarcinoma, 5 vs. 5, unpaired design"
+  - accession: GSE121842
+    reason: "Colorectal cancer, 3 paired tumor/normal"
+  - accession: GSE136569
+    reason: "Pancreatic ductal adenocarcinoma, 5 paired tumor/normal, RNase R"
+  - accession: GSE143797
+    reason: "Nasopharyngeal carcinoma, 4 vs. 4, unpaired design"
+  - accession: GSE108735
+    reason: "Renal cell carcinoma, 7 paired tumor/normal, ncRNA-Seq"
+  - accession: GSE171011
+    reason: "Papillary thyroid cancer, 4 paired tumor/normal"
+  - accession: GSE97239
+    reason: "Bladder cancer, 3 paired tumor/normal"

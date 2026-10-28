@@ -34,8 +34,11 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 CORRECTION_TABLE_HEADER = "## 資料集特性稽核校正"
 COMPARISON_TABLE_HEADER = "### 已分析/已調查資料集"
+PUBLISHED_DATASETS_YAML = Path(__file__).parent.parent / "config" / "published_datasets.yaml"
 
 # Correction table row: | GSE_ID | NNN-NNN | ... | ... | ... | ... |
 CORRECTION_ROW_RE = re.compile(
@@ -117,6 +120,42 @@ def parse_comparison_table(lines: list[str]) -> dict[str, tuple[int, int]]:
     return out
 
 
+def parse_correction_table_15group(lines: list[str]) -> dict[str, bool]:
+    """Return {accession: included} from the correction table's last column
+    ("15組跨資料集分析"), which reads "✅ 納入15組" (optionally with a
+    parenthetical note, e.g. GSE221107's "（視為雙工具）") or "❌ 排除".
+    Reuses the same CORRECTION_ROW_RE anchor as parse_correction_table() to
+    find each row, then inspects the full row text for the ✅/❌ marker
+    rather than assuming a fixed column count -- the correction table's
+    cell count has changed before and will again."""
+    out = {}
+    in_table = False
+    for line in lines:
+        if CORRECTION_TABLE_HEADER in line:
+            in_table = True
+            continue
+        if in_table and line.startswith("## ") and CORRECTION_TABLE_HEADER not in line:
+            break
+        if not in_table:
+            continue
+        m = CORRECTION_ROW_RE.match(line)
+        if not m:
+            continue
+        acc = m.group(1)
+        if "✅" in line:
+            out[acc] = True
+        elif "❌" in line:
+            out[acc] = False
+        # a row with neither marker is left out of `out` entirely -- treated
+        # as "unknown", not silently coerced to excluded, by the caller.
+    return out
+
+
+def load_published_datasets_yaml(path: Path) -> set[str]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {d["accession"] for d in data.get("datasets", [])}
+
+
 def main() -> int:
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent.parent / "CLAUDE.md"
     if not path.exists():
@@ -152,6 +191,41 @@ def main() -> int:
         return 1
 
     print("OK: every dataset present in both tables agrees on read length.")
+
+    # ── 15-dataset cross-reproducibility membership ─────────────────────────
+    # Same fact, now checked against a third representation
+    # (config/published_datasets.yaml) instead of just the two tables above.
+    membership = parse_correction_table_15group(lines)
+    included_in_claudemd = {acc for acc, inc in membership.items() if inc}
+    if not membership:
+        print("STOP: parsed 0 rows with a ✅/❌ 15-group marker from the "
+              "correction table -- its format has likely changed")
+        return 1
+    if not PUBLISHED_DATASETS_YAML.exists():
+        print(f"STOP: {PUBLISHED_DATASETS_YAML} not found")
+        return 1
+    yaml_set = load_published_datasets_yaml(PUBLISHED_DATASETS_YAML)
+    if not yaml_set:
+        print(f"STOP: parsed 0 accessions from {PUBLISHED_DATASETS_YAML}")
+        return 1
+
+    print()
+    print(f"CLAUDE.md ✅ 納入15組: {len(included_in_claudemd)} accessions")
+    print(f"{PUBLISHED_DATASETS_YAML.name}: {len(yaml_set)} accessions")
+
+    only_in_claudemd = included_in_claudemd - yaml_set
+    only_in_yaml = yaml_set - included_in_claudemd
+    if only_in_claudemd or only_in_yaml:
+        print("MISMATCH: CLAUDE.md's 15-group column and "
+              f"{PUBLISHED_DATASETS_YAML.name} disagree:")
+        if only_in_claudemd:
+            print(f"  in CLAUDE.md only: {sorted(only_in_claudemd)}")
+        if only_in_yaml:
+            print(f"  in {PUBLISHED_DATASETS_YAML.name} only: {sorted(only_in_yaml)}")
+        return 1
+
+    print("OK: CLAUDE.md's 15-group membership matches "
+          f"{PUBLISHED_DATASETS_YAML.name} exactly.")
     return 0
 
 
