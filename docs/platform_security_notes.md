@@ -331,3 +331,60 @@ are actually the fact being corrected (versus a different, legitimately
 different dataset/value that happens to share the same string), is what
 catches every occurrence in one pass instead of leaving siblings to be found
 one at a time, incident by incident.
+
+## Determinism bugs: grep-based auditing missed three real instances; only rebuild-and-diff caught them
+
+While fixing `generate_report.py`'s Venn-region display-order non-determinism
+(commit `a04be08`), the follow-up audit for *other* instances of the same
+class of bug was done by grepping for `sort`/`sorted`/`sort_values`/
+`nlargest`/`nsmallest` call sites across the codebase (84 hits, each
+triaged by hand). That audit is what found and fixed the top-N truncation
+risks in `predict_interactions.py` and the six duplicated heatmap-pool
+selections in `generate_report.py` (commits `947adff`, `3c9d3f9`).
+
+It missed three real instances outright, because none of the three contains
+a sort call at all — each is a bare `for x in <set>` with no sort anywhere
+near it:
+
+1. `web_ui.py`'s `/cross_dataset` recurrent-circRNA counter (`for cid in
+   res["sig_ids"]`) — found by hand, from the original bug report.
+2. `web_ui.py`'s UpSet-plot dataset-membership lookup (`for _cid in
+   dataset_results.get(...)["sig_ids"]`) — found only by rebuilding the
+   full `/cross_dataset` response under 5 different `PYTHONHASHSEED`
+   values and diffing it; the byte-level diff landed inside
+   `UPSET_DATA.intersections`, an array the grep-based audit had no reason
+   to even look at.
+3. `generate_report.py`'s Venn-region row builder (`for cid in cid_set`,
+   `cid_set` being a value from `regions_sets`, itself built from `A - B -
+   C`-style set algebra) — found the same way: rebuilding a real report
+   (GSE113230) under 5 seeds, diffing, and tracing the one region whose
+   output still differed (region "C") down to this line.
+
+That third one led to a second, independent finding: region "C"'s
+instability did not go away when a `(pval, id)` secondary sort key was
+added (the fix that fully stabilized the other six regions). Tracing why
+led to a real correctness bug, not a determinism one — `_venn_3_svg()`'s
+circ_info aggregation (`if pv < circ_info[cid]["pval"]: update`) silently
+discards a real p-value whenever the first DE method visited for a given
+circ_id reported `NaN` (meaning "not tested by this method," not "p=NaN"):
+any comparison against NaN is `False` under IEEE 754, so a later, real,
+better value can never win once a NaN is already stored. Confirmed on real
+data: GSE113230's `chr20:30904021|30904677` (KIF3B) has no row in
+edgeR_ciriquant's file, `pval=NaN` in deseq2's (visited first), and a real
+`pval=0.0446` in limma's — the Venn detail list showed `NaN` for this
+circRNA despite a real value existing. This stuck NaN is also *why* the
+(pval, id) key couldn't fully order region "C": NaN comparisons are never
+True in either direction, so rows sharing that NaN fall back to whatever
+order they arrived in — which traces back to the same unsorted `cid_set`
+iteration. Both fixed together in `da00360` (`_is_better_pval()` plus
+`sorted(cid_set)`); real-data check (same 5-PYTHONHASHSEED-values method)
+confirmed the full `/cross_dataset`-equivalent report rebuild is now
+byte-identical across all 5 runs for GSE113230, where it differed on every
+run before the fix.
+
+**Lesson applied going forward**: determinism cannot be verified by
+grepping for sort calls — only by actually rebuilding the same output twice
+(under different hash seeds, to force any hidden set/dict iteration
+dependence to surface) and diffing it. `tests/test_report_determinism.py`
+(commit `9e4decb`) turns that technique into a script instead of a manual
+step redone by hand for the next fix that needs checking.
