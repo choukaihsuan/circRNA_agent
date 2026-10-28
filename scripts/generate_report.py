@@ -39,6 +39,45 @@ def _disp_coord(cid: str) -> str:
     return f"{m.group(1)}:{int(m.group(2)) - 1}|{m.group(3)}"
 
 
+def _select_top_n(df, score_col: str, n: int, id_col: str = "circ_id"):
+    """Deterministic "top n rows by score_col" selection -- see
+    utils.select_top_n()'s docstring for the full rationale (same tie-break
+    logic this file's rank_biomarkers.py/predict_interactions.py siblings
+    now use). Before this helper existed, a bare
+    `.sort_values(score_col).head(n)`, with no secondary key, was written
+    independently at four separate call sites in this file alone (the main
+    report's heatmap pool selection) plus two more in the
+    CIRCDEX_THESIS_FIGS export path -- one function used everywhere in this
+    file, not six copies of the same unguarded pattern that a seventh call
+    site would inevitably clone from.
+
+    Imported lazily, not at module load time: this script runs under
+    Snakemake's `script:` wrapper, whose exec context does not put scripts/
+    on sys.path by itself (the same reason the Snakemake entry point below
+    inserts os.path.join(os.getcwd(), "scripts") before importing
+    run_params, and _sample_overview_section does the same before importing
+    is_legacy_biomarker_generation)."""
+    import sys as _sys_u
+    _scripts_dir = os.path.join(os.getcwd(), "scripts")
+    if _scripts_dir not in _sys_u.path:
+        _sys_u.path.insert(0, _scripts_dir)
+    from utils import select_top_n as _st
+    return _st(df, score_col, n, id_col=id_col)
+
+
+def _select_top_n_index(series, n: int) -> list:
+    """Same deterministic tie-break as _select_top_n(), for the
+    `groupby(id_col)[score_col].min().sort_values().head(n)` shape used to
+    pick genes for the isoform-switching bar chart (both the main report's
+    and the CIRCDEX_THESIS_FIGS fig4e export's) -- series is indexed by the
+    id (gene_name), not a DataFrame row. Converts to a 2-column frame,
+    reuses _select_top_n, returns the index values in order."""
+    idx_name = series.index.name or "id"
+    df = series.rename("score").reset_index()
+    df.columns = [idx_name, "score"]
+    return _select_top_n(df, "score", n, id_col=idx_name)[idx_name].tolist()
+
+
 def _embed_pdf(pdf_path: str, height: int = 480) -> str:
     b64 = _pdf_to_b64(pdf_path)
     return (
@@ -370,8 +409,8 @@ def _build_method_js_data(
         try:
             if {"circ_id", "log2FC", p_col}.issubset(de.columns):
                 _sig_hm = de[(de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)] if {p_col, "log2FC"}.issubset(de.columns) else de
-                up_p = _sig_hm[_sig_hm["log2FC"] > 0].dropna(subset=[p_col]).sort_values(p_col).head(hm_pool)
-                dn_p = _sig_hm[_sig_hm["log2FC"] < 0].dropna(subset=[p_col]).sort_values(p_col).head(hm_pool)
+                up_p = _select_top_n(_sig_hm[_sig_hm["log2FC"] > 0].dropna(subset=[p_col]), p_col, hm_pool)
+                dn_p = _select_top_n(_sig_hm[_sig_hm["log2FC"] < 0].dropna(subset=[p_col]), p_col, hm_pool)
                 hm_ids  = list(up_p["circ_id"]) + list(dn_p["circ_id"])
                 hm_avail = [i for i in hm_ids if i in matrix.index]
                 if hm_avail:
@@ -1078,13 +1117,8 @@ def _plot_isoform_usage(sig: pd.DataFrame, top_n: int = 10,
     iui_case_col    = f"iui_{case_label}"    if f"iui_{case_label}"    in sig.columns else "iui_tumor"
     iui_control_col = f"iui_{control_label}" if f"iui_{control_label}" in sig.columns else "iui_normal"
 
-    top_genes = (
-        sig.groupby("gene_name")["padj_global"]
-        .min()
-        .sort_values()
-        .head(top_n)
-        .index.tolist()
-    )
+    top_genes = _select_top_n_index(
+        sig.groupby("gene_name")["padj_global"].min(), top_n)
 
     colors = [
         "#1D9E75", "#534AB7", "#BA7517", "#D85A30", "#378ADD",
@@ -1499,14 +1533,10 @@ def _plotly_heatmap(de: pd.DataFrame, matrix: pd.DataFrame, top_n: int = 10,
         cb = cb_map.get(cid, "")
         return cb if cb and cb not in ("", "novel") else _disp_coord(cid)
 
-    up_ids = (
-        de[de["log2FC"] > 0].dropna(subset=[p_col])
-        .sort_values(p_col).head(top_n)["circ_id"].tolist()
-    )
-    dn_ids = (
-        de[de["log2FC"] < 0].dropna(subset=[p_col])
-        .sort_values(p_col).head(top_n)["circ_id"].tolist()
-    )
+    up_ids = _select_top_n(
+        de[de["log2FC"] > 0].dropna(subset=[p_col]), p_col, top_n)["circ_id"].tolist()
+    dn_ids = _select_top_n(
+        de[de["log2FC"] < 0].dropna(subset=[p_col]), p_col, top_n)["circ_id"].tolist()
     top_ids = up_ids + dn_ids
 
     avail = [i for i in top_ids if i in matrix.index]
@@ -1750,8 +1780,8 @@ def build_report(
             _pc_hm = p_col
             if {"circ_id", "log2FC", _pc_hm}.issubset(de.columns):
                 _sig_hm = de[sig_mask] if "log2FC" in de.columns else de
-                _up_pool = _sig_hm[_sig_hm["log2FC"] > 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(_HM_POOL)
-                _dn_pool = _sig_hm[_sig_hm["log2FC"] < 0].dropna(subset=[_pc_hm]).sort_values(_pc_hm).head(_HM_POOL)
+                _up_pool = _select_top_n(_sig_hm[_sig_hm["log2FC"] > 0].dropna(subset=[_pc_hm]), _pc_hm, _HM_POOL)
+                _dn_pool = _select_top_n(_sig_hm[_sig_hm["log2FC"] < 0].dropna(subset=[_pc_hm]), _pc_hm, _HM_POOL)
                 _hm_ids  = list(_up_pool["circ_id"]) + list(_dn_pool["circ_id"])
                 _hm_avail = [i for i in _hm_ids if i in matrix.index]
                 if _hm_avail:
@@ -1879,11 +1909,9 @@ def build_report(
     heatmap_ids: set = set()
     if p_col in de.columns and "log2FC" in de.columns and "circ_id" in de.columns:
         heatmap_ids = set(
-            de[de["log2FC"] > 0].dropna(subset=[p_col])
-            .sort_values(p_col).head(heatmap_top_n)["circ_id"].tolist()
+            _select_top_n(de[de["log2FC"] > 0].dropna(subset=[p_col]), p_col, heatmap_top_n)["circ_id"].tolist()
         ) | set(
-            de[de["log2FC"] < 0].dropna(subset=[p_col])
-            .sort_values(p_col).head(heatmap_top_n)["circ_id"].tolist()
+            _select_top_n(de[de["log2FC"] < 0].dropna(subset=[p_col]), p_col, heatmap_top_n)["circ_id"].tolist()
         )
 
     # ── Build ALL_DE_METHODS data (method switcher + Venn diagram) ──────────────
@@ -3878,16 +3906,18 @@ def thesis_export_figs(
 
     if p_col in de.columns and "log2FC" in de.columns:
         sig_up_th = (de[(de[p_col] < sig_thr) & (de["log2FC"] >  lfc)]
-                     .dropna(subset=[p_col]).sort_values(p_col))
+                     .dropna(subset=[p_col]).sort_values(p_col, kind="stable"))
         sig_dn_th = (de[(de[p_col] < sig_thr) & (de["log2FC"] < -lfc)]
-                     .dropna(subset=[p_col]).sort_values(p_col))
+                     .dropna(subset=[p_col]).sort_values(p_col, kind="stable"))
     else:
         sig_up_th = sig_dn_th = pd.DataFrame()
 
     all_ids_th  = (sig_up_th["circ_id"].tolist() + sig_dn_th["circ_id"].tolist()
                    if not sig_up_th.empty or not sig_dn_th.empty else [])
-    label_ids_th = set(sig_up_th.head(top_n_lbl)["circ_id"].tolist() +
-                       sig_dn_th.head(top_n_lbl)["circ_id"].tolist())
+    label_ids_th = set(
+        (_select_top_n(sig_up_th, p_col, top_n_lbl)["circ_id"].tolist() if not sig_up_th.empty else [])
+        + (_select_top_n(sig_dn_th, p_col, top_n_lbl)["circ_id"].tolist() if not sig_dn_th.empty else [])
+    )
     avail_th = [i for i in all_ids_th if i in matrix.index]
     if len(avail_th) >= 2:
         sub_th = matrix.loc[avail_th].astype(float)
@@ -3947,8 +3977,8 @@ def thesis_export_figs(
                 if not sig_sw.empty:
                     iui_c = f"iui_{tumor_label}"  if f"iui_{tumor_label}"  in sig_sw.columns else "iui_tumor"
                     iui_n = f"iui_{normal_label}" if f"iui_{normal_label}" in sig_sw.columns else "iui_normal"
-                    top_g = (sig_sw.groupby("gene_name")["padj_global"]
-                             .min().sort_values().head(10).index.tolist())
+                    top_g = _select_top_n_index(
+                        sig_sw.groupby("gene_name")["padj_global"].min(), 10)
                     pal_iso = ["#1D9E75","#534AB7","#BA7517","#D85A30","#378ADD",
                                "#9467BD","#8C564B","#E377C2","#7F7F7F","#17BECF"]
                     fig_iso = go.Figure()
