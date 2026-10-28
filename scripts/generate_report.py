@@ -39,6 +39,27 @@ def _disp_coord(cid: str) -> str:
     return f"{m.group(1)}:{int(m.group(2)) - 1}|{m.group(3)}"
 
 
+def _is_better_pval(candidate: float, current: float) -> bool:
+    """True if `candidate` should replace `current` as the "best p-value
+    seen so far across methods" in _venn_3_svg()'s circ_info aggregation.
+
+    NaN means "this method didn't test/report this circRNA," not "its
+    p-value equals NaN" -- so a NaN `current` must always be replaceable by
+    any real value, and a NaN `candidate` must never replace a real
+    `current`. A bare `candidate < current` gets both of these wrong: under
+    IEEE 754 / Python comparison semantics, any comparison involving NaN is
+    False, so once `current` is NaN (the first method visited for a given
+    circ_id happened to have no value), no later real candidate could ever
+    win -- the real value was silently discarded. See generate_report.py's
+    call site for the real case this was caught on (GSE113230's
+    chr20:30904021|30904677 / KIF3B)."""
+    if current != current:          # current is NaN -> anything real wins
+        return candidate == candidate
+    if candidate != candidate:      # candidate is NaN, current is real -> keep current
+        return False
+    return candidate < current      # both real -> normal comparison
+
+
 def _select_top_n(df, score_col: str, n: int, id_col: str = "circ_id"):
     """Deterministic "top n rows by score_col" selection -- see
     utils.select_top_n()'s docstring for the full rationale (same tie-break
@@ -214,15 +235,31 @@ def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
                         "methods": [mlabel] if is_sig else [],
                     }
                 else:
-                    # update best pval / lfc
-                    if pv < circ_info[cid]["pval"]:
+                    # Keep the lower (better) p-value seen across methods.
+                    # A method's row can have pval=NaN -- that means this
+                    # circRNA wasn't tested/reported by that method, not
+                    # that its p-value literally equals NaN. The bare
+                    # `pv < circ_info[cid]["pval"]` this replaces is always
+                    # False whenever either side is NaN (Python/IEEE 754
+                    # comparison semantics), so if the FIRST method visited
+                    # for a given circ_id happened to report NaN, no later
+                    # method's real p-value could ever overwrite it -- the
+                    # stored value stayed NaN forever even when a real,
+                    # better one existed. Confirmed on real data: GSE113230's
+                    # chr20:30904021|30904677 (KIF3B) has no row at all in
+                    # edgeR_ciriquant's file, pval=NaN in deseq2's, and a
+                    # real pval=0.0446 in limma's -- deseq2 is visited before
+                    # limma (de_files dict order), so the old code left this
+                    # circRNA permanently showing NaN in the Venn detail
+                    # list despite limma's real value being available.
+                    if _is_better_pval(pv, circ_info[cid]["pval"]):
                         circ_info[cid]["pval"] = pv
                         circ_info[cid]["lfc"]  = round(float(row.get("log2FC", 0.0)), 3)
                     if is_sig and mlabel not in circ_info[cid]["methods"]:
                         circ_info[cid]["methods"].append(mlabel)
         for region, cid_set in regions_sets.items():
             rows = []
-            for cid in cid_set:
+            for cid in sorted(cid_set):
                 info = circ_info.get(cid, {})
                 rows.append({
                     "id":   cid,
@@ -234,13 +271,16 @@ def _venn_3_svg(sig_sets: dict, lfc: float, de_lookup: dict = None) -> str:
                 })
             # Secondary key (circ_id, lexicographic) makes the order fully
             # deterministic even when two circRNAs in the same Venn region
-            # have an identical p-value -- without it, ties are broken by
-            # whatever order `for cid in cid_set` happened to iterate a
-            # Python set in (set iteration order is not guaranteed stable
-            # across runs/processes), so the same inputs could silently
-            # render the same region's list in a different order each time
-            # report generation ran. Found by diffing a report rebuilt from
-            # identical inputs against itself (docs/platform_security_notes.md).
+            # have an identical p-value. `for cid in sorted(cid_set)` above
+            # (not a bare set iteration) handles the other half of this: a
+            # NaN pval (see _is_better_pval's docstring) can't be
+            # disambiguated by the (pval, id) key below -- NaN comparisons
+            # are never True in either direction, so rows whose pval is NaN
+            # keep whatever relative order they arrived in. Sorting cid_set
+            # itself makes that arrival order deterministic too, instead of
+            # depending on Python's hash-randomized set iteration order.
+            # Originally found by diffing a report rebuilt from identical
+            # inputs against itself (docs/platform_security_notes.md).
             rows.sort(key=lambda r: (r["pval"], r["id"]))
             venn_region_data[region] = {
                 "label_zh": f"{region_labels_zh[region]} ({counts[region]} 個)",
