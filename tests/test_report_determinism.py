@@ -1,28 +1,50 @@
-"""Regression harness for report-generation determinism: builds a tiny
-synthetic report from fixed inputs N times, each in a fresh subprocess
-with a different PYTHONHASHSEED, and asserts every run produces
-byte-identical output (after normalizing the two things that are
-*supposed* to vary: the generation timestamp, and Plotly's per-figure
-random div-id UUIDs).
+"""Two independent determinism checks, answering two different questions:
 
-This exists because grep-based auditing for non-deterministic sorts
+1. test_report_md5_reproducibility() builds a tiny synthetic report from
+   fixed inputs N times, each in a fresh subprocess with a different
+   PYTHONHASHSEED, and asserts every run produces byte-identical output
+   (after normalizing the two things that are *supposed* to vary: the
+   generation timestamp, and Plotly's per-figure random div-id UUIDs).
+   This is an integration-level regression check: "did this particular
+   fixture come out the same this time." It is necessarily scale-limited
+   -- see its own docstring for a known gap at this fixture's size.
+
+2. test_set_iteration_order_invariant() asks a narrower, stronger
+   question: is a given output order a pure function of the input's
+   *content*, independent of how that content happened to be stored.
+   It builds 1,000 synthetic circ_id strings into a Python set, and in 5
+   subprocesses (one per PYTHONHASHSEED) runs exactly the
+   `sorted(cid_set)` line itself -- no report, no HTML, no md5. All 5
+   must produce the identical sequence (compared element-by-element, not
+   hashed). It also asserts the *unsorted* raw set iteration order is NOT
+   invariant across seeds first, as a sanity check that 1,000 strings is
+   actually enough to make Python's hash randomization visible at all --
+   an invariant test that can't fail on the thing it's supposed to detect
+   would be worthless.
+
+Why both exist, and why neither replaces the other: md5 comparison proves
+"the same inputs produced the same artifact this time, in this
+environment." The invariant test proves "this step's output order cannot
+depend on anything but input content, by construction, for a case general
+enough that iteration order WAS seed-dependent going in" -- a stronger,
+scale-independent guarantee that doesn't need to get lucky into
+reproducing a specific implementation's instability threshold. This
+exists because grep-based auditing for non-deterministic sorts
 (`.sort/.sort_values/sorted`) was proven insufficient in this project's
-own history: three real instances of "iterate a Python set with no
-sort" fed report/page output order and were caught only by this exact
-technique (rebuild + diff under different hash seeds), not by the grep.
-Any future regression of the same shape -- a bare set/dict iteration
-whose order leaks into output -- should be caught here before it reaches
-a published report.
+own history: three real instances of "iterate a Python set with no sort"
+fed report/page output order and were caught only by rebuilding and
+diffing under different hash seeds, not by the grep.
 
-Deliberately uses a hand-built, minimal fixture (a handful of rows,
-including a few exact score/p-value ties on purpose) rather than any
-real dataset's results directory -- small, fast, and never touches
-anything under a published results_dir.
+test_report_md5_reproducibility() deliberately uses a hand-built, minimal
+fixture (a handful of rows, including a few exact score/p-value ties and
+two circRNAs with NaN p-values modeling a real case) rather than any real
+dataset's results directory -- small, fast, and never touches anything
+under a published results_dir.
 
 Run with:  python tests/test_report_determinism.py
 Requires the project's conda env (pandas, and plotly if available --
 falls back to the static-PDF path otherwise, which this test still
-covers).
+covers) for test 1; test 2 has no such dependency.
 """
 from __future__ import annotations
 
@@ -245,7 +267,7 @@ def normalize(html: str) -> str:
     return html
 
 
-def main():
+def test_report_md5_reproducibility():
     tmp = Path(tempfile.mkdtemp(prefix="circdex_det_test_"))
     try:
         build_fixture(tmp)
@@ -268,6 +290,76 @@ def main():
               f"(after normalizing UUIDs/dates): {hashes[0][1]}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ── Invariant test: is sorted(cid_set) a pure function of content? ─────────
+
+_INVARIANT_N_IDS = 1000
+
+
+def _run_set_order_subprocess(seed: int, sorted_: bool) -> list:
+    """Run, in a fresh subprocess under PYTHONHASHSEED=seed, exactly the
+    step being checked: build a set of _INVARIANT_N_IDS synthetic circ_id
+    strings and iterate it, either raw (sorted_=False, the control -- this
+    is expected to VARY across seeds) or through sorted() (sorted_=True,
+    the actual claim under test -- this must NOT vary). Returns the
+    resulting id sequence as a plain list, printed as JSON by the
+    subprocess and parsed back here -- never hashed, so a failure shows
+    the actual differing elements, not just "not equal"."""
+    script = f"""
+import json
+ids = {{f"chr{{i % 22 + 1}}:{{1000 + i}}|{{1050 + i}}" for i in range({_INVARIANT_N_IDS})}}
+out = sorted(ids) if {sorted_} else list(ids)
+print(json.dumps(out))
+"""
+    env = dict(os.environ)
+    env["PYTHONHASHSEED"] = str(seed)
+    result = subprocess.run([sys.executable, "-c", script], env=env,
+                             capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError(f"subprocess failed under PYTHONHASHSEED={seed}:\n{result.stderr}")
+    return json.loads(result.stdout)
+
+
+def test_set_iteration_order_invariant():
+    # Control: confirm raw set iteration actually IS seed-dependent at
+    # this scale first. If this assertion itself fails, 1,000 strings
+    # stopped being enough to make Python's hash randomization visible
+    # (e.g. a Python version change disabling it by default) and the
+    # "must be invariant" assertion below would be meaningless -- it
+    # would trivially pass for the wrong reason.
+    raw_sequences = [_run_set_order_subprocess(seed, sorted_=False) for seed in SEEDS]
+    if len({tuple(s) for s in raw_sequences}) < 2:
+        print("FAIL (test setup, not the claim under test): raw set "
+              f"iteration over {_INVARIANT_N_IDS} strings was identical "
+              "across all 5 seeds -- this control should have varied; "
+              "the invariant assertion below would not be meaningful")
+        sys.exit(1)
+    print(f"  control OK: raw set iteration over {_INVARIANT_N_IDS} ids "
+          f"varied across seeds ({len({tuple(s) for s in raw_sequences})} "
+          f"distinct orderings in {len(SEEDS)} runs)")
+
+    # The actual claim: sorted(cid_set) must be invariant.
+    sorted_sequences = [_run_set_order_subprocess(seed, sorted_=True) for seed in SEEDS]
+    first = sorted_sequences[0]
+    for seed, seq in zip(SEEDS, sorted_sequences):
+        if seq != first:
+            # Find and report the first differing position, not just "differs".
+            for i, (a, b) in enumerate(zip(first, seq)):
+                if a != b:
+                    print(f"FAIL: sorted(cid_set) differs at index {i}: "
+                          f"seed={SEEDS[0]} has {a!r}, seed={seed} has {b!r}")
+                    sys.exit(1)
+            print(f"FAIL: sorted(cid_set) differs in length: "
+                  f"seed={SEEDS[0]} has {len(first)}, seed={seed} has {len(seq)}")
+            sys.exit(1)
+    print(f"PASS: sorted(cid_set) over {_INVARIANT_N_IDS} ids produced the "
+          f"identical sequence across all {len(SEEDS)} seeds")
+
+
+def main():
+    test_report_md5_reproducibility()
+    test_set_iteration_order_invariant()
 
 
 if __name__ == "__main__":
