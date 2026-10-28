@@ -2547,6 +2547,23 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
 
+    # Import-chain preflight: refuse to start the service rather than start
+    # it with a pipeline step that will fail the first time a user reaches
+    # it. See scripts/preflight_imports.py for what this does and does not
+    # check, and the run_params.py incident it exists because of.
+    _preflight = subprocess.run(
+        [_sys.executable, str(Path(__file__).resolve().parent / "preflight_imports.py")],
+        capture_output=True, text=True,
+    )
+    if _preflight.returncode != 0:
+        print(_preflight.stdout, end="")
+        print(_preflight.stderr, end="", file=_sys.stderr)
+        print("  [Preflight] FAILED -- refusing to start web_ui.py. "
+              "A silently missing dependency is more dangerous than a "
+              "service that does not come up.", flush=True)
+        raise SystemExit(1)
+    print(_preflight.stdout.strip(), flush=True)
+
     # Initialise queue DB and start background worker
     init_queue_db()
     _worker = threading.Thread(target=_queue_worker, daemon=True)
