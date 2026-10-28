@@ -467,7 +467,12 @@ def _build_method_js_data(
     if p_col in de.columns and "log2FC" in de.columns and "circ_id" in de.columns:
         _mask = (de[p_col] < sig_thr) & (de["log2FC"].abs() > lfc)
         sig_ids = [str(x) for x in de.loc[_mask, "circ_id"].tolist()]
-        _sig_de = de[_mask].sort_values(p_col)
+        # Secondary key (circ_id) + kind="stable": display order only here
+        # (every significant row is shown, nothing is truncated), but a
+        # p-value tie between two rows would otherwise leave their relative
+        # order up to whatever pandas's default (unstable) quicksort does
+        # with the row order de.iterrows() happened to arrive in.
+        _sig_de = de[_mask].sort_values([p_col, "circ_id"], kind="stable")
         _want = ["circ_id", "gene_name", "strand", "region", "exon_span",
                  "circbase_id", "log2FC", p_col, "Type"]
         _avail = [c for c in _want if c in de.columns]
@@ -1217,8 +1222,12 @@ def _isoform_section(switching_file: Optional[str],
                  ["gene_name", "circ_id", "exon_structure", "circbase_id",
                   iui_control_col, iui_case_col, "delta_iui", "p_value"]
                  if c in sig.columns]
-    sort_keys = [c for c in ["gene_name", "p_value"] if c in sig.columns]
-    disp = sig.sort_values(sort_keys)[show_cols].copy()
+    # circ_id as a tertiary key: two isoforms of the same gene can share an
+    # identical p_value, and circ_id is unique, so including it removes the
+    # remaining ambiguity rather than leaving it to sort_values's default
+    # (unstable) quicksort.
+    sort_keys = [c for c in ["gene_name", "p_value", "circ_id"] if c in sig.columns]
+    disp = sig.sort_values(sort_keys, kind="stable")[show_cols].copy()
     if "circ_id" in disp.columns:
         disp["circ_id"] = disp["circ_id"].apply(_disp_coord)
     if "circbase_id" in disp.columns:
@@ -1724,7 +1733,12 @@ def build_report(
         "circ_position", "gene_name", "strand", "region", "exon_span", "circbase_id",
         "log2FC", "pvalue", "Type",
     ] if c in sig.columns]
-    top_table = sig.sort_values(p_col)[top_cols] if top_cols else sig.head(20)
+    # circ_id was already renamed to circ_position just above; use that as
+    # the deterministic secondary key (same reasoning as the other display
+    # tables in this file -- every row is shown, nothing truncated, but a
+    # p-value tie would otherwise leave relative order to quicksort).
+    _top_sort_keys = [c for c in [p_col, "circ_position"] if c in sig.columns]
+    top_table = sig.sort_values(_top_sort_keys, kind="stable")[top_cols] if top_cols else sig.head(20)
 
     # Load pre-fetched interaction data
     interactions = _load_interactions(interactions_file)

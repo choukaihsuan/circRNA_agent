@@ -322,7 +322,11 @@ def vote(
 
         results.append((*coord, n_tools, round(score, 4)))  # type: ignore[arg-type]
 
-    return sorted(results, key=lambda x: (-x[4], x[0], x[1]))
+    # Secondary+tertiary keys (chr, start, end) fully disambiguate: two
+    # different circRNAs sharing both a score and a start position (end
+    # was not previously part of the key) would otherwise have an
+    # unspecified relative order in high_confidence.bed.
+    return sorted(results, key=lambda x: (-x[4], x[0], x[1], x[2]))
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

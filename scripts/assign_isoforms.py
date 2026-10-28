@@ -158,7 +158,11 @@ def _exon_span(circ_start: int, circ_end: int, gene_id: str,
         by_tx[tx].append((s, e, en))
 
     for tx, tx_exons in by_tx.items():
-        tx_sorted = sorted(tx_exons, key=lambda x: x[0])  # genomic order
+        # (start, end) key: two exons sharing a start (rare GTF edge case,
+        # e.g. alternative 3' boundaries) would otherwise have an
+        # unspecified relative order, which feeds the exon-number lookup
+        # just below.
+        tx_sorted = sorted(tx_exons, key=lambda x: (x[0], x[1]))  # genomic order
 
         start_hit = None
         end_hit   = None
