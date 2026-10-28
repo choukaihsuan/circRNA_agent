@@ -186,6 +186,40 @@ def is_legacy_biomarker_generation(results_dir: str) -> bool:
     return False
 
 
+# ── Deterministic top-N selection ────────────────────────────────────────────
+
+def select_top_n(df, score_col: str, n: int, id_col: str = "circ_id"):
+    """Return the first n rows of df sorted ascending by score_col, with
+    id_col as a deterministic tie-break secondary key -- so two rows that
+    share an exact score_col value (common with p-values/padj on sparse
+    datasets, and not rare: GSE148036's DESeq2 top-50 cutoff ties 131 rows
+    at once) always resolve to the same n rows on every run, regardless of
+    the order df's rows arrived in or which sort algorithm pandas's default
+    (unstable) quicksort happens to pick.
+
+    Before this helper existed, the same `.sort_values(score_col).head(n)`
+    pattern, with no secondary key, was independently written at four
+    separate call sites in generate_report.py (the main report's heatmap
+    pool selection) plus predict_interactions.py's miRNA/RBP query-set
+    selection -- the latter feeds n_mirna/n_rbp, two of rank_biomarkers.py's
+    six biomarker_score dimensions, so a tie there changes which dimensions
+    a candidate's score is even computed from (see
+    rank_biomarkers.py's interaction_queried / Layer-2 renormalization),
+    not just which row displays where. One shared function, not five
+    independent copies of the same unguarded pattern.
+
+    id_col must be unique across df's rows (circ_id and gene_name both are,
+    in this codebase's usage) for the tie-break itself to be unambiguous;
+    this is the caller's responsibility, not checked here.
+
+    kind="stable" is redundant once id_col fully disambiguates the sort key
+    (no tie survives a (score_col, id_col) tuple that is itself unique per
+    row) but is passed anyway as defense in depth, in case a future caller
+    passes a non-unique id_col by mistake -- stable sort at least falls
+    back to preserving df's own row order instead of an arbitrary one."""
+    return df.sort_values([score_col, id_col], kind="stable").head(n)
+
+
 # ── Directory scaffolding ────────────────────────────────────────────────────
 
 def ensure_dirs() -> None:

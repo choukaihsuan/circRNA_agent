@@ -28,6 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_params  # noqa: E402
+from utils import select_top_n  # noqa: E402
 
 try:
     import requests
@@ -853,9 +854,9 @@ def main():
         df = df.dropna(subset=[p_col])
         lfc_col = "log2FC" if "log2FC" in df.columns else "log2FoldChange"
         if lfc_col not in df.columns:
-            return set(df.sort_values(p_col).head(top_n * 2)["circ_id"])
-        up = set(df[df[lfc_col] > 0].sort_values(p_col).head(top_n)["circ_id"])
-        dn = set(df[df[lfc_col] < 0].sort_values(p_col).head(top_n)["circ_id"])
+            return set(select_top_n(df, p_col, top_n * 2)["circ_id"])
+        up = set(select_top_n(df[df[lfc_col] > 0], p_col, top_n)["circ_id"])
+        dn = set(select_top_n(df[df[lfc_col] < 0], p_col, top_n)["circ_id"])
         return up | dn
 
     # Union mode: collect top-N from each provided method file
@@ -874,10 +875,10 @@ def main():
         # Fallback: use primary --de only
         p_col = "pvalue" if "pvalue" in de.columns else "padj"
         de_sig = de.dropna(subset=[p_col])
-        top_up = set(de_sig[de_sig["log2FC"] > 0].sort_values(p_col)
-                     .head(args.top_n)["circ_id"]) if "log2FC" in de_sig.columns else set()
-        top_dn = set(de_sig[de_sig["log2FC"] < 0].sort_values(p_col)
-                     .head(args.top_n)["circ_id"]) if "log2FC" in de_sig.columns else set()
+        top_up = set(select_top_n(de_sig[de_sig["log2FC"] > 0], p_col, args.top_n)["circ_id"]) \
+            if "log2FC" in de_sig.columns else set()
+        top_dn = set(select_top_n(de_sig[de_sig["log2FC"] < 0], p_col, args.top_n)["circ_id"]) \
+            if "log2FC" in de_sig.columns else set()
         combined_ids = top_up | top_dn
         print(f"[predict] querying {len(combined_ids)} circRNAs "
               f"(top-{args.top_n} up + top-{args.top_n} down by p-value, primary DE only)",
