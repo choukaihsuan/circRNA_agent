@@ -29,8 +29,6 @@ keywords:
   - biomarker prioritization
   - bioinformatics workflow
 repository-code: "https://github.com/choukaihsuan/circRNA_agent"
-version: "results-2026-07"
-date-released: "2026-10-01"
 preferred-citation:
   type: thesis
   title: "circDEX: an automated workflow for circular RNA detection, differential expression and biomarker prioritization"
