@@ -1,0 +1,43 @@
+cff-version: 1.2.0
+message: "If you use circDEX, please cite it as below."
+title: "circDEX: an automated Snakemake workflow for circular RNA detection, differential expression and biomarker prioritization"
+abstract: >-
+  circDEX is a containerized Snakemake workflow for circRNA analysis.
+  Detection combines CIRIquant and DCC into a weighted confidence score from
+  coordinate agreement and junction-read support. Forward-splice junction
+  counts enter an edgeR model as an offset, so differential expression is
+  assessed relative to local linear transcript abundance and classified into
+  three types. DESeq2 and limma-voom run in parallel as FSJ-independent
+  references. The workflow also provides isoform-switching analysis,
+  six-dimensional biomarker prioritization, miRNA and RBP interaction
+  prediction, and an interactive web interface that produces a
+  self-contained HTML report.
+type: software
+license: MIT
+authors:
+  - family-names: Chou
+    given-names: Kai-Hsuan
+    affiliation: "Institute of Physiology, College of Medicine, National Taiwan University"
+  - family-names: Lai
+    given-names: Liang-Chuan
+    affiliation: "Institute of Physiology, College of Medicine, National Taiwan University"
+keywords:
+  - circular RNA
+  - circRNA
+  - Snakemake
+  - differential expression
+  - biomarker prioritization
+  - bioinformatics workflow
+repository-code: "https://github.com/choukaihsuan/circRNA_agent"
+version: "results-2026-07"
+date-released: "2026-10-01"
+preferred-citation:
+  type: thesis
+  title: "circDEX: an automated workflow for circular RNA detection, differential expression and biomarker prioritization"
+  authors:
+    - family-names: Chou
+      given-names: Kai-Hsuan
+  thesis-type: "Master's thesis"
+  institution:
+    name: "National Taiwan University"
+  year: 2026
