@@ -2410,7 +2410,13 @@ def cross_dataset():
     from collections import Counter
     id_counter: Counter = Counter()
     for res in dataset_results.values():
-        for cid in res["sig_ids"]:
+        # sorted(), not a bare set iteration: a Python set's string iteration
+        # order is hash-randomized per process, and this loop's order feeds
+        # id_counter's insertion order, which feeds recurrent.sort()'s
+        # tie-break below for circRNAs sharing both n_datasets and
+        # avg_abs_lfc -- a tie there would otherwise resolve differently
+        # across runs, on the one list a reader sees directly.
+        for cid in sorted(res["sig_ids"]):
             id_counter[cid] += 1
 
     # Build recurrent list (≥2 datasets)
@@ -2492,7 +2498,14 @@ def cross_dataset():
     # ── UpSet plot data ───────────────────────────────────────────────────────
     _circ_to_gses: dict = {}
     for _gse_id in dataset_order:
-        for _cid in dataset_results.get(_gse_id, {}).get("sig_ids", set()):
+        # sorted(): sig_ids is a Python set, whose string iteration order is
+        # hash-randomized per process. Unsorted, this loop's insertion order
+        # into _circ_to_gses (and, downstream, into the _inter_counts dict
+        # built from it below) changes the *list order* of
+        # upset_data["intersections"] across runs on identical input --
+        # confirmed via PYTHONHASHSEED sweep: the JSON byte content differed
+        # on every one of 5 seeds before this fix.
+        for _cid in sorted(dataset_results.get(_gse_id, {}).get("sig_ids", set())):
             _circ_to_gses.setdefault(_cid, []).append(_gse_id)
     _inter_counts: dict = _defaultdict(int)
     for _gse_list in _circ_to_gses.values():
