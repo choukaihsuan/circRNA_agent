@@ -1,0 +1,281 @@
+# Local Python 3 / modern-pysam compatibility patch for find_circ.
+#
+# Upstream: https://github.com/marvin-jens/find_circ
+# Upstream commit: 8655dca54970fcf7e92e22fbf57e1188724dda7d (2017-02-28)
+# Upstream file: find_circ.py
+# sha256 of the unmodified upstream file at that commit (as fetched and
+#   captured on the server, /home3/choukaihsuan/tools/find_circ/find_circ_orig.py):
+#   8eae798855f836759edf4b8bcfa8833b4c81c7f1088dbdcc6c3ae6b55837e702
+# Verify any freshly-fetched copy against this hash before applying this
+# patch to it -- if it doesn't match, the upstream file has changed (or the
+# fetch is corrupt) and this patch's hunks are not guaranteed to apply
+# cleanly or correctly; stop and re-check rather than force-applying.
+#
+# License note: find_circ itself is GPLv3 (see its own LICENSE file) -- this
+# repository is MIT. This patch is kept as a diff against the upstream file,
+# never as a vendored copy of find_circ.py itself, specifically to avoid
+# redistributing GPLv3 source inside an MIT repository. A build that needs
+# find_circ fetches the upstream file at build time, verifies its sha256
+# against the value above, and applies this patch to it -- see
+# containers/build_notes.md for how this is wired into an actual build.
+#
+# What this patch does: upstream find_circ.py (2017) targets Python 2 and
+# an old pysam API. Running it under Python 3 with a current pysam fails
+# in multiple places; this patch is the minimal set of changes needed to
+# get it running under the server's Python 3.7.12 + pysam 0.21.0, not a
+# rewrite or a style cleanup:
+#   - `file(...)` -> `open(...)` (file() was removed in Python 3)
+#   - integer division `/` -> `//` where an index was expected (Python 3's
+#     `/` always returns float)
+#   - `.decode('string_escape')` removed (that codec doesn't exist in
+#     Python 3; the value is used as-is)
+#   - pysam API renames: `pysam.Samfile` -> `pysam.AlignmentFile`,
+#     `.pos`/`.aend`/`.tid`/`.qname` -> `.reference_start`/`.reference_end`/
+#     `.reference_id`/`.query_name`, `.getrname()` -> `.get_reference_name()`
+#     (all renamed in a pysam API version well past what was current in 2017)
+#   - `complement()`: strips stray `\n`/`\r` before translating, and falls
+#     back to "N" for any character not in the COMPLEMENT table instead of
+#     raising KeyError (the original crashed on any ambiguity-code base
+#     sequence reads sometimes contain)
+#   - `mismatches()`: replaced a `numpy.fromstring(..., dtype=byte)`-based
+#     comparison (the `fromstring` ctor used this way is deprecated/removed
+#     in modern numpy) with a plain Python `sum(x != y for x, y in zip(a,b))`,
+#     also handling unequal-length inputs instead of letting the original
+#     silently rely on numpy's elementwise broadcast
+#   - module-level `import numpy as _np` added (the inner function that
+#     referenced `_np` in the original relied on an import that was only
+#     ever added inside a different, unrelated function's scope)
+#
+# Not touched: this patch does not change find_circ's detection algorithm,
+# its CLI, or its output format/columns -- only what was necessary to make
+# it import and run at all under Python 3. The triplicated
+# `if A is None or B is None: break` block this diff shows (three identical
+# lines in a row) is preserved exactly as it exists in the server's actual
+# patched copy -- it is redundant but harmless (idempotent check), and this
+# patch intentionally captures what is ACTUALLY running, not a cleaned-up
+# version of it; CLAUDE.md's existing description of "three bugs fixed"
+# undercounts what's in this diff, which also includes the full pysam
+# API-rename set above -- this patch file is now the authoritative record,
+# superseding that summary.
+--- find_circ_orig.py	2026-10-31 21:47:19.899771814 +0800
++++ find_circ.py	2026-10-31 21:47:29.319769669 +0800
+@@ -1,6 +1,7 @@
+ #!/usr/bin/env python
+ import pysam
+ import numpy
++import numpy as _np
+ import os,sys,re
+ from logging import error, warning, debug
+ import logging
+@@ -43,14 +44,15 @@
+ }
+ 
+ def complement(s):
+-    return "".join([COMPLEMENT[x] for x in s])
++    s = s.replace(chr(10), "").replace(chr(13), "")
++    return "".join([COMPLEMENT.get(x, "N") for x in s])
+ 
+ def rev_comp(seq):
+     return complement(seq)[::-1]
+ 
+ class mmap_fasta(object):
+     def __init__(self,fname):
+-        f = file(fname)
++        f = open(fname)
+         header = f.readline()
+         row = f.readline()
+ 
+@@ -67,7 +69,7 @@
+         ofs_start = l_start * self.skip + start + self.ofs
+         ofs_end = l_end * self.skip + end + self.ofs
+         
+-        s = self.mmap[ofs_start:ofs_end].replace(self.skip_char,"")
++        s = self.mmap[int(int(ofs_start)):int(int(ofs_end))].replace(self.skip_char,"")
+         L = end-start
+         if len(s) == L:
+             return s
+@@ -88,14 +90,14 @@
+             self.index()
+             self.store_index(ipath)
+                 
+-        f = file(fname)
++        f = open(fname)
+         self.mmap = mmap.mmap(f.fileno(),0,prot=mmap.PROT_READ)
+ 
+     def index(self):
+         debug("# indexed_fasta.index('%s')" % self.fname)
+ 
+         ofs = 0
+-        f = file(self.fname)
++        f = open(self.fname)
+         chrom = "undef"
+         chrom_ofs = 0
+         size = 0
+@@ -156,9 +158,9 @@
+     def load_index(self,ipath):
+         debug("# indexed_fasta.load_index('%s')" % ipath)
+         self.chrom_stats = {}
+-        for line in file(ipath):
++        for line in open(ipath):
+             chrom,ofs,ldata,skip,skipchar,size = line.rstrip().split('\t')
+-            self.chrom_stats[chrom] = (int(ofs),int(ldata),int(skip),skipchar[1:-1].decode('string_escape'),int(size))
++            self.chrom_stats[chrom] = (int(ofs),int(ldata),int(skip),skipchar[1:-1],int(size))
+         
+     def get_data(self,chrom,start,end,sense):
+         if not self.chrom_stats:
+@@ -175,12 +177,12 @@
+             pad_end = end - size
+             end = size
+ 
+-        l_start = start / ldata
+-        l_end = end / ldata
++        l_start = start // ldata
++        l_end = end // ldata
+         ofs_start = l_start * skip + start + ofs
+         ofs_end = l_end * skip + end + ofs
+         
+-        s = self.mmap[ofs_start:ofs_end].replace(skip_char,"")
++        s = self.mmap[int(ofs_start):int(ofs_end)].replace(skip_char.encode() if isinstance(skip_char,str) else skip_char, b"").decode("ascii", errors="replace")
+         if pad_start or pad_end:
+             s = "N"*pad_start + s + "N"*pad_end
+ 
+@@ -405,12 +407,12 @@
+     return zip_longest(fillvalue=fillvalue, *args)
+ 
+ if options.reads2samples:
+-    samples = [line.rstrip().split('\t') for line in file(options.reads2samples)]
++    samples = [line.rstrip().split('\t') for line in open(options.reads2samples)]
+ else:
+     samples = []
+ 
+ if options.reads:
+-    readfile = file(options.reads,"w")
++    readfile = open(options.reads,"w")
+ else:
+     readfile = sys.stderr
+ 
+@@ -445,7 +447,7 @@
+         self.n_hits.append(n_hits)
+ 
+         # by convention have A precede B in the genome.
+-        if A.pos > B.pos:
++        if A.reference_start > B.reference_start:
+             A,B = B,A
+             
+         # Alignment Score - Secondbest hit score            
+@@ -463,10 +465,10 @@
+ 
+         # recover the original readname 
+         # ('__' is forbidden in input read names!)
+-        if '__' in A.qname:
+-            qname = A.qname.split('__')[0][:-2]
++        if '__' in A.query_name:
++            qname = A.query_name.split('__')[0][:-2]
+         else: # reads have been swapped at some point
+-            qname = B.qname.split('__')[0][:-2]
++            qname = B.query_name.split('__')[0][:-2]
+ 
+         self.readnames.append(qname)
+         
+@@ -517,9 +519,9 @@
+ def find_breakpoints(A,B,read,chrom,margin=options.margin,maxdist=options.maxdist):
+ 
+     def mismatches(a,b):
+-        a,b = fromstring(a,dtype=byte), fromstring(b,dtype=byte)
+-        
+-        return (a != b).sum()
++        if len(a) != len(b):
++            return abs(len(a)-len(b))
++        return sum(x != y for x,y in zip(a,b))
+ 
+     def rnd():
+         return numpy.random.random()
+@@ -542,8 +544,8 @@
+         
+     flank = L - 2*eff_a + 2
+ 
+-    A_flank = genome.get(chrom,A.aend-margin,A.aend-margin + flank,'+').upper()
+-    B_flank = genome.get(chrom,B.pos - flank+margin,B.pos+margin,'+').upper()
++    A_flank = genome.get(chrom,A.reference_end-margin,A.reference_end-margin + flank,'+').upper()
++    B_flank = genome.get(chrom,B.reference_start - flank+margin,B.reference_start+margin,'+').upper()
+ 
+     l = L - 2*eff_a
+     for x in range(l+1):
+@@ -565,7 +567,7 @@
+             gtag = gt+ag
+             rc_gtag = rev_comp(gtag)
+             
+-            start,end = B.pos+margin-l+x,A.aend-margin+x+1
++            start,end = B.reference_start+margin-l+x,A.reference_end-margin+x+1
+             start,end = min(start,end),max(start,end)
+             
+             strand = "*"
+@@ -605,9 +607,9 @@
+         
+     return ties
+     
+-sam = pysam.Samfile('-','r')
++sam = pysam.AlignmentFile('-','r')
+ if options.bam:
+-    bam_out = pysam.Samfile(options.bam,'wb',template=sam)
++    bam_out = pysam.AlignmentFile(options.bam,'wb',template=sam)
+ else:
+     bam_out = None
+ 
+@@ -616,17 +618,23 @@
+         #print A
+         #print B
+         N['total'] += 1
++        if A is None or B is None:
++            break
++        if A is None or B is None:
++            break
++        if A is None or B is None:
++            break
+         if A.is_unmapped or B.is_unmapped:
+             N['unmapped'] += 1
+             continue
+-        if A.tid != B.tid:
++        if A.reference_id != B.reference_id:
+             N['other_chrom'] += 1
+             continue
+         if A.is_reverse != B.is_reverse:
+             N['other_strand'] += 1
+             continue
+ 
+-        dist = B.pos - A.pos
++        dist = B.reference_start - A.reference_start
+         if numpy.abs(dist) < options.asize:
+             N['overlapping_anchors'] += 1
+             continue
+@@ -640,8 +648,8 @@
+         if (A.is_reverse and dist > 0) or (not A.is_reverse and dist < 0):
+             # the anchors align in reversed orientation -> circRNA?
+             
+-            read = A.qname.split('__')[1]
+-            chrom = sam.getrname(A.tid)
++            read = A.query_name.split('__')[1]
++            chrom = sam.get_reference_name(A.reference_id)
+             
+             if A.is_reverse:
+                 #print "ISREVERSE"
+@@ -666,8 +674,8 @@
+ 
+         elif (A.is_reverse and dist < 0) or (not A.is_reverse and dist > 0):
+             # the anchors align sequentially -> linear/normal splice junction?
+-            read = A.qname.split('__')[1]
+-            chrom = sam.getrname(A.tid)
++            read = A.query_name.split('__')[1]
++            chrom = sam.get_reference_name(A.reference_id)
+             
+             if A.is_reverse:
+                 #print "ISREVERSE"
+@@ -766,7 +774,7 @@
+         bed = [chrom,start-1,end,name,n_reads,sense,n_uniq,uniq_bridges,best_qual_A,best_qual_B,",".join(tissues),",".join(tiss_counts),min_edit,min_anchor_ov,n_hits,signal,strandmatch,",".join(sorted(categories))]
+         print("\t".join([str(b) for b in bed]))
+ 
+-stats = file(options.stats,"w")
++stats = open(options.stats,"w")
+ stats.write(str(N)+"\n")
+ 
+ output(circs,"circ")

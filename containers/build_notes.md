@@ -188,5 +188,10 @@ Done. Nothing has been pushed or tagged as 1.1.0 yet.
 - [x] Caveat (present on the live server too, so it is not a container
       artifact): `Rscript` warns that edgeR, limma, and DESeq2 were built under
       R 4.2.3, while the installed r-base is 4.2.1.
-- [ ] find_circ is not in the container. Disclose this in paper §2.14 (see
-      the scope statement in the commit message).
+- [x] find_circ is not in this (Image B) container, and per the
+      two-image split above (added 2026-10-31) it does not need to be --
+      Image B does not carry the reproducibility claim Table 3 describes.
+      find_circ is handled for **Image A** instead, via
+      `patches/find_circ_py3.patch` (fetch upstream commit `8655dca5`,
+      verify its sha256, apply the patch at build time) -- never vendored
+      into this repo, since find_circ is GPLv3 and this repo is MIT.
