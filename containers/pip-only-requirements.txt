@@ -3,6 +3,12 @@
 # names against the conda explicit spec, then confirmed against the actual
 # runtime-importable version on the server for the ambiguous cases).
 # Install with: pip install -r pip-only-requirements.txt --no-deps
+#
+# Shared by both images: Image B (this repo's Dockerfile) pairs this with
+# containers/spec-file.linux-64.txt; Image A (the paper-reproduction image)
+# pairs it with envs/ciriquant_published.explicit.txt instead -- same 14
+# lines, same server, re-verified against a fresh `pip list --format=freeze`
+# on 2026-10-31 with zero drift from the 2026-10-03 capture below.
 Flask==2.2.5
 Flask-WTF==1.1.1
 itsdangerous==2.1.2

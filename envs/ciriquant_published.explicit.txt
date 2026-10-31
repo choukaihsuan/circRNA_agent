@@ -4,6 +4,15 @@
 # Rebuild with:
 #   conda create --name <env> --file envs/ciriquant_published.explicit.txt
 #
+# NOT SUFFICIENT ON ITS OWN: this is a `conda list --explicit` capture, which
+#   does not capture pip-installed packages at all. 14 packages that were
+#   produced via `pip install` on the real server -- Flask among them -- are
+#   NOT in this file. See containers/pip-only-requirements.txt for those; the
+#   two files together are the recipe, not this one alone. Confirmed
+#   2026-10-31 that all 14 still match the server's current `pip list
+#   --format=freeze` exactly (containers/build_notes.md's "Image A" section
+#   has the full comparison).
+#
 # Limitation 1: linux-64 only.
 # Limitation 2: depends on these exact package builds still existing on
 #   conda.anaconda.org (bioconda/conda-forge). Those channels prune old

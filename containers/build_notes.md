@@ -8,12 +8,26 @@ them would commit the platform to never upgrading past Table 3's versions:
 
 | | Job | Built from | Must match Table 3? |
 |---|---|---|---|
-| **Image A** | carries the paper's reproducibility claim | `envs/ciriquant_published.explicit.txt` + `envs/ciriquant_published.from-history.yml` (see those files' own headers) | Yes — that is its entire purpose |
+| **Image A** | carries the paper's reproducibility claim | `envs/ciriquant_published.explicit.txt` **+** `containers/pip-only-requirements.txt` (two files -- see below; `envs/ciriquant_published.from-history.yml` is an intent record alongside these, not build input) | Yes — that is its entire purpose |
 | **Image B** (`1.1.0-candidate` below, and whatever follows it) | the platform's own, forward-moving container | the Dockerfile in this repo | No — it iterates normally; `find_circ` and version drift from Table 3 are expected here and not a defect |
 
 Image A is the only one that gets frozen and bound to a Zenodo DOI once it
 exists. Image B is disclosed as "not the paper's environment -- see Image A
 for that" rather than being held to Table 3's pins.
+
+**Image A's recipe is two files, not one -- this was missed when
+`envs/ciriquant_published.explicit.txt` was first written and called "the
+real reproducibility asset."** `conda list --explicit` (what that file is)
+never captures pip-installed packages at all. 14 of the packages that
+actually ran on the server -- Flask among them -- only exist via `pip
+install`, and are not in that file in any form. Proof this isn't
+theoretical: the canary build below only got 27/27 on the Table 3 check
+*after* `containers/pip-only-requirements.txt` was also installed into it;
+with only the conda explicit spec, Flask was absent and the check would
+have read 26/27. **Both files together are Image A's recipe.** Re-verified
+2026-10-31: every one of `pip-only-requirements.txt`'s 14 pinned versions
+still matches the server's current `pip list --format=freeze` exactly (no
+new file was needed -- there was no drift to correct).
 
 ## Image A: canary test of `envs/ciriquant_published.explicit.txt` (2026-10-31)
 
