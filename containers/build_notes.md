@@ -1,5 +1,61 @@
 # Container rebuild provenance (2026-10-03)
 
+## Two images, two different jobs (added 2026-10-31)
+
+This file originally described one rebuild effort. It has since split into
+two images with different jobs and different obligations, and conflating
+them would commit the platform to never upgrading past Table 3's versions:
+
+| | Job | Built from | Must match Table 3? |
+|---|---|---|---|
+| **Image A** | carries the paper's reproducibility claim | `envs/ciriquant_published.explicit.txt` + `envs/ciriquant_published.from-history.yml` (see those files' own headers) | Yes — that is its entire purpose |
+| **Image B** (`1.1.0-candidate` below, and whatever follows it) | the platform's own, forward-moving container | the Dockerfile in this repo | No — it iterates normally; `find_circ` and version drift from Table 3 are expected here and not a defect |
+
+Image A is the only one that gets frozen and bound to a Zenodo DOI once it
+exists. Image B is disclosed as "not the paper's environment -- see Image A
+for that" rather than being held to Table 3's pins.
+
+## Image A: canary test of `envs/ciriquant_published.explicit.txt` (2026-10-31)
+
+Before building Image A, the explicit spec it depends on was tested for
+whether it still resolves -- every line in a `conda list --explicit` capture
+names one exact package build from a specific channel, and bioconda/
+conda-forge do prune old builds over time. This was the actual risk being
+tested, not a formality:
+
+```
+conda create --name ciriquant_canary_A --file envs/ciriquant_published.explicit.txt
+```
+
+Result: **all 450 packages resolved and installed with zero errors** (no
+404s, no "package not found," checked by grepping the full build log for
+error/404/not-found/fail -- none). `containers/pip-only-requirements.txt`'s
+14 pip packages were then installed into the same canary env
+(`pip install --no-deps -r containers/pip-only-requirements.txt`) and also
+resolved with zero errors.
+
+Full version check against Table 3 (same method as the earlier Docker-image
+and server-env checks in `audit/`): **27/27 rows match**, including Flask
+2.2.5 (only present after the pip-only-requirements step -- `conda list
+--explicit` does not capture pip-installed packages at all, which is why
+that file is paired with the pip-only requirements rather than being
+sufficient on its own) and Bowtie2/CIRCexplorer2 (both conda packages,
+came in with the rest of the explicit spec with no extra step needed).
+BiocManager is absent (same as every other check this project has done --
+not installed, not inferred). The canary env was removed after this check
+(`conda env remove -n ciriquant_canary_A`); nothing from it was kept.
+
+**Verification level, stated explicitly so it is not read as more than it
+is**: this confirms the package *versions* this file lists still resolve and
+match Table 3 today. It does **not** run Snakemake, does **not** run any
+pipeline stage, and does **not** claim that output from this environment
+would be bit-identical to what originally produced the 19 published
+datasets. "Same versions" and "same output" are different claims; only the
+first one has been checked here. Find_circ (see `patches/find_circ_py3.patch`)
+is not yet part of this canary test -- it is not a conda package and is
+handled separately (see that patch file's own header for why it is a patch,
+not a vendored copy, and for the license reason).
+
 ## Why this exists
 
 The paper's Table 1 lists exact verified software versions, recorded directly
