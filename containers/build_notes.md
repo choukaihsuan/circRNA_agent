@@ -209,3 +209,73 @@ Done. Nothing has been pushed or tagged as 1.1.0 yet.
       `patches/find_circ_py3.patch` (fetch upstream commit `8655dca5`,
       verify its sha256, apply the patch at build time) -- never vendored
       into this repo, since find_circ is GPLv3 and this repo is MIT.
+
+## Image A + find_circ: wired in and re-checked (2026-10-31)
+
+`containers/build_image_a_find_circ.sh` fetches upstream find_circ.py at
+commit `8655dca5`, verifies its sha256, applies
+`patches/find_circ_py3.patch`, and verifies the RESULT's sha256 against the
+exact file running on the server -- both checks are hard failures (non-zero
+exit), not warnings. Tested three ways: (1) the real upstream file passes
+both checks and the script's output is byte-identical to the server's
+find_circ.py; (2) a deliberately wrong "upstream" sha256 hard-fails before
+ever reaching the patch step; (3) a deliberately wrong "expected patched"
+sha256 hard-fails after patching and deletes the bad output rather than
+leaving it on disk.
+
+**A real bug was caught by check (1) on the first actual run, not a
+contrived test**: the first version of `find_circ_py3.patch` (committed
+earlier today) was generated against the server's local
+`find_circ_orig.py`, trusting its filename to mean "genuine unmodified
+upstream." It wasn't -- diffing a fresh fetch of the real commit `8655dca5`
+against that "orig" file turned up 8 further differences (Python 2 `print`
+statements, `izip_longest`, three `dict.values()/.items()` calls) that
+predate this project's own patch entirely; `find_circ_orig.py` had already
+been through a separate, unrecorded Python 3 pass before anyone here used
+it as a baseline. The build script's own upstream-sha256 check caught this
+immediately (hard-failed on the real mismatch) rather than silently
+building an image around a wrong assumption. `patches/find_circ_py3.patch`
+has been corrected: it is now a diff against the genuine upstream blob
+(273 lines, not 222), the upstream sha256 in its header is the real one
+(`b67a0439...`), and the resulting patched file is unchanged (`28a3cb9e...`
+-- still bit-identical to the server). See that patch file's own
+"CORRECTION" note for the full account.
+
+Full Table 3 re-check with find_circ wired in (conda create from
+`envs/ciriquant_published.explicit.txt`, pip install from
+`containers/pip-only-requirements.txt`, then `build_image_a_find_circ.sh`
+into the same env's `bin/`): **28/28 rows now match**, with find_circ's row
+now asserted at the sha256 level -- not just "commit 8655dca5 + has a
+patch that looks plausible," but "produces the exact bytes that generated
+the 19 published datasets." Canary env removed after the check.
+
+## find_circ license disclosure (GPLv3)
+
+find_circ (Memczak et al., github.com/marvin-jens/find_circ) is licensed
+GPLv3. circDEX itself is MIT. Building Image A fetches find_circ's source
+and applies a patch to it at build time (see above) -- the resulting image
+therefore **contains GPLv3-licensed code**, which carries disclosure and
+distribution obligations under GPLv3 for that component specifically. This
+does not make circDEX itself GPL, and MIT code elsewhere in the image is
+unaffected -- but it is also not adequately covered by circDEX's own MIT
+notice alone.
+
+**Disclosure** (to be carried in both this file and the image's own
+`LABEL`, for any image that bundles find_circ):
+
+> This image contains find_circ (GPLv3), fetched from upstream commit
+> 8655dca5 and patched for Python 3 compatibility. circDEX itself is
+> licensed MIT; the find_circ component is distributed under its own
+> GPLv3 license, and the modifications applied to it are published as
+> `patches/find_circ_py3.patch` in this repository as the corresponding
+> source for that component.
+
+Currently only Image A is expected to bundle find_circ (Table 3 lists it;
+Image B does not need to, per the two-image split above). If Image B, or
+any future image, also bundles find_circ, the same disclosure applies to
+it. Not yet added to an actual Docker `LABEL` -- Image A has no Dockerfile
+yet, only the conda-env equivalent tested above; this is noted here so it
+isn't forgotten when one is written. If Image A is ever pushed publicly
+and bound to a Zenodo DOI, this wording is worth a second read by someone
+with more licensing background before that happens -- not a blocker, but
+worth asking.
